@@ -1,0 +1,211 @@
+// Basic agentic loop — the LangGraph demo's StateGraph("agent" → tool →
+// "agent" → …) flattened into an explicit async loop. Same semantics:
+//   - system prompt = role + prompt-memory block (loaded once per session)
+//   - model may return 0..n tool calls; all are executed, results appended,
+//     loop repeats until a plain text response (or "Error:"-prefixed tool
+//     result → turn ends, exactly like should_continue → END)
+//   - returns the full new-message slice for the caller to persist + post-process
+
+import { chat } from "./llm.js";
+import { toWire, buildToolRegistry } from "./tools/index.js";
+import { PromptMemory } from "./memory.js";
+import { MEMORY_CHAR_LIMIT } from "./config.js";
+import type { ChatMessage, ToolDef, ToolCall } from "./types.js";
+import { SessionStore } from "./store.js";
+import { trace } from "./tracing.js";
+
+export function buildSystemPrompt(memoryBlock: string): string {
+  const base =
+    "You are an adaptable AI agent.\n" +
+    "\n" +
+    "SESSION MEMORY (episodic, on-demand):\n" +
+    "session_search queries your archived past sessions. Call it BEFORE redoing work " +
+    "when the user's request may relate to something from a previous conversation — " +
+    "prior decisions, findings, errors and their fixes, or procedures you already " +
+    "worked out. It returns short excerpts, not full transcripts.\n" +
+    "\n" +
+    "PROMPT MEMORY (always-on, self-curated):\n" +
+    "memory_manage edits your MEMORY.md (facts/decisions relevant to EVERY future " +
+    "session) and USER.md (who the user is, preferences, working style). Combined " +
+    `budget: ${MEMORY_CHAR_LIMIT} chars — keep entries terse, consolidate instead of accumulating. ` +
+    "Do NOT store topic-specific findings there; leave those to the session archive. " +
+    "Memory edits take effect from the NEXT session, never mid-conversation.\n" +
+    "\n" +
+    "WORKSPACE:\n" +
+    "All your file tools and shell commands are workspace-rooted — relative paths and " +
+    "script outputs land in the workspace dir automatically. Put every artifact you " +
+    "produce (reports, downloads, datasets, scripts) there; use absolute paths only to " +
+    "read outside sources. Writes into the harness's own source dirs are rejected.\n";
+  if (memoryBlock) return `${base}\n${memoryBlock}\n`;
+  return base;
+}
+
+export interface TurnResult {
+  messages: ChatMessage[]; // the new slice (assistant/tool messages of this turn)
+  iterations: number;
+  fatal?: string; // set when a tool result or system error ended the turn
+  cancelled?: boolean; // stop was requested mid-turn; messages may end dangling
+  usage: { prompt_tokens: number; completion_tokens: number };
+}
+
+export class AgentLoop {
+  readonly tools: Map<string, ToolDef>;
+  private memory: PromptMemory;
+  private maxIterations: number;
+
+  constructor(opts: { memory: PromptMemory; store: SessionStore; maxIterations?: number }) {
+    this.memory = opts.memory;
+    this.maxIterations = opts.maxIterations ?? Number(process.env.BUDGET_TOOL_MAX_ITERATIONS ?? "25");
+    this.tools = new Map<string, ToolDef>(buildToolRegistry(opts.store).map((t) => [t.name, t]));
+  }
+
+  /** Memory block is rendered once per session by callers and passed in here.
+   *  Tracing: one root "agent-turn" chain run per turn with llm/tool children
+   *  (LangSmith REST runs API — fire-and-forget, never breaks the turn). */
+  async runTurn(
+    history: ChatMessage[],
+    userInput: string,
+    shouldStop?: () => boolean,
+    meta?: { sessionId?: string },
+  ): Promise<TurnResult> {
+    const messages: ChatMessage[] = [...history, { role: "user", content: userInput }];
+    const systemPrompt = buildSystemPrompt(this.memory.load());
+    const wire = toWire([...this.tools.values()]);
+    const toolNames = [...this.tools.keys()];
+    const newSlice: ChatMessage[] = [];
+    let iterations = 0;
+    let fatal: string | undefined;
+    let cancelled = false;
+    const usage = { prompt_tokens: 0, completion_tokens: 0 };
+
+    const turnRun = trace.create({
+      name: "agent-turn",
+      runType: "chain",
+      inputs: { message: userInput },
+      tags: ["nm-finance-agent"],
+      metadata: {
+        session_id: meta?.sessionId ?? "",
+        memory_chars: this.memory.totalChars(),
+        history_messages: history.length,
+      },
+    });
+
+    let result: TurnResult | undefined;
+
+    for (let i = 0; i < this.maxIterations; i++) {
+      if (shouldStop?.()) {
+        cancelled = true;
+        break;
+      }
+      iterations = i + 1;
+      const llmRun = trace.create({
+        name: `llm:${i + 1}`,
+        runType: "llm",
+        inputs: { messages: [{ role: "system", content: systemPrompt }, ...messages], tools: toolNames },
+        parent: turnRun,
+        tags: ["nm-finance-agent"],
+      });
+      const response = await chat([{ role: "system", content: systemPrompt }, ...messages], wire);
+      if (response.usage) {
+        usage.prompt_tokens += response.usage.prompt_tokens ?? 0;
+        usage.completion_tokens += response.usage.completion_tokens ?? 0;
+      }
+      trace.update(llmRun, {
+        outputs: {
+          generations: [
+            {
+              text: response.content,
+              message: { role: "assistant", content: response.content, tool_calls: response.toolCalls },
+              usage: response.usage ?? {},
+            },
+          ],
+          model: response.model,
+        },
+      });
+
+      if (!response.toolCalls.length) {
+        if (shouldStop?.()) {
+          cancelled = true;
+          break;
+        }
+        const out: ChatMessage = { role: "assistant", content: response.content };
+        messages.push(out);
+        newSlice.push(out);
+        result = { messages: newSlice, iterations, cancelled, usage };
+        break;
+      }
+
+      const calls: ToolCall[] = response.toolCalls.map((c) => ({
+        id: c.id,
+        name: c.name,
+        args: c.args ?? {},
+      }));
+      const assistantMsg: ChatMessage = {
+        role: "assistant",
+        content: response.content || "",
+        tool_calls: calls,
+      };
+      messages.push(assistantMsg);
+      newSlice.push(assistantMsg);
+
+      for (const call of calls) {
+        if (shouldStop?.()) {
+          cancelled = true;
+          break;
+        }
+        const toolRun = trace.create({
+          name: call.name,
+          runType: "tool",
+          inputs: (call.args ?? {}) as Record<string, unknown>,
+          parent: turnRun,
+          tags: ["nm-finance-agent"],
+        });
+        const tool = this.tools.get(call.name);
+        let resultStr: string;
+        if (!tool) {
+          resultStr = `Error: unknown tool ${call.name}`;
+        } else {
+          try {
+            resultStr = await tool.execute(call.args ?? {});
+          } catch (e) {
+            resultStr = `Error: tool ${call.name} raised: ${(e as Error).message}`.slice(0, 2000);
+          }
+        }
+        trace.update(toolRun, {
+          outputs: { result: resultStr },
+          error: resultStr.startsWith("Error:") ? resultStr.slice(0, 400) : undefined,
+        });
+        const toolMsg: ChatMessage = {
+          role: "tool",
+          content: resultStr,
+          tool_call_id: call.id,
+          name: call.name,
+        };
+        messages.push(toolMsg);
+        newSlice.push(toolMsg);
+        if (resultStr.startsWith("Error:")) {
+          fatal = `${call.name}: ${resultStr.slice(0, 300)}`;
+          break;
+        }
+      }
+      if (fatal) break;
+    }
+
+    if (!result) {
+      if (!cancelled && !fatal) fatal = "max tool iterations reached";
+      result = { messages: newSlice, iterations, cancelled, fatal, usage };
+    }
+
+    trace.update(turnRun, {
+      outputs: {
+        final_message: newSlice[newSlice.length - 1]?.content ?? "",
+        iterations,
+        usage,
+        cancelled,
+      },
+      error: fatal,
+    });
+
+    return result;
+  }
+}

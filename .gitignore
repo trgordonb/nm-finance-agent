@@ -1,0 +1,17 @@
+node_modules/
+.env
+sessions.db
+sessions.db-*
+dist/
+workspace/
+memories/MEMORY.md
+memories/USER.md
+*.log
+.omni/
+.claude/
+.github/
+.cursor/
+.kiro/
+.agents/
+.env.omni
+sandbox/

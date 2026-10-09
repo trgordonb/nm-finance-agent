@@ -1,0 +1,30 @@
+{
+  "name": "nm-finance-agent",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Ground-up REST agent harness: agentic loop + prompt memory + basic tools. No LangChain.",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "dev": "tsx watch src/index.ts",
+    "start": "tsx src/index.ts",
+    "check": "tsc --noEmit",
+    "test": "tsx --test \"src/**/*.test.ts\"",
+    "test:help": "tsx src/tests/run-tests.ts"
+  },
+  "dependencies": {
+    "dotenv": "^17.2.0",
+    "express": "^4.21.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^24.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  },
+  "allowScripts": {
+    "esbuild@0.28.2": true
+  }
+}
