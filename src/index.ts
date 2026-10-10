@@ -30,6 +30,7 @@ import { AgentDbMirror } from "./agentdb-mirror.js";
 import { AgentLoop } from "./agent.js";
 import { enabled as tracingEnabled, TRACE_PROJECT } from "./tracing.js";
 import { log } from "./logger.js";
+import { fallbackTitle, refineSessionTitle } from "./titler.js";
 import type { ChatMessage } from "./types.js";
 
 // --- runtime assembly ---------------------------------------------------------
@@ -188,10 +189,14 @@ app.post("/api/chat", (req, res) => {
       const valid = turn.cancelled ? validPrefixLen(turn.messages) : turn.messages.length;
       const persistable = turn.messages.slice(0, valid);
       let recordedTurn: number | null = null;
-      if (persistable.length >= 2) {
+      // Gate at 1: a plain no-tool turn yields exactly one assistant message
+      // (the user row is prepended at append time). Copying python's >=2 gate
+      // here silently dropped every single-reply turn from the archive.
+      if (persistable.length >= 1) {
         recordedTurn = store.appendTurn(sessionId, [{ role: "user", content: message }, ...persistable]);
         // Mirror the persisted turn into the semantic sidecar (no-throw).
         void mirror.recordTurn(sessionId, recordedTurn, persistable).catch(() => undefined);
+        maybeTitleSession(sessionId, message, persistable);
       }
       // (messages were already streamed live via the onMessage callback)
       if (turn.cancelled) {
@@ -218,6 +223,23 @@ app.post("/api/chat", (req, res) => {
     }
   })();
 });
+
+// Session titler (python main.py maybe_title_session parity): after the FIRST
+// completed turn, a sync fallback (truncated first user message) is stored so
+// UI lists always have something; an async refine via the cheap summarizer
+// model overwrites it with the model label. Never raises — cosmetic.
+function maybeTitleSession(sessionId: string, userMessage: string, newMessages: ChatMessage[]): void {
+  try {
+    if (store.getSessionTitle(sessionId) !== null) return;
+    store.setSessionTitle(sessionId, fallbackTitle(userMessage), "fallback");
+    const firstAssistant = newMessages.find((m) => m.role === "assistant" && m.content.trim());
+    void refineSessionTitle(userMessage, firstAssistant?.content ?? "")
+      .then(({ title, model }) => store.setSessionTitle(sessionId, title, model))
+      .catch((e) => log.warn(`session titler failed: ${String(e).slice(0, 140)}`));
+  } catch (e) {
+    log.warn(`session title fallback failed: ${String(e).slice(0, 140)}`);
+  }
+}
 
 app.post("/api/chat/cancel", (req, res) => {
   const turnId = (req.body ?? {}) as { turn_id: string };

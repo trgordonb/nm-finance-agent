@@ -29,6 +29,7 @@ nm-finance-agent/
 │   ├── memory.ts         # PromptMemory: MEMORY.md/USER.md, shared budget, load-once
 │   ├── store.ts          # SessionStore: turn-rows, tool-call fidelity, FTS5 fallback chain
 │   ├── tracing.ts        # LangSmith REST runs client (no SDK; fire-and-forget)
+│   ├── titler.ts         # Session titler: sync fallback + async refine (summarizer model)
 │   ├── workspace.ts      # resolveInWorkspace() + guardWorkspaceWrite()
 │   ├── config.ts         # All env vars; dotenv(override=true)
 │   ├── types.ts          # ToolDef, ChatMessage, ToolCall
@@ -55,6 +56,13 @@ nm-finance-agent/
   message — the UI sees tool calls live, not one burst at `done`.
 - **3,575-char combined budget** over MEMORY.md + USER.md, enforced on every
   `memory_manage` write across BOTH files.
+- **Every completed turn persists** — including single-reply no-tool turns
+  (persistence gate counts the new assistant/tool slice only; the user row is
+  prepended at append time).
+- **Titles once, never regenerated.** First completed turn stores a sync
+  fallback (truncated first user message) then an async refine via
+  `OPENROUTER_MODEL_SUMMARIZER` (model-labeled; fallback label "fallback").
+  `listSessions()` LEFT-JOINs `session_titles` into `summary` for the sidebar.
 - **Provider-valid round-trips.** `recordTurn`→`loadSession()` preserves
   assistant `tool_calls`, `tool_call_id`, and tool name; cancel mid-turn
   persists only the provider-valid prefix (dangling tool_call groups dropped,
@@ -131,7 +139,8 @@ servers).
 ## Roadmap (Hermes-order, from nm-memory-layer doctrine)
 
 1. ~~Agentic loop + prompt memory + basic tools + SSE REST~~ ✓ 2026-10-09
-2. Session titler + nudge policy (secondary-LLM curation, silence-bias)
+2. ~~Session titler~~ ✓ (2026-10-10) + nudge policy (secondary-LLM curation,
+   silence-bias) still open
 3. Secondary-LLM search condensation (observability header, silent fallback)
 4. Pre-flight context compression with persisted lineage
 5. Skills: agentskills.io SKILL.md files, progressive disclosure,

@@ -37,7 +37,18 @@ repo itself.
   search), with honest two-leg failure notes (`jina HTTP 402; tavily: ...`).
   Verified on the exact failing URLs (FVG substack + secuora) via tool call
   and full chat turn.
-- **Contract-test count**: 19 (`contracts` + `workspace` + `hybrid`).
+- **Session titler (python maybe_title_session parity) + a persistence-gate
+  bug caught in verification.** Sidebar one-liners now exist: sync fallback
+  (truncated first user message) stored on the first completed turn, then an
+  async refine via the summarizer model (`liquid/lfm-2.5-2.6b:free`,
+  model-labeled, once-only). `session_titles` table lives in the archive;
+  `listSessions()` LEFT-JOINs it as `summary`; sidebar tooltip + inline
+  truncated title added. Verification exposed that **plain no-tool turns were
+  never archived** — the persist gate had copied python's `valid >= 2`
+  (which counted the human message inside its slice) while our slice excludes
+  the user row; gate now `>= 1`. Titles verified live: fallback within 1s,
+  refine overwrite ~8s, second-chat regeneration blocked.
+- **Contract-test count**: 22 (`contracts` + `workspace` + `hybrid`).
 
 
 ## 2026-10-09 — ground-up TS harness (all of today's increments)

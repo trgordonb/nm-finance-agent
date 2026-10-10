@@ -63,11 +63,22 @@ export interface ChatResponse {
   model: string;
 }
 
+export interface ChatOpts {
+  /** Override model — secondary calls (titler, future summarizer) use the
+   *  cheap OPENROUTER_MODEL_SUMMARIZER model. */
+  model?: string;
+  /** Omit the reasoning block (tiny free models bill/deduplicate badly). */
+  noReasoning?: boolean;
+}
+
 export async function chat(
   messages: ChatMessage[],
   tools?: Array<{ name: string; description: string; parameters: unknown }>,
+  opts: ChatOpts = { },
 ): Promise<ChatResponse> {
   if (!OPENROUTER_API_KEY) throw new Error("OPENROUTER_API_KEY is not set");
+  const model = opts.model || OPENROUTER_MODEL_MAIN;
+  const reasoning = OPENROUTER_REASONING && !opts.noReasoning;
   // Rate limit: enforce minimum interval between calls (shared across turns).
   const elapsed = Date.now() - lastCallAt;
   if (elapsed < MIN_INTERVAL_MS) {
@@ -75,7 +86,7 @@ export async function chat(
   }
 
   const body: Record<string, unknown> = {
-    model: OPENROUTER_MODEL_MAIN,
+    model,
     max_tokens: MAX_COMPLETION_TOKENS,
     temperature: 1.0,
     messages: messages.map((m) => {
@@ -107,7 +118,7 @@ export async function chat(
   if (OPENROUTER_PROVIDER_ORDER.length) {
     body.provider = { order: OPENROUTER_PROVIDER_ORDER, allow_fallbacks: OPENROUTER_PROVIDER_FALLBACKS };
   }
-  if (OPENROUTER_REASONING) {
+  if (reasoning) {
     body.reasoning = { enabled: true };
   }
 
@@ -115,7 +126,7 @@ export async function chat(
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       console.error(
-        `[llm] POST ${OPENROUTER_BASE_URL}/chat/completions model=${OPENROUTER_MODEL_MAIN} attempt=${attempt}/${MAX_ATTEMPTS}`,
+        `[llm] POST ${OPENROUTER_BASE_URL}/chat/completions model=${model} attempt=${attempt}/${MAX_ATTEMPTS}`,
       );
       lastCallAt = Date.now();
       const res = await fetch(`${OPENROUTER_BASE_URL.replace(/\/$/, "")}/chat/completions`, {
@@ -149,7 +160,7 @@ export async function chat(
         })),
         raw: msg,
         usage: data.usage,
-        model: data.model || OPENROUTER_MODEL_MAIN,
+        model: data.model || model,
       };
     } catch (e) {
       const err = e as Error & { fatal?: boolean };

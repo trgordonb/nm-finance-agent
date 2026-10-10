@@ -51,6 +51,8 @@ export interface SessionInfo {
   created_at: string;
   turn_count: number;
   message_count: number;
+  /** One-line title (fallback truncated first user message, LLM-refined). */
+  summary?: string | null;
 }
 
 export interface Health {

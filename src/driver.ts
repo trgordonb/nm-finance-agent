@@ -10,6 +10,9 @@ export interface SessionRow {
   created_at: string;
   turn_count: number;
   message_count: number;
+  /** One-line session title (LLM-refined fallback truncated first user
+   *  message); null until the first turn's titler pass. */
+  summary?: string | null;
 }
 
 /** One ranked recall hit — retriever-tagged for the hybrid fusion step. */

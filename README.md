@@ -73,7 +73,7 @@ sends permissive CORS headers for any other origin.
 | Endpoint | Notes |
 |---|---|
 | `GET /api/health` | model, base_url, memory usage, tool list |
-| `GET /api/sessions` | archived sessions |
+| `GET /api/sessions` | archived sessions (each carries a `summary` one-liner: fallback truncated first user message → async LLM refine via the summarizer model) |
 | `GET /api/sessions/:id` | full message history (resumable) |
 | `GET /api/memory` | rendered `<agent_memory>` block + budget usage |
 | `POST /api/chat` `{message, session_id?}` | **SSE**: `session` → `message`* → (`error`)? → `done` |
@@ -142,7 +142,8 @@ registry entries or post-turn hooks, exactly like main.py's
 ## Roadmap (hermes-order, matching nm-memory-layer's doctrine)
 
 1. ~~Agentic loop + prompt memory + basic tools + SSE REST~~ ✓ step 1
-2. Session titler + nudge policy (curation loop; secondary LLM, silence-bias)
+2. Nudge policy (curation loop; secondary LLM, silence-bias). (Session
+   titler ✓ — fallback + refine, sidebar `summary`)
 3. Secondary-LLM search condensation with observability header + silent fallback
 4. Pre-flight context compression with persisted lineage
 5. Skills: agentskills.io SKILL.md files, progressive disclosure,

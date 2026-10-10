@@ -239,6 +239,17 @@ body {
   color: var(--text-dim);
 }
 
+/* Truncated one-line title, inline between badges and timestamp (LLM-refined
+   fallback = first user message); tooltip carries the full title. */
+.session-title-text {
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 140px;
+  margin-left: 2px;
+}
+
 .sidebar-footer {
   padding: 12px 16px;
   border-top: 1px solid var(--border);

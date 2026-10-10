@@ -51,6 +51,13 @@ export class SQLiteSessionStore implements SessionDriver {
       CREATE TRIGGER IF NOT EXISTS turns_fts_delete AFTER DELETE ON turns BEGIN
         INSERT INTO turns_fts(turns_fts, rowid, content) VALUES ('delete', old.id, old.content);
       END;
+
+      CREATE TABLE IF NOT EXISTS session_titles (
+        session_id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        model TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+      );
     `);
   }
 
@@ -127,13 +134,41 @@ export class SQLiteSessionStore implements SessionDriver {
   listSessions(): SessionRow[] {
     return this.db
       .prepare(
-        `SELECT session_id,
-                MIN(created_at) AS created_at,
-                COUNT(DISTINCT turn_number) AS turn_count,
-                COUNT(*) AS message_count
-         FROM turns GROUP BY session_id ORDER BY created_at DESC`,
+        `SELECT t.session_id,
+                MIN(t.created_at) AS created_at,
+                COUNT(DISTINCT t.turn_number) AS turn_count,
+                COUNT(*) AS message_count,
+                st.title AS summary
+         FROM turns t LEFT JOIN session_titles st ON st.session_id = t.session_id
+         GROUP BY t.session_id ORDER BY created_at DESC`,
       )
       .all() as unknown as SessionRow[];
+  }
+
+  /** Title persistence: sync fallback rows and refined titles share the table. */
+  setSessionTitle(sessionId: string, title: string, model: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO session_titles (session_id, title, model)
+         VALUES (?, ?, ?)
+         ON CONFLICT(session_id) DO UPDATE SET title = excluded.title, model = excluded.model`,
+      )
+      .run(sessionId, title, model);
+  }
+
+  getSessionTitle(sessionId: string): string | null {
+    const row = this.db
+      .prepare(`SELECT title FROM session_titles WHERE session_id = ?`)
+      .get(sessionId) as { title: string } | undefined;
+    return row?.title ?? null;
+  }
+
+  /** The model label that produced the current title (for provenance/debug). */
+  getSessionTitleModel(sessionId: string): string | null {
+    const row = this.db
+      .prepare(`SELECT model FROM session_titles WHERE session_id = ?`)
+      .get(sessionId) as { model: string } | undefined;
+    return row?.model ?? null;
   }
 
   search(query: string, limit: number = 5): SessionHit[] {

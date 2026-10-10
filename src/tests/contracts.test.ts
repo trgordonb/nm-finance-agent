@@ -142,3 +142,34 @@ test("tools: execute returns stderr/exit codes without Error: unless timed out",
   const ok = await execute.execute({ command: "echo hi" });
   assert.match(ok, /hi/);
 });
+
+test("store: session titles — fallback set/get, refine overwrite, listSessions joins summary", async () => {
+  const dbDir = fs.mkdtempSync(path.join(os.tmpdir(), "nmfa-"));
+  const store = new SessionStore(path.join(dbDir, "t.db"));
+  const sid = store.newSessionId();
+  store.appendTurn(sid, [{ role: "user", content: "backtest the FVG strategy" }]);
+  assert.equal(store.getSessionTitle(sid), null);
+  assert.equal(store.listSessions().find((r) => r.session_id === sid)?.summary ?? null, null);
+
+  store.setSessionTitle(sid, "backtest the FVG strategy", "fallback");
+  assert.equal(store.getSessionTitle(sid), "backtest the FVG strategy");
+  assert.equal(store.getSessionTitleModel(sid), "fallback");
+  assert.equal(store.listSessions().find((r) => r.session_id === sid)?.summary, "backtest the FVG strategy");
+
+  // refine overwrites same row (one title, never regenerated)
+  store.setSessionTitle(sid, "FVG backtest replication on EUR/USD", "openrouter/liquid/lfm-2.5-2.6b:free");
+  assert.equal(store.getSessionTitle(sid), "FVG backtest replication on EUR/USD");
+  assert.equal(store.getSessionTitleModel(sid), "openrouter/liquid/lfm-2.5-2.6b:free");
+  assert.equal(store.listSessions().find((r) => r.session_id === sid)?.summary, "FVG backtest replication on EUR/USD");
+  store.close();
+});
+
+test("titler: fallbackTitle truncation + word cleanup", async () => {
+  const { fallbackTitle } = await import("../titler.js");
+  assert.equal(fallbackTitle("short msg"), "short msg");
+  assert.equal(fallbackTitle("  spaced\n\ttext  "), "spaced text");
+  const long = fallbackTitle("x".repeat(100), 60);
+  assert.ok(long.length <= 60 && long.endsWith("…") === true || long.length === 60);
+  assert.equal(fallbackTitle("a".repeat(59), 60).length, 59);
+  assert.equal(fallbackTitle("a".repeat(61), 60).length, 60);
+});

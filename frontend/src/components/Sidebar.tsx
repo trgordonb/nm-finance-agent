@@ -96,12 +96,13 @@ export default function Sidebar({ health, sessions, activeId, streaming, onNewCh
                     className={`session-row${s.session_id === activeId ? " active" : ""}`}
                     onClick={() => onSelect(s.session_id)}
                     disabled={streaming}
-                    title={s.session_id}
+                    title={s.summary || s.session_id}
                   >
                     <span className="session-turns">
                       {s.turn_count === 1 ? "1-turn" : `${s.turn_count}-turns`}
                     </span>
                     <span className="session-time">{relativeTime(s.created_at)}</span>
+                    {s.summary && <span className="session-title-text">{s.summary}</span>}
                   </button>
                 ))}
             </div>
