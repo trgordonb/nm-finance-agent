@@ -23,10 +23,14 @@ import { DB_PATH } from "./config.js";
 import { log } from "./logger.js";
 import type { ChatMessage } from "./types.js";
 
-// Marks a closing message as worth an extraction pass — tuned on 25 real
-// sessions (~56% hit rate); the LLM call only fires when this matches.
+// Marks a closing message as worth an extraction pass — the python set
+// (tuned on 25 real sessions, ~56% hit rate) plus 2026-10-10 additions from a
+// live miss ("If you want, I can pull the actual Pine Script source…" — the
+// "If you want, I can <verb>" offer shape fits neither `want me to` nor
+// `i can (also|now)`): direct "if you want" + a concrete offer-verb list
+// after "i can". Cheap secondary-LLM call cost is the only exposure.
 const TIP_MARKER_RE =
-  /next step|follow[- ]?up|would you like|want me to|if you('| a)?d? ?like|say the word|worth a (skim|look|noting)|natural next|i can (also|now)|you can (now|also)|then you can|optional next/i;
+  /next step|follow[- ]?up|would you like|want me to|if you('| a)?d? ?like|if you want|do you want|say the word|worth a (skim|look|noting)|natural next|i can (also|now)|you can (now|also)|then you can|optional next|shall i|i can (pull|provide|explain|show|draft|run|build|fetch|give|list|extend|stream|render|test|trace|compute|break|turn|write|create|make|walk)/i;
 const MIN_CONTENT_CHARS = 80;
 const MAX_ITEMS = 4;
 const MAX_ITEM_CHARS = 160;
@@ -150,6 +154,11 @@ export function dismissFollowup(sessionId: string, index: number): number[] | nu
 
 // --- extraction --------------------------------------------------------------------
 
+/** Test/experiment hook: same pipeline without the storage/hook layer. */
+export async function extractFollowupsDirect(closingText: string): Promise<string[]> {
+  return extractFollowups(closingText);
+}
+
 /** Pull a JSON string array out of a model reply; [] on anything else. */
 export function parseFollowups(raw: string, cap: number = MAX_ITEMS): string[] {
   const match = /\[[\s\S]*\]/.exec(raw);
@@ -219,8 +228,10 @@ export function maybeExtractFollowups(sessionId: string, newMessages: ChatMessag
       .find((m) => m.role === "assistant" && m.content?.trim());
     if (!closing || !looksLikeFollowups(closing.content)) return;
     const closingText = closing.content;
+    log.info(`followups prefilter hit [${sessionId.slice(0, 8)}]: ${closingText.slice(-60).replace(/\s+/g, " ")}`);
     void extractFollowups(closingText)
       .then((items) => {
+        log.info(`followups extract [${sessionId.slice(0, 8)}]: ${items.length} item(s)`);
         if (!items.length) return;
         setFollowups(sessionId, items, `openrouter:${OPENROUTER_MODEL_SUMMARIZER}`);
         log.info(`followups [${sessionId.slice(0, 8)}]: ${items.length} item(s) stored`);

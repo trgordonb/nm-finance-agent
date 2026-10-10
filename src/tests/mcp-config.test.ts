@@ -88,3 +88,14 @@ test("followups: parseFollowups JSON-array extraction + status: no false positiv
     true,
   );
 });
+
+test("followups: 'If you want, I can pull...' offer shape passes the prefilter (2026-10-10 live miss)", async () => {
+  const { looksLikeFollowups } = await import("../followups.js");
+  const closing =
+    "If you want, I can pull the actual Pine Script source of a standard RSI build, " +
+    "or explain a derivative like Stochastic RSI or Connors RSI.";
+  assert.equal(looksLikeFollowups(closing), true);
+  // non-offer shapes still rejected
+  assert.equal(looksLikeFollowups("I can see why that's confusing — the answer is 42, moving on. "), false);
+  assert.equal(looksLikeFollowups("I cannot reproduce that number with the given inputs."), false);
+});
