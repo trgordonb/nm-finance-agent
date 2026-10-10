@@ -14,6 +14,7 @@
 
 import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import { log } from "./logger.js";
 import type { ChatMessage } from "./types.js";
 
@@ -60,6 +61,7 @@ export class AgentDbMirror {
   private buffer = "";
   private ready = false;
   private readyResolve?: () => void;
+  private readyFail?: (e: Error) => void;
   private readonly dbPath: string;
 
   constructor(dbPath?: string) {
@@ -159,10 +161,16 @@ export class AgentDbMirror {
   // --- sidecar plumbing -----------------------------------------------------
 
   private startSidecar(): void {
-    const script = path.resolve(process.cwd(), "src/mirror-child.ts");
-    const tsxCli = path.resolve(process.cwd(), "node_modules/.bin/tsx");
+    // Paths are pinned to the MODULE location, not process.cwd(): the server
+    // may be started from any directory (a cwd-relative node_modules/bin or
+    // src/ path would silently fail to spawn and just time out).
+    // import.meta.url points at <repo>/src/agentdb-mirror.ts → one '..' up.
+    const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+    const script = path.join(repoRoot, "src", "mirror-child.ts");
+    const tsxCli = path.join(repoRoot, "node_modules", ".bin", "tsx");
+    const dbPath = path.isAbsolute(this.dbPath) ? this.dbPath : path.resolve(repoRoot, "./agent-mirror.db");
     const child = spawn(tsxCli, [script], {
-      cwd: process.cwd(),
+      cwd: repoRoot,
       stdio: ["pipe", "pipe", "pipe"],
       env: process.env,
     });
@@ -173,6 +181,12 @@ export class AgentDbMirror {
     }
     child.stdout?.setEncoding("utf8");
     child.stdout?.on("data", (chunk: string) => this.onChunk(chunk));
+    // Spawn-level failures (nothing to exec) must fail readiness fast —
+    // otherwise waitReady can hang to its full timeout.
+    child.on("error", (e) => {
+      log.warn(`mirror sidecar spawn error: ${String(e).slice(0, 160)}`);
+      this.readyFail?.(new Error(`sidecar spawn error: ${e}`));
+    });
     child.on("exit", (code) => this.onExit(code));
   }
 
