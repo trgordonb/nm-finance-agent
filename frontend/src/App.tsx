@@ -193,6 +193,17 @@ export default function App() {
         setSessionId(sid);
         sessionIdRef.current = sid;
         setPendingTip(null);
+        // load the tips for this session into the to-do strip (python
+        // loadSession parity; was dropped in the chat-only port — the badge
+        // showed but the strip never populated on open/reload)
+        refreshFollowups(sid, 0);
+        // opening the session marks its tips seen — the badge clears
+        setFollowupCounts((prev) => {
+          if (!prev[sid]) return prev;
+          const next = { ...prev };
+          delete next[sid];
+          return next;
+        });
         setItems(
           messages.map((m) => ({
             kind: "message" as const,
@@ -213,7 +224,7 @@ export default function App() {
         });
       }
     },
-    [streaming, push],
+    [streaming, push, refreshFollowups],
   );
 
   const newChat = useCallback(() => {
