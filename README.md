@@ -76,6 +76,8 @@ sends permissive CORS headers for any other origin.
 | `GET /api/sessions` | archived sessions (each carries a `summary` one-liner: fallback truncated first user message → async LLM refine via the summarizer model) |
 | `GET /api/sessions/:id` | full message history (resumable) |
 | `GET /api/memory` | rendered `<agent_memory>` block + budget usage |
+| `GET/POST /api/sessions/:sid/followups[/dismiss]` | extracted "next steps" tips (dismiss marks + badge counts) |
+| `GET /api/followups/counts` | live tip counts per session (sidebar badges) |
 | `GET /api/mcp` | mcp_servers.json listing + last-assembly connect status |
 | `POST /api/mcp/{name}/enabled` | atomic toggle (404 unknown) |
 | `POST /api/mcp/reload` | re-assemble runtime (409 while turns stream) |
@@ -146,7 +148,8 @@ registry entries or post-turn hooks, exactly like main.py's
 
 1. ~~Agentic loop + prompt memory + basic tools + SSE REST~~ ✓ step 1
 2. Nudge policy (curation loop; secondary LLM, silence-bias). (Session
-   titler ✓ — fallback + refine, sidebar `summary`)
+   titler ✓ — fallback + refine, sidebar `summary`; followups ✓ — to-do
+   strip, dismiss semantics, badges)
 3. Secondary-LLM search condensation with observability header + silent fallback
 4. Pre-flight context compression with persisted lineage
 5. Skills: agentskills.io SKILL.md files, progressive disclosure,

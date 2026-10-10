@@ -35,6 +35,12 @@ import { fallbackTitle, refineSessionTitle } from "./titler.js";
 import { loadMcpServers, setServerEnabled, type ServerStatus as McpStatus } from "./mcp-config.js";
 import { bindMcpTools, closeOpenClients } from "./mcp-tools.js";
 import type { ToolDef, ChatMessage } from "./types.js";
+import {
+  maybeExtractFollowups,
+  getFollowups,
+  followupCounts,
+  dismissFollowup,
+} from "./followups.js";
 
 type McpReport = McpStatus[];
 
@@ -250,6 +256,7 @@ app.post("/api/chat", (req, res) => {
         // Mirror the persisted turn into the semantic sidecar (no-throw).
         void mirror.recordTurn(sessionId, recordedTurn, persistable).catch(() => undefined);
         maybeTitleSession(sessionId, message, persistable);
+        maybeExtractFollowups(sessionId, persistable);
       }
       // (messages were already streamed live via the onMessage callback)
       if (turn.cancelled) {
@@ -350,6 +357,36 @@ app.post("/api/mcp/reload", async (req, res) => {
   } catch (e) {
     res.status(502).json({ detail: `re-assembly failed: ${String(e).slice(0, 200)}` });
   }
+});
+
+// --- session follow-ups ("next steps" tips, followups.py parity) -------------
+
+app.get("/api/sessions/:sessionId/followups", (req, res) => {
+  res.json(
+    getFollowups(req.params.sessionId) ?? {
+      session_id: req.params.sessionId,
+      items: [],
+      dismissed: [],
+    },
+  );
+});
+
+app.get("/api/followups/counts", (_req, res) => {
+  res.json({ counts: followupCounts() });
+});
+
+app.post("/api/sessions/:sessionId/followups/dismiss", (req, res) => {
+  const { index } = (req.body ?? {}) as { index?: number };
+  if (typeof index !== "number") {
+    res.status(400).json({ detail: "index must be a number" });
+    return;
+  }
+  const dismissed = dismissFollowup(req.params.sessionId, index);
+  if (dismissed === null) {
+    res.status(404).json({ detail: `no followups for session: ${req.params.sessionId}` });
+    return;
+  }
+  res.json({ dismissed });
 });
 
 app.post("/api/chat/cancel", (req, res) => {

@@ -1,14 +1,27 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 interface Props {
   streaming: boolean;
   onSend: (text: string) => void;
   onStop: () => void;
+  /** Bumped draft injected from outside (e.g. follow-up tips) — `n` triggers. */
+  draft?: { text: string; n: number };
 }
 
-export default function Composer({ streaming, onSend, onStop }: Props) {
+export default function Composer({ streaming, onSend, onStop, draft }: Props) {
   const [text, setText] = useState("");
   const areaRef = useRef<HTMLTextAreaElement>(null);
+
+  useEffect(() => {
+    if (!draft || draft.n === 0) return;
+    setText(draft.text);
+    const el = areaRef.current;
+    if (el) {
+      el.focus();
+      el.style.height = "auto";
+      el.style.height = `${Math.min(el.scrollHeight, 160)}px`;
+    }
+  }, [draft?.n]);
 
   const submit = () => {
     const trimmed = text.trim();

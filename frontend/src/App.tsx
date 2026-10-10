@@ -3,8 +3,17 @@
 // feed, tool-call rows, collapsible tool results, turn cancel, session restore.
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { cancelTurn, getHealth, getSessionMessages, getSessions, streamChat } from "./api";
-import type { FeedItem, Health, NewItem, SessionInfo, ToolCall } from "./types";
+import {
+  cancelTurn,
+  dismissFollowup,
+  getFollowupCounts,
+  getFollowups,
+  getHealth,
+  getSessionMessages,
+  getSessions,
+  streamChat,
+} from "./api";
+import type { FeedItem, Followups, Health, NewItem, SessionInfo, ToolCall } from "./types";
 import Sidebar from "./components/Sidebar";
 import McpTab from "./components/McpTab";
 import Feed from "./components/Feed";
@@ -20,6 +29,14 @@ export default function App() {
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [items, setItems] = useState<FeedItem[]>([]);
   const [streaming, setStreaming] = useState(false);
+  const [followups, setFollowups] = useState<Followups | null>(null);
+  const [followupCounts, setFollowupCounts] = useState<Record<string, number>>({});
+  const [draft, setDraft] = useState<{ text: string; n: number }>({ text: "", n: 0 });
+  // the follow-up tip currently sitting in the composer (dismissed on submit)
+  const [pendingTip, setPendingTip] = useState<{ sid: string; index: number; text: string } | null>(null);
+  // mirror of sessionId for stale async followups fetches
+  const sessionIdRef = useRef<string | null>(null);
+  // track streaming for stale guards
   const turnIdRef = useRef<string | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
@@ -29,12 +46,40 @@ export default function App() {
       .catch(() => undefined);
   }, []);
 
+  const refreshFollowupCounts = useCallback(() => {
+    getFollowupCounts()
+      .then((r) => setFollowupCounts(r.counts))
+      .catch(() => undefined);
+  }, []);
+
+  const refreshFollowups = useCallback((sid: string | null, attempt = 0) => {
+    if (!sid) {
+      setFollowups(null);
+      return;
+    }
+    getFollowups(sid)
+      .then((f) => {
+        if (sessionIdRef.current !== sid) return; // user moved to another session
+        setFollowups(f);
+        const live = f.items.filter((_, i) => !f.dismissed.includes(i));
+        // extraction runs after `done` — secondary-LLM latency (~2-10s), so
+        // poll until it lands or the window closes (python parity)
+        if (attempt < 6 && live.length === 0) {
+          window.setTimeout(() => {
+            if (sessionIdRef.current === sid) void refreshFollowups(sid, attempt + 1);
+          }, 5000);
+        }
+      })
+      .catch(() => undefined);
+  }, []);
+
   useEffect(() => {
     getHealth()
       .then(setHealth)
       .catch(() => undefined);
     refreshSessions();
-  }, [refreshSessions]);
+    refreshFollowupCounts();
+  }, [refreshSessions, refreshFollowupCounts]);
 
   const push = useCallback((item: NewItem) => {
     setItems((prev) => [...prev, { id: nextId(), ...item } as FeedItem]);
@@ -46,6 +91,7 @@ export default function App() {
         case "session": {
           turnIdRef.current = String(data.turn_id);
           setSessionId(String(data.session_id));
+          sessionIdRef.current = String(data.session_id);
           break;
         }
         case "message": {
@@ -77,6 +123,9 @@ export default function App() {
           }
           setStreaming(false);
           refreshSessions();
+          refreshFollowups(String(data.session_id ?? ""), 0);
+          // extraction lands up to ~10s after done — badge refresh then
+          window.setTimeout(refreshFollowupCounts, 12000);
           // The session titler refines the fallback title asynchronously
           // (secondary LLM lands ~2-8s after the first turn) — re-fetch so the
           // sidebar picks up the refined one-liner without a manual reload
@@ -94,6 +143,20 @@ export default function App() {
       if (streaming || !text.trim()) return;
       setStreaming(true);
       push({ kind: "message", role: "user", content: text });
+      // submitting a follow-up tip = acting on it: dismiss it from the list
+      if (pendingTip && pendingTip.sid === sessionIdRef.current) {
+        const acted = text === pendingTip.text || text.startsWith(pendingTip.text.slice(0, 24));
+        if (acted) {
+          const sid = pendingTip.sid;
+          dismissFollowup(sid, pendingTip.index)
+            .then(() => refreshFollowupCounts())
+            .catch(() => undefined);
+          setFollowups((f) =>
+            f && f.session_id === sid ? { ...f, dismissed: [...f.dismissed, pendingTip.index] } : f,
+          );
+        }
+        setPendingTip(null);
+      }
       const controller = new AbortController();
       abortRef.current = controller;
       try {
@@ -113,7 +176,7 @@ export default function App() {
         refreshSessions();
       }
     },
-    [streaming, sessionId, handleEvent, push, refreshSessions],
+    [streaming, sessionId, handleEvent, push, refreshSessions, pendingTip, refreshFollowupCounts],
   );
 
   const stop = useCallback(() => {
@@ -128,6 +191,8 @@ export default function App() {
       try {
         const { messages } = await getSessionMessages(sid);
         setSessionId(sid);
+        sessionIdRef.current = sid;
+        setPendingTip(null);
         setItems(
           messages.map((m) => ({
             kind: "message" as const,
@@ -154,8 +219,40 @@ export default function App() {
   const newChat = useCallback(() => {
     if (streaming) return;
     setSessionId(null);
+    sessionIdRef.current = null;
+    setFollowups(null);
+    setPendingTip(null);
     setItems([]);
   }, [streaming]);
+
+  const dismissFollowupItem = useCallback(
+    (index: number) => {
+      const sid = sessionIdRef.current;
+      if (!sid) return;
+      dismissFollowup(sid, index)
+        .then(() => {
+          setFollowups((f) => (f ? { ...f, dismissed: [...f.dismissed, index] } : f));
+          refreshFollowupCounts();
+        })
+        .catch(() => undefined);
+    },
+    [refreshFollowupCounts],
+  );
+
+  const prefillComposer = useCallback(
+    (text: string, followupIndex?: number) => {
+      const sid = sessionIdRef.current;
+      setDraft((d) => ({ text, n: d.n + 1 }));
+      setPendingTip(followupIndex != null && sid ? { sid, index: followupIndex, text } : null);
+    },
+    [],
+  );
+
+  const liveFollowups = followups
+    ? followups.items
+        .map((text, idx) => ({ idx, text }))
+        .filter((it) => !followups.dismissed.includes(it.idx))
+    : [];
 
   return (
     <div className="app">
@@ -165,6 +262,7 @@ export default function App() {
         activeId={sessionId}
         streaming={streaming}
         settingsOpen={view === "settings"}
+        followupCounts={followupCounts}
         onNewChat={newChat}
         onSelect={loadSession}
         onOpenSettings={() => setView("settings")}
@@ -202,7 +300,27 @@ export default function App() {
             )}
             <Feed items={items} streaming={streaming} />
           </div>
-          <Composer streaming={streaming} onSend={send} onStop={stop} />
+          {liveFollowups.length > 0 && (
+            <div className="followups" aria-label="Next steps">
+              <div className="followups-title">next steps</div>
+              {liveFollowups.map(({ idx, text }) => (
+                <div key={idx} className="followup" onClick={() => prefillComposer(text, idx)}>
+                  <span className="followup-text">{text}</span>
+                  <button
+                    className="followup-x"
+                    title="dismiss"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      dismissFollowupItem(idx);
+                    }}
+                  >
+                    ✕
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+          <Composer streaming={streaming} onSend={send} onStop={stop} draft={draft} />
         </main>
         ) : (
           <McpTab />

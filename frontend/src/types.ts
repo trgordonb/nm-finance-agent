@@ -83,6 +83,16 @@ export interface McpListResponse {
   servers: McpServerInfo[];
 }
 
+/** Extracted "next steps" tips for a session (followups parity). `dismissed`
+ *  indexes into `items`; dismissed items stay in the payload. */
+export interface Followups {
+  session_id: string;
+  items: string[];
+  dismissed: number[];
+  model?: string | null;
+  created_at?: number | null;
+}
+
 export interface ApiMessage {
   role: Role;
   content: string;

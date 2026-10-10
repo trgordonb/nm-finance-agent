@@ -69,6 +69,10 @@ export interface ChatOpts {
   model?: string;
   /** Omit the reasoning block (tiny free models bill/deduplicate badly). */
   noReasoning?: boolean;
+  /** Lower max_tokens for short-extraction calls (OpenRouter reasoning
+   *  models count reasoning tokens against the cap and can return empty
+   *  content with finish_reason=length; python parity max_tokens=512). */
+  maxTokens?: number;
 }
 
 export async function chat(
@@ -87,7 +91,7 @@ export async function chat(
 
   const body: Record<string, unknown> = {
     model,
-    max_tokens: MAX_COMPLETION_TOKENS,
+    max_tokens: opts.maxTokens ?? MAX_COMPLETION_TOKENS,
     temperature: 1.0,
     messages: messages.map((m) => {
       if (m.tool_calls) {

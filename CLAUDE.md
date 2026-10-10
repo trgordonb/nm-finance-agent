@@ -30,6 +30,10 @@ nm-finance-agent/
 │   ├── store.ts          # SessionStore: turn-rows, tool-call fidelity, FTS5 fallback chain
 │   ├── tracing.ts        # LangSmith REST runs client (no SDK; fire-and-forget)
 │   ├── titler.ts         # Session titler: sync fallback + async refine (summarizer model)
+│   ├── followups.ts      # End-of-turn "next steps" extraction: regex
+│   │                     #   pre-filter + cheap secondary-LLM pass; a
+│   │                     #   `followups` table in the archive (repo-owned)
+│   │                     #   powers the to-do strip + sidebar badges
 │   ├── workspace.ts      # resolveInWorkspace() + guardWorkspaceWrite()
 │   ├── config.ts         # All env vars; dotenv(override=true)
 │   ├── types.ts          # ToolDef, ChatMessage, ToolCall
@@ -109,6 +113,7 @@ servers).
   (unresolved → server skipped fail-closed). Tools namespace as
   `<server>_<tool>`; GET /api/mcp, POST /api/mcp/{name}/enabled,
   POST /api/mcp/reload (409 while turns are in flight).
+- Follow-ups: `FOLLOWUPS_ENABLED=0` disables the extractor.
 - LLM (OpenRouter for all models): `OPENROUTER_API_KEY`,
   `OPENROUTER_BASE_URL` (default https://openrouter.ai/api/v1),
   `OPENROUTER_MODEL_MAIN` (default z-ai/glm-5.3-flash; legacy `OPENAI_*`

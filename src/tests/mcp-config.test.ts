@@ -71,3 +71,20 @@ test("keep_tools: exact name or _<tool> suffix only (multi-word tool names)", ()
   assert.equal(pred("luxalgo_discovery_data"), false);
   assert.equal(keepToolsFilter(undefined)("anything"), true);
 });
+
+test("followups: parseFollowups JSON-array extraction + status: no false positives", async () => {
+  const { parseFollowups, looksLikeFollowups } = await import("../followups.js");
+  assert.deepEqual(
+    parseFollowups('noise before ["Run a head-to-head","Extend the falsifier window"] trailing'),
+    ["Run a head-to-head", "Extend the falsifier window"],
+  );
+  assert.deepEqual(parseFollowups("no json here"), []);
+  assert.deepEqual(parseFollowups("[\"try it\",\"x\"]", 1), ["try it"], "cap respected");
+  // prefilter: needs marker + 80 chars
+  assert.equal(looksLikeFollowups("short. next steps only"), false);
+  assert.equal(looksLikeFollowups("a".repeat(200)), false, "no marker");
+  assert.equal(
+    looksLikeFollowups("Done with the backtest, metrics below. Natural next steps you might want: run the walk-forward check, then compare fills."),
+    true,
+  );
+});

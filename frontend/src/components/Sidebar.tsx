@@ -49,6 +49,8 @@ interface Props {
   activeId: string | null;
   streaming: boolean;
   settingsOpen: boolean;
+  /** Unseen follow-up tip counts per session id (sidebar badges). */
+  followupCounts: Record<string, number>;
   onNewChat: () => void;
   onSelect: (sessionId: string) => void;
   onOpenSettings: () => void;
@@ -60,6 +62,7 @@ export default function Sidebar({
   activeId,
   streaming,
   settingsOpen,
+  followupCounts,
   onNewChat,
   onSelect,
   onOpenSettings,
@@ -114,6 +117,14 @@ export default function Sidebar({
                     </span>
                     <span className="session-time">{relativeTime(s.created_at)}</span>
                     {s.summary && <span className="session-title-text">{s.summary}</span>}
+                    {(followupCounts[s.session_id] ?? 0) > 0 && s.session_id !== activeId && (
+                      <span
+                        className="followup-badge"
+                        title={`${followupCounts[s.session_id]} follow-up suggestion(s) to review`}
+                      >
+                        {followupCounts[s.session_id]}
+                      </span>
+                    )}
                   </button>
                 ))}
             </div>

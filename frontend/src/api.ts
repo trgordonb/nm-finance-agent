@@ -2,7 +2,7 @@
 // health, sessions, chat streaming, turn cancel. Everything identical to the
 // langgraph-demo client except session/health field names and no followups.
 
-import type { ApiMessage, Health, McpListResponse, SessionInfo } from "./types";
+import type { ApiMessage, Followups, Health, McpListResponse, SessionInfo } from "./types";
 
 async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, init);
@@ -42,6 +42,26 @@ export async function setMcpServerEnabled(name: string, enabled: boolean): Promi
 
 export const reloadMcp = () =>
   fetchJSON<{ status: string; mcp_tools: number }>("/api/mcp/reload", { method: "POST" });
+
+/** Extracted "next steps" tips shown as a to-do strip above the composer. */
+export const getFollowups = (sessionId: string) =>
+  fetchJSON<Followups>(`/api/sessions/${encodeURIComponent(sessionId)}/followups`);
+
+/** Unseen follow-up counts per session id — sidebar badges. Fetching a
+ *  session's followups marks it seen, which drops it from here. */
+export const getFollowupCounts = () =>
+  fetchJSON<{ counts: Record<string, number> }>("/api/followups/counts");
+
+export async function dismissFollowup(sessionId: string, index: number): Promise<void> {
+  await fetchJSON<{ dismissed: number[] }>(
+    `/api/sessions/${encodeURIComponent(sessionId)}/followups/dismiss`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ index }),
+    },
+  );
+}
 
 export async function cancelTurn(turnId: string): Promise<void> {
   await fetch("/api/chat/cancel", {
