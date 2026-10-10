@@ -76,6 +76,9 @@ sends permissive CORS headers for any other origin.
 | `GET /api/sessions` | archived sessions (each carries a `summary` one-liner: fallback truncated first user message → async LLM refine via the summarizer model) |
 | `GET /api/sessions/:id` | full message history (resumable) |
 | `GET /api/memory` | rendered `<agent_memory>` block + budget usage |
+| `GET /api/mcp` | mcp_servers.json listing + last-assembly connect status |
+| `POST /api/mcp/{name}/enabled` | atomic toggle (404 unknown) |
+| `POST /api/mcp/reload` | re-assemble runtime (409 while turns stream) |
 | `POST /api/chat` `{message, session_id?}` | **SSE**: `session` → `message`* → (`error`)? → `done` |
 | `POST /api/chat/cancel` `{turn_id}` | aborts the active turn |
 

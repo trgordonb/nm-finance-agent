@@ -66,6 +66,23 @@ export interface Health {
   sessions: number;
 }
 
+/** One MCP server from mcp_servers.json (GET /api/mcp). */
+export interface McpServerInfo {
+  name: string;
+  enabled: boolean;
+  description?: string;
+  transport?: string;
+  error?: string | null;
+  connected?: boolean | null;
+  tool_count?: number | null;
+  connect_error?: string | null;
+}
+
+export interface McpListResponse {
+  assembled: boolean;
+  servers: McpServerInfo[];
+}
+
 export interface ApiMessage {
   role: Role;
   content: string;

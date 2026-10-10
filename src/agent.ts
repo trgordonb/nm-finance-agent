@@ -49,14 +49,21 @@ export interface TurnResult {
 }
 
 export class AgentLoop {
-  readonly tools: Map<string, ToolDef>;
+  tools: Map<string, ToolDef>;
   private memory: PromptMemory;
   private maxIterations: number;
 
-  constructor(opts: { memory: PromptMemory; store: SessionDriver; mirror?: AgentDbMirror | null; maxIterations?: number }) {
+  constructor(opts: { memory: PromptMemory; store: SessionDriver; tools?: ToolDef[]; mirror?: AgentDbMirror | null; maxIterations?: number }) {
     this.memory = opts.memory;
     this.maxIterations = opts.maxIterations ?? Number(process.env.BUDGET_TOOL_MAX_ITERATIONS ?? "25");
-    this.tools = new Map<string, ToolDef>(buildToolRegistry(opts.store, opts.mirror).map((t) => [t.name, t]));
+    const base = opts.tools ?? buildToolRegistry(opts.store, opts.mirror);
+    this.tools = new Map<string, ToolDef>(base.map((t) => [t.name, t]));
+  }
+
+  /** Replace the bound tool set (MCP runtime reload). New list applies to
+   *  every subsequent turn; in-flight turns keep their own registry. */
+  setTools(tools: ToolDef[]): void {
+    this.tools = new Map<string, ToolDef>(tools.map((t) => [t.name, t]));
   }
 
   /** Memory block is rendered once per session by callers and passed in here.

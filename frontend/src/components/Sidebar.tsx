@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronRight } from "lucide-react";
+import { ChevronRight, Settings } from "lucide-react";
 import type { Health, SessionInfo } from "../types";
 
 function relativeTime(iso: string): string {
@@ -48,11 +48,22 @@ interface Props {
   sessions: SessionInfo[];
   activeId: string | null;
   streaming: boolean;
+  settingsOpen: boolean;
   onNewChat: () => void;
   onSelect: (sessionId: string) => void;
+  onOpenSettings: () => void;
 }
 
-export default function Sidebar({ health, sessions, activeId, streaming, onNewChat, onSelect }: Props) {
+export default function Sidebar({
+  health,
+  sessions,
+  activeId,
+  streaming,
+  settingsOpen,
+  onNewChat,
+  onSelect,
+  onOpenSettings,
+}: Props) {
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>(DEFAULT_COLLAPSED);
   const groups = groupSessions(sessions);
 
@@ -115,6 +126,14 @@ export default function Sidebar({ health, sessions, activeId, streaming, onNewCh
           <>
             <div className="footer-row">
               <span className="dot ok" /> {health.model}
+              <button
+                className={`gear${settingsOpen ? " active" : ""}`}
+                aria-label="Settings — MCP servers"
+                title="MCP server settings"
+                onClick={onOpenSettings}
+              >
+                <Settings size={14} />
+              </button>
             </div>
             <div className="footer-row dim">
               memory {health.memory_chars}/{health.memory_budget} · {health.tools.length} tools

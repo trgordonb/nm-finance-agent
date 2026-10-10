@@ -1,0 +1,97 @@
+{
+  "version": 1,
+  "servers": {
+    "agent_browser": {
+      "transport": "stdio",
+      "command": "agent-browser",
+      "args": [
+        "mcp",
+        "--tools",
+        "core"
+      ],
+      "env": {
+        "AGENT_BROWSER_SESSION": "nm-agent"
+      },
+      "enabled": true,
+      "description": "Local Chrome automation (Rust CLI, core tool profile); dedicated nm-agent browser session"
+    },
+    "luxalgo": {
+      "transport": "stdio",
+      "command": "npx",
+      "args": [
+        "-y",
+        "@luxalgo/mcp"
+      ],
+      "keep_tools": [
+        "library_search",
+        "library_get_concept",
+        "library_get_indicator",
+        "library_get_source_code",
+        "library_list_concepts",
+        "library_list_indicators",
+        "library_list_tags",
+        "library_list_families",
+        "library_get_family",
+        "trackers_datasets",
+        "trackers_query",
+        "trackers_latest",
+        "trackers_ticker"
+      ],
+      "enabled": true,
+      "description": "LuxAlgo: indicator/library docs + market trackers (public, keyless; journal/brokers/account filtered out)"
+    },
+    "agentdb": {
+      "transport": "stdio",
+      "command": "node_modules/.bin/agentdb",
+      "args": [
+        "mcp",
+        "start"
+      ],
+      "env": {
+        "AGENTDB_PATH": "workspace/agentdb-mcp.db"
+      },
+      "keep_tools": [
+        "agentdb_init",
+        "agentdb_stats",
+        "agentdb_pattern_store",
+        "agentdb_pattern_search",
+        "reflexion_store",
+        "reflexion_retrieve",
+        "skill_create",
+        "skill_search",
+        "reward_signal",
+        "learning_feedback",
+        "learning_start_session",
+        "learning_end_session",
+        "learning_metrics",
+        "consolidate_now"
+      ],
+      "enabled": true,
+      "description": "AgentDB MCP pilot (npm v2 stdio): Reflexion episodes + skill library + ReasoningBank + learning loop; TypeScript-side binding of the cognitive-memory tools (Gate 1)"
+    },
+    "finance_toolkit": {
+      "transport": "streamable_http",
+      "url": "https://financetoolkit.jeroenbouma.com/mcp",
+      "headers": {
+        "Authorization": "Bearer ${FINANCIAL_MODELING_PREP_API_KEY}"
+      },
+      "keep_tools": [
+        "breadth",
+        "discovery",
+        "market_data",
+        "models",
+        "momentum",
+        "overlap",
+        "rates",
+        "risk",
+        "volatility",
+        "search_categories",
+        "search_by_category",
+        "search_metrics",
+        "search_instruments"
+      ],
+      "enabled": false,
+      "description": "FinanceToolkit analytics (FMP-backed; dormant since 2026-09; streamable_http binding implemented)"
+    }
+  }
+}

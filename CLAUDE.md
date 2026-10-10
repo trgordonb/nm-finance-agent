@@ -35,6 +35,11 @@ nm-finance-agent/
 │   ├── types.ts          # ToolDef, ChatMessage, ToolCall
 │   ├── tools/            # fs.ts, shell.ts, web.ts (Jina Reader + Tavily),
 │   │                     #   memory_manage.ts, session_search.ts, index.ts (registry)
+│   ├── mcp-config.ts     # mcp_servers.json loader: ${VAR} interpolation
+│   │                     #   fail-closed, atomic enable/disable, keep_tools
+│   ├── mcp-tools.ts      # per-server MCP binding (stdio/http via
+│   │                     #   @modelcontextprotocol/sdk) -> ToolDefs;
+│   │                     #   one bad server skipped, never fatal
 │   └── tests/            # contracts + workspace + hybrid tests (19)
 ├── frontend/             # Chat-only React app (ported from langgraph-demo; vite proxy → :3001)
 ├── memories/             # MEMORY.md + USER.md (local-only, agent-curated)
@@ -98,6 +103,12 @@ servers).
 
 ## Environment (see .env.example)
 
+- MCP: `mcp_servers.json` (repo root, git-tracked; `MCP_SERVERS_FILE`
+  override) — stdio / streamable_http / sse transports, per-server
+  enable/disable, `keep_tools` filters, `${VAR}`-interpolated secrets
+  (unresolved → server skipped fail-closed). Tools namespace as
+  `<server>_<tool>`; GET /api/mcp, POST /api/mcp/{name}/enabled,
+  POST /api/mcp/reload (409 while turns are in flight).
 - LLM (OpenRouter for all models): `OPENROUTER_API_KEY`,
   `OPENROUTER_BASE_URL` (default https://openrouter.ai/api/v1),
   `OPENROUTER_MODEL_MAIN` (default z-ai/glm-5.3-flash; legacy `OPENAI_*`
@@ -139,8 +150,8 @@ servers).
 ## Roadmap (Hermes-order, from nm-memory-layer doctrine)
 
 1. ~~Agentic loop + prompt memory + basic tools + SSE REST~~ ✓ 2026-10-09
-2. ~~Session titler~~ ✓ (2026-10-10) + nudge policy (secondary-LLM curation,
-   silence-bias) still open
+2. ~~Session titler ✓~~ · ~~MCP binding + toggles + McpTab UI ✓ (2026-10-10)~~
+   — remaining: nudge policy (secondary-LLM curation, silence-bias)
 3. Secondary-LLM search condensation (observability header, silent fallback)
 4. Pre-flight context compression with persisted lineage
 5. Skills: agentskills.io SKILL.md files, progressive disclosure,

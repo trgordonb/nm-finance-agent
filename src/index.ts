@@ -28,10 +28,15 @@ import { PromptMemory } from "./memory.js";
 import { SQLiteSessionStore } from "./store.js";
 import { AgentDbMirror } from "./agentdb-mirror.js";
 import { AgentLoop } from "./agent.js";
+import { buildToolRegistry } from "./tools/index.js";
 import { enabled as tracingEnabled, TRACE_PROJECT } from "./tracing.js";
 import { log } from "./logger.js";
 import { fallbackTitle, refineSessionTitle } from "./titler.js";
-import type { ChatMessage } from "./types.js";
+import { loadMcpServers, setServerEnabled, type ServerStatus as McpStatus } from "./mcp-config.js";
+import { bindMcpTools, closeOpenClients } from "./mcp-tools.js";
+import type { ToolDef, ChatMessage } from "./types.js";
+
+type McpReport = McpStatus[];
 
 // --- runtime assembly ---------------------------------------------------------
 
@@ -49,6 +54,51 @@ void mirror
   })
   .catch(() => undefined);
 const loop = new AgentLoop({ memory, store, mirror });
+
+// MCP runtime assembly (python `_load_mcp_tools` + `assemble_agent_runtime`
+// parity): base registry + per-server bound MCP tools; re-runnable for the
+// reload endpoint. One bad server is skipped with a warning, never fatal.
+let mcpReport: McpReport | null = null;
+let runtimeReady: Promise<void> | null = null;
+
+async function assembleRuntime(): Promise<McpReport> {
+  const base = buildBaseRegistry();
+  const load = loadMcpServers();
+  const { tools, report } = await bindMcpTools(load);
+  const all: ToolDef[] = [...base, ...tools];
+  loop.setTools(all);
+  log.info(`runtime assembled: ${all.length} tools (${tools.length} from ${Object.keys(load.clientServers).length} MCP server(s))`);
+  return report;
+}
+
+/** The always-bound core registry (fs/shell/web/memory/session_search). */
+function buildBaseRegistry() {
+  return buildToolRegistry(store, mirror);
+}
+
+function getRuntime(): Promise<void> {
+  if (!runtimeReady) {
+    runtimeReady = (async () => {
+      mcpReport = await assembleRuntime();
+    })().catch((e) => {
+      // keep the server alive, toolless MCP; base tools remain bound
+      log.error(`runtime assembly failed (base tools only): ${String(e).slice(0, 200)}`);
+    });
+  }
+  return runtimeReady;
+}
+
+void mirror_initializeGracefully();
+
+function mirror_initializeGracefully(): Promise<void> {
+  return mirror
+    .initialize()
+    .then((status) => {
+      if (!status.enabled) log.info(`agentdb mirror off — ${status.reason}`);
+      return getRuntime(); // MCP binds after the mirror sidecar decision
+    })
+    .catch(() => getRuntime());
+}
 
 const app = express();
 app.use(express.json({ limit: "4mb" }));
@@ -84,6 +134,8 @@ app.get("/api/health", (_req: Request, res: Response) => {
     tools: [...loop.tools.keys()],
     sessions: store.listSessions().length,
     mirror: mirror.getFastStatus(),
+    mcp_connected: mcpReport ? mcpReport.filter((r) => r.connected && r.enabled).length : null,
+    mcp_tools: [...loop.tools.keys()].filter((n) => n.includes("_")).length,
     tracing: tracingEnabled() ? TRACE_PROJECT : null,
     time: Date.now() / 1000,
   });
@@ -172,6 +224,7 @@ app.post("/api/chat", (req, res) => {
 
   (async () => {
     try {
+      await getRuntime(); // lazy runtime assembly (python getRuntime parity)
       const history = store.loadSession(sessionId);
       write("session", { session_id: sessionId, turn_id: turnId, resumed: history.length > 0 });
       const turn = await loop.runTurn(
@@ -240,6 +293,64 @@ function maybeTitleSession(sessionId: string, userMessage: string, newMessages: 
     log.warn(`session title fallback failed: ${String(e).slice(0, 140)}`);
   }
 }
+
+// --- MCP surface (python server.py parity) -----------------------------------
+// Toggles rewrite mcp_servers.json atomically and apply at the next assembly:
+// the reload endpoint re-assembles eagerly (409 while turns are in flight —
+// an in-flight turn keeps its own registry and finishes unaffected).
+
+app.get("/api/mcp", (_req, res) => {
+  const { statuses } = loadMcpServersSafe();
+  const lastReport = new Map((mcpReport ?? []).map((r: McpStatus) => [r.name, r]));
+  const servers = statuses.map((s) => {
+    const r: Partial<McpStatus> = lastReport.get(s.name) ?? {};
+    return { ...s, connected: r.connected ?? null, tool_count: r.tool_count ?? null, connect_error: r.connect_error ?? null };
+  });
+  res.json({ assembled: mcpReport !== null, servers });
+});
+
+function loadMcpServersSafe() {
+  try {
+    return loadMcpServers();
+  } catch (e) {
+    log.warn(`mcp config unreadable: ${String(e).slice(0, 120)}`);
+    return { clientServers: {}, statuses: [], raw: {} };
+  }
+}
+
+app.post("/api/mcp/:name/enabled", (req, res) => {
+  const enabled = (req.body ?? {}) as { enabled?: boolean };
+  if (typeof enabled.enabled !== "boolean") {
+    res.status(400).json({ detail: "enabled must be boolean" });
+    return;
+  }
+  const result = setServerEnabled(req.params.name, enabled.enabled);
+  if (result.notFound) {
+    res.status(404).json({ detail: result.status });
+    return;
+  }
+  res.json({ status: result.status });
+});
+
+app.post("/api/mcp/reload", async (req, res) => {
+  if (ACTIVE_TURNS.size > 0) {
+    res.status(409).json({ detail: "turns in flight — try again when idle" });
+    return;
+  }
+  try {
+    // drop stale MCP clients, re-bind fresh ones, keep the base registry
+    closeOpenClients();
+    mcpReport = await assembleRuntime();
+    const tools = [...loop.tools.keys()];
+    res.json({
+      status: "OK: runtime re-assembled",
+      mcp_tools: tools.length - buildBaseRegistry().length,
+      mcp_report: mcpReport,
+    });
+  } catch (e) {
+    res.status(502).json({ detail: `re-assembly failed: ${String(e).slice(0, 200)}` });
+  }
+});
 
 app.post("/api/chat/cancel", (req, res) => {
   const turnId = (req.body ?? {}) as { turn_id: string };

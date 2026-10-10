@@ -2,7 +2,7 @@
 // health, sessions, chat streaming, turn cancel. Everything identical to the
 // langgraph-demo client except session/health field names and no followups.
 
-import type { ApiMessage, Health, SessionInfo } from "./types";
+import type { ApiMessage, Health, McpListResponse, SessionInfo } from "./types";
 
 async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, init);
@@ -25,6 +25,23 @@ export const getSessionMessages = (sessionId: string) =>
   fetchJSON<{ session_id: string; messages: ApiMessage[] }>(
     `/api/sessions/${encodeURIComponent(sessionId)}`,
   );
+
+/** MCP servers (mcp_servers.json): list, toggle, reload the assembled runtime. */
+export const getMcpServers = () => fetchJSON<McpListResponse>("/api/mcp");
+
+export async function setMcpServerEnabled(name: string, enabled: boolean): Promise<void> {
+  await fetchJSON<{ status: string }>(
+    `/api/mcp/${encodeURIComponent(name)}/enabled`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    },
+  );
+}
+
+export const reloadMcp = () =>
+  fetchJSON<{ status: string; mcp_tools: number }>("/api/mcp/reload", { method: "POST" });
 
 export async function cancelTurn(turnId: string): Promise<void> {
   await fetch("/api/chat/cancel", {

@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { cancelTurn, getHealth, getSessionMessages, getSessions, streamChat } from "./api";
 import type { FeedItem, Health, NewItem, SessionInfo, ToolCall } from "./types";
 import Sidebar from "./components/Sidebar";
+import McpTab from "./components/McpTab";
 import Feed from "./components/Feed";
 import Composer from "./components/Composer";
 
@@ -13,6 +14,7 @@ let idCounter = 0;
 const nextId = () => `item-${++idCounter}`;
 
 export default function App() {
+  const [view, setView] = useState<"chat" | "settings">("chat");
   const [health, setHealth] = useState<Health | null>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -156,15 +158,31 @@ export default function App() {
         sessions={sessions}
         activeId={sessionId}
         streaming={streaming}
+        settingsOpen={view === "settings"}
         onNewChat={newChat}
         onSelect={loadSession}
+        onOpenSettings={() => setView("settings")}
       />
       <div className="content">
         <div className="tabbar" role="tablist">
-          <button className="tab active" role="tab" aria-selected={true}>
+          <button
+            className={`tab${view === "chat" ? " active" : ""}`}
+            role="tab"
+            aria-selected={view === "chat"}
+            onClick={() => setView("chat")}
+          >
             Chat
           </button>
+          <button
+            className={`tab${view === "settings" ? " active" : ""}`}
+            role="tab"
+            aria-selected={view === "settings"}
+            onClick={() => setView("settings")}
+          >
+            MCP
+          </button>
         </div>
+        {view === "chat" ? (
         <main className="main">
           <div className="feed" aria-live="polite">
             {items.length === 0 && (
@@ -180,6 +198,9 @@ export default function App() {
           </div>
           <Composer streaming={streaming} onSend={send} onStop={stop} />
         </main>
+        ) : (
+          <McpTab />
+        )}
       </div>
     </div>
   );

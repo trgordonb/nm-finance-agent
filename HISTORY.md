@@ -5,6 +5,24 @@ The general build order (and the substrate discussion behind it) lives in the
 conversation history of the nm-memory-layer comparison; this file tracks the
 repo itself.
 
+## 2026-10-10 — MCP port (config, binding, UI) + titler + streaming fixes
+
+- **MCP ported from langgraph-demo** (mcp_config.py + server.py endpoints +
+  McpTab UI): `mcp_servers.json` (git-tracked, `${VAR}` interpolation
+  fail-closed, atomic toggle rewrites, `keep_tools` exact/suffix filter),
+  per-server binding via `@modelcontextprotocol/sdk` (stdio verified live on
+  agent-blog `agentdb` npm + `agent-browser` Rust CLI + luxalgo npx; the
+  agentdb alpha wrapper's sync/await bugs avoided — SDK client calls are
+  awaited), tools namespaced `<server>_<tool>`. One bad server warns+skips.
+  Runtime assembly is lazy with a lock (python parity), re-runnable via
+  POST /api/mcp/reload (409 while turns stream; in-flight turns keep their
+  registry). Verified live: 3 servers → 56 MCP tools (29+13+14, keep_tools
+  exact) + 11 base = 67 bound; luxalgo_trackers_ticker used by the agent in a
+  real turn; disable→reload (67→42) →re-enable→reload (back to 56).
+  Frontend: McpTab (python parity listing/toggles/reload) + settings-tab +
+  sidebar gear icon. `finance_toolkit` streamable_http entry carried over
+  (dormant), transport implemented.
+
 ## 2026-10-10 — streaming fixes, recovery semantics, OpenRouter cutover, hybrid recall
 
 - **Incremental SSE streaming.** The chat endpoint was buffering everything
