@@ -77,6 +77,12 @@ export default function App() {
           }
           setStreaming(false);
           refreshSessions();
+          // The session titler refines the fallback title asynchronously
+          // (secondary LLM lands ~2-8s after the first turn) — re-fetch so the
+          // sidebar picks up the refined one-liner without a manual reload
+          // (python App.tsx parity). Free-tier models can exceed 5s: two hops.
+          window.setTimeout(refreshSessions, 5000);
+          window.setTimeout(refreshSessions, 12000);
           break;
       }
     },

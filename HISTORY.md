@@ -66,7 +66,17 @@ repo itself.
   (which counted the human message inside its slice) while our slice excludes
   the user row; gate now `>= 1`. Titles verified live: fallback within 1s,
   refine overwrite ~8s, second-chat regeneration blocked.
-- **Contract-test count**: 22 (`contracts` + `workspace` + `hybrid`).
+- **Titler displayed nothing in the UI** (post-verification debugging): the
+  backend refined titles correctly but the frontend never re-fetched — the
+  chat-only App port had dropped python's timed refetch that exists precisely
+  for the async refine landing *after* the turn-complete event. Restored as
+  two hops (5s + 12s; free-tier models can exceed 5s). Also: free-tier
+  summarizer intermittently returns HTTP 200 with an EMPTY body
+  (`session titler failed: empty title response` in the WARN log, fallback
+  title silently surviving) — `refineSessionTitle` now retries once after
+  2s; both noRecovery strings verified live ("Robust Title Verification
+  Completed" within the refetch window). Docs + UI title span styling in the
+  sidebar.
 
 
 ## 2026-10-09 — ground-up TS harness (all of today's increments)

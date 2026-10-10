@@ -27,21 +27,37 @@ export async function refineSessionTitle(
   firstUserMessage: string,
   firstAssistantReply: string,
 ): Promise<{ title: string; model: string }> {
-  const response = await chat(
-    [
-      { role: "system", content: TITLE_SYSTEM },
-      {
-        role: "user",
-        content:
-          `User asked: ${firstUserMessage.slice(0, 500)}\n\n` +
-          `Agent's first reply (excerpt): ${(firstAssistantReply || "(empty)").slice(0, 300)}\n\n` +
-          "One-line title:",
-      },
-    ],
-    undefined,
-    { model: OPENROUTER_MODEL_SUMMARIZER, noReasoning: true, },
-  );
-  const title = response.content.trim().replace(/^["“']|["”']\.*$/g, "").slice(0, 80).trim();
-  if (!title || title.length < 4) throw new Error("empty title response");
-  return { title, model: `openrouter/${OPENROUTER_MODEL_SUMMARIZER}` };
+  const prompt: Array<{ role: "system" | "user"; content: string }> = [
+    { role: "system", content: TITLE_SYSTEM },
+    {
+      role: "user",
+      content:
+        `User asked: ${firstUserMessage.slice(0, 500)}\n\n` +
+        `Agent's first reply (excerpt): ${(firstAssistantReply || "(empty)").slice(0, 300)}\n\n` +
+        "One-line title:",
+    },
+  ];
+  // Free-tier models occasionally return HTTP 200 with an empty body — one
+  // spaced retry, then surface the failure (the fallback title stays).
+  let lastErr: Error | null = null;
+  for (let attempt = 1; attempt <= 2; attempt++) {
+    try {
+      const response = await chat(prompt, undefined, {
+        model: OPENROUTER_MODEL_SUMMARIZER,
+        noReasoning: true,
+      });
+      const title = response.content
+        .trim()
+        .replace(/^["'“”]+|["'“”]+$/g, "")
+        .replace(/\.$/, "")
+        .slice(0, 80)
+        .trim();
+      if (!title || title.length < 4) throw new Error("empty title response");
+      return { title, model: `openrouter/${OPENROUTER_MODEL_SUMMARIZER}` };
+    } catch (e) {
+      lastErr = e as Error;
+      if (attempt === 1) await new Promise((r) => setTimeout(r, 2000));
+    }
+  }
+  throw lastErr ?? new Error("title refine failed");
 }
