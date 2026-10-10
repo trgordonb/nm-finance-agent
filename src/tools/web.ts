@@ -9,6 +9,10 @@ function jinaKey(): string {
   return process.env.JINA_API_KEY ?? "";
 }
 
+function tavilyKey(): string {
+  return process.env.TAVILY_API_KEY ?? "";
+}
+
 function jinaHeaders(accept: string): Record<string, string> {
   const h: Record<string, string> = { Accept: accept };
   const key = jinaKey();
@@ -19,7 +23,8 @@ function jinaHeaders(accept: string): Record<string, string> {
 export const web_to_markdown: ToolDef = {
   name: "web_to_markdown",
   description:
-    "Fetch one or more URLs (web pages, PDFs, JS-heavy sites) via the Jina Reader API and return clean LLM-friendly Markdown.",
+    "Fetch one or more URLs (web pages, PDFs, JS-heavy sites) and return clean LLM-friendly Markdown. " +
+    "Primary path is the Jina Reader API; URLs that fail there (quota/bot pages) fall back to Tavily Extract.",
   parameters: {
     type: "object",
     properties: {
@@ -42,22 +47,59 @@ export const web_to_markdown: ToolDef = {
     reqHeaders["X-Max-Tokens"] = "8000";
     const parts: string[] = [];
     const failures: string[] = [];
+    const jinaOutage: Array<{ url: string; reason: string }> = []; // Jina-side failures worth a Tavily attempt
+
     for (const url of urls) {
       try {
         const res = await fetch(`https://r.jina.ai/${url}`, {
           headers: reqHeaders,
           signal: AbortSignal.timeout(180_000),
         });
-        if (!res.ok) {
-          failures.push(`${url}: HTTP ${res.status}`);
-          continue;
+        if (res.ok) {
+          const content = (await res.text()).trim() || "(empty content)";
+          parts.push(`--- Source: ${url} ---\n\n${content}`);
+        } else {
+          // Payment-required, auth, rate-limit or upstream 5xx → Jina-side
+          // outage/out-of-credits; try Tavily Extract for these URLs.
+          jinaOutage.push({ url, reason: `HTTP ${res.status}` });
         }
-        const content = (await res.text()).trim() || "(empty content)";
-        parts.push(`--- Source: ${url} ---\n\n${content}`);
       } catch (e) {
-        failures.push(`${url}: ${(e as Error).message.slice(0, 200)}`);
+        jinaOutage.push({ url, reason: (e as Error).message.slice(0, 200) });
       }
     }
+
+    if (jinaOutage.length) {
+      const tavKey = tavilyKey();
+      if (!tavKey) {
+        for (const o of jinaOutage) failures.push(`${o.url}: ${o.reason}`);
+      } else {
+        try {
+          const res = await tavilyExtract(
+            jinaOutage.map((o) => o.url),
+            tavKey,
+          );
+          // Align by URL: Tavily returns results + failed_results
+          for (const { url, reason } of jinaOutage) {
+            const hit = (res.results ?? []).find(
+              (r: any) => stripScheme(String(r.url ?? "")) === stripScheme(url),
+            );
+            if (hit && String(hit.raw_content ?? "").trim()) {
+              parts.push(`--- Source: ${url} ---\n\n${String(hit.raw_content).trim()}`);
+            } else {
+              const tavFail = (res.failed_results ?? []).find(
+                (f: any) => stripScheme(String(f.url ?? "")) === stripScheme(url),
+              );
+              failures.push(`${url}: jina ${reason}; tavily: ${tavFail?.error ?? "no extract content"}`);
+            }
+          }
+        } catch (e) {
+          for (const { url, reason } of jinaOutage) {
+            failures.push(`${url}: jina ${reason}; tavily: ${(e as Error).message.slice(0, 120)}`);
+          }
+        }
+      }
+    }
+
     if (!parts.length) return `Error: all fetches failed: ${failures.join("; ")}`;
     let output = parts.join("\n\n");
     if (failures.length)
@@ -65,6 +107,27 @@ export const web_to_markdown: ToolDef = {
     return output;
   },
 };
+
+function stripScheme(url: string): string {
+  return url.replace(/^https?:\/\//, "").replace(/\/$/, "");
+}
+
+async function tavilyExtract(urls: string[], key: string): Promise<any> {
+  const res = await fetch("https://api.tavily.com/extract", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      Authorization: `Bearer ${key}`,
+    },
+    body: JSON.stringify({ urls, extract_depth: "basic" }),
+    signal: AbortSignal.timeout(120_000),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`HTTP ${res.status}: ${text.slice(0, 120)}`);
+  }
+  return await res.json();
+}
 
 export const internet_search: ToolDef = {
   name: "internet_search",

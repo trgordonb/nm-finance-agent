@@ -12,7 +12,7 @@ process.env.MEMORY_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "nmfa-m-"));
 
 const { PromptMemory } = await import("../memory.js");
 const { MEMORY_CHAR_LIMIT } = await import("../config.js");
-const { SessionStore } = await import("../store.js");
+const { SQLiteSessionStore: SessionStore } = await import("../store.js");
 
 // --- PromptMemory budget -------------------------------------------------------
 
@@ -85,7 +85,7 @@ test("store: round-trip preserves tool_calls + tool_call_id (provider validity)"
   store.close();
 });
 
-test("store: search falls back AND → OR/phrase → LIKE", async () => {
+test("store: search falls back AND → OR/phrase → LIKE (structured hits)", async () => {
   const dbDir = fs.mkdtempSync(path.join(os.tmpdir(), "nmfa-"));
   const store = new SessionStore(path.join(dbDir, "t.db"));
   const sid = store.newSessionId();
@@ -95,13 +95,22 @@ test("store: search falls back AND → OR/phrase → LIKE", async () => {
   store.appendTurn(store.newSessionId(), [
     { role: "user", content: "vector index tuning notes" },
   ]);
-  const hit = store.search("Sharpe", 5);
-  assert.match(hit, /Sharpe/);
-  // invalid FTS syntax must hit LIKE, not throw
+  // Provide LIKE-fallback fodder so the degraded chain is actually retrievable
+  store.appendTurn(store.newSessionId(), [
+    { role: "user", content: "broken AND unbalanced FTS syntax handled" },
+  ]);
+  const hits = store.search("Sharpe", 5);
+  assert.equal(hits.length, 1);
+  assert.match(hits[0].snippet, /Sharpe/);
+  assert.equal(hits[0].retriever, "fts");
+  // exact-AND phrasing hits as well
+  assert.equal(store.search("Sharpe ratios", 5).length, 1);
+  // invalid FTS syntax must fall through to LIKE, not throw
   const invalid = store.search('"broken AND', 5);
-  assert.ok(invalid.length > 0);
-  // nothing matches
-  assert.equal(store.search("zzz-nothing-zzz", 5), "No past session matches found.");
+  assert.ok(invalid.length === 1, `expected exactly one LIKE fallback hit, got ${invalid.length}`);
+  assert.match(invalid[0].snippet, /broken/);
+  // nothing matches → [] (the empty sentinel is the tool's job)
+  assert.deepEqual(store.search("zzz-nothing-zzz", 5), []);
   store.close();
 });
 
@@ -121,8 +130,8 @@ test("tools: failures speak 'Error:' only for fatal, 'Rejected:' for recoverable
   assert.ok(denied.startsWith("Rejected:"), "recoverable denial must not be fatal");
   const emptyAdd = await memory_manage.execute({ operation: "add", target: "memory", text: "  " });
   assert.ok(emptyAdd.startsWith("Rejected:"));
-  const unknown = await (await import("../tools/fs.js")).read_file.execute({ file_path: "/nonexistent-xyz" });
-  assert.ok(unknown.startsWith("Error:"), "I/O failure is fatal by convention");
+  const missingFile = await (await import("../tools/fs.js")).read_file.execute({ file_path: "/nonexistent-xyz" });
+  assert.ok(missingFile.startsWith("Rejected:"), "wrong-path failures are recoverable, not turn-fatal");
 });
 
 test("tools: execute returns stderr/exit codes without Error: unless timed out", async () => {

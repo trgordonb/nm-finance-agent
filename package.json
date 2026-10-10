@@ -15,6 +15,7 @@
     "test:help": "tsx src/tests/run-tests.ts"
   },
   "dependencies": {
+    "agentdb": "^3.0.0-alpha.20",
     "dotenv": "^17.2.0",
     "express": "^4.21.0"
   },

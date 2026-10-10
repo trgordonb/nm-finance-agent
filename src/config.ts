@@ -35,9 +35,25 @@ export const WORKSPACE_HARD_JAIL = ["1", "true", "yes", "on"].includes(
   (process.env.WORKSPACE_HARD_JAIL ?? "").toLowerCase(),
 );
 
-export const OPENAI_API_KEY = process.env.OPENAI_API_KEY ?? "";
-export const OPENAI_MODEL_ID = process.env.OPENAI_MODEL_ID || "glm-5.3-flash";
-export const OPENAI_BASE_URL = process.env.OPENAI_BASE_URL || "https://api.b.ai/v1/";
+export const OPENROUTER_API_KEY = process.env.OPENROUTER_API_KEY ?? process.env.OPENAI_API_KEY ?? "";
+export const OPENROUTER_BASE_URL = process.env.OPENROUTER_BASE_URL || "https://openrouter.ai/api/v1";
+// Main agent model (all loop LLM calls). Legacy OPENAI_MODEL_ID respected as fallback.
+export const OPENROUTER_MODEL_MAIN =
+  process.env.OPENROUTER_MODEL_MAIN || process.env.OPENROUTER_MODEL || process.env.OPENAI_MODEL_ID || "z-ai/glm-5.3-flash";
+// Secondary/cheap model for future summarizer/nudge/compression increments.
+export const OPENROUTER_MODEL_SUMMARIZER =
+  process.env.OPENROUTER_MODEL_SUMMARIZER || "liquid/lfm-2.5-2.6b:free";
+// Preferred provider order for the main model ("a,b,c"), passed as
+// provider:{order, allow_fallbacks} per OpenRouter API. Unknown/absent → undefined.
+export const OPENROUTER_PROVIDER_ORDER = (process.env.OPENROUTER_MAIN_MODEL_PROVIDER ?? "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+export const OPENROUTER_PROVIDER_FALLBACKS =
+  (process.env.OPENROUTER_PROVIDER_FALLBACKS ?? "1") !== "0";
+// "reasoning": {enabled} matches the user's example call; disable with
+// OPENROUTER_REASONING=0 (some flat models bill extra reasoning tokens).
+export const OPENROUTER_REASONING = (process.env.OPENROUTER_REASONING ?? "1") !== "0";
 
 export const MAX_COMPLETION_TOKENS = Number(process.env.MAX_COMPLETION_TOKENS ?? "16384");
 export const BUDGET_TOOL_MAX_ITERATIONS = Number(process.env.BUDGET_TOOL_MAX_ITERATIONS ?? "25");

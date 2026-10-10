@@ -17,21 +17,37 @@ import { randomUUID } from "node:crypto";
 import {
   serverHost,
   serverPort,
-  OPENAI_MODEL_ID,
-  OPENAI_BASE_URL,
+  OPENROUTER_MODEL_MAIN,
+  OPENROUTER_BASE_URL,
+  OPENROUTER_PROVIDER_ORDER,
+  OPENROUTER_PROVIDER_FALLBACKS,
+  OPENROUTER_REASONING,
   MEMORY_CHAR_LIMIT,
 } from "./config.js";
 import { PromptMemory } from "./memory.js";
-import { SessionStore } from "./store.js";
+import { SQLiteSessionStore } from "./store.js";
+import { AgentDbMirror } from "./agentdb-mirror.js";
 import { AgentLoop } from "./agent.js";
 import { enabled as tracingEnabled, TRACE_PROJECT } from "./tracing.js";
+import { log } from "./logger.js";
 import type { ChatMessage } from "./types.js";
 
 // --- runtime assembly ---------------------------------------------------------
 
-const store = new SessionStore();
+const store = new SQLiteSessionStore();
 const memory = new PromptMemory();
-const loop = new AgentLoop({ memory, store });
+// AgentDB mirror (phase-in, dual-write): the archive stays authoritative; a
+// local ruvector vector db mirrors turn messages for dense semantic recall.
+// initialize() degrades to a no-op mirror when the engine/embedder is
+// unavailable — never fatal, logged with reason.
+const mirror = new AgentDbMirror();
+void mirror
+  .initialize()
+  .then((status) => {
+    if (!status.enabled) log.info(`agentdb mirror off — ${status.reason}`);
+  })
+  .catch(() => undefined);
+const loop = new AgentLoop({ memory, store, mirror });
 
 const app = express();
 app.use(express.json({ limit: "4mb" }));
@@ -57,12 +73,16 @@ function sse(event: string, payload: unknown): string {
 app.get("/api/health", (_req: Request, res: Response) => {
   res.json({
     status: "ok",
-    model: OPENAI_MODEL_ID,
-    base_url: OPENAI_BASE_URL,
+    model: OPENROUTER_MODEL_MAIN,
+    base_url: OPENROUTER_BASE_URL,
+    provider_order: OPENROUTER_PROVIDER_ORDER,
+    provider_fallbacks: OPENROUTER_PROVIDER_FALLBACKS,
+    reasoning: OPENROUTER_REASONING,
     memory_chars: memory.totalChars(),
     memory_budget: MEMORY_CHAR_LIMIT,
     tools: [...loop.tools.keys()],
     sessions: store.listSessions().length,
+    mirror: mirror.getFastStatus(),
     tracing: tracingEnabled() ? TRACE_PROJECT : null,
     time: Date.now() / 1000,
   });
@@ -153,20 +173,27 @@ app.post("/api/chat", (req, res) => {
     try {
       const history = store.loadSession(sessionId);
       write("session", { session_id: sessionId, turn_id: turnId, resumed: history.length > 0 });
-      const turn = await loop.runTurn(history, message, () => controller.signal.aborted, {
-        sessionId,
-      });
+      const turn = await loop.runTurn(
+        history,
+        message,
+        () => controller.signal.aborted,
+        { sessionId },
+        // Stream each message as it lands — the UI sees tool calls/results
+        // incrementally, not as one burst at `done` (python astream parity).
+        (msg) => write("message", msg),
+      );
       // Cancel mid-turn: persist only the provider-valid prefix (a dangling
       // assistant tool_call group would be rejected on resume) — ported from
       // server.py's finally-block persistence.
       const valid = turn.cancelled ? validPrefixLen(turn.messages) : turn.messages.length;
       const persistable = turn.messages.slice(0, valid);
+      let recordedTurn: number | null = null;
       if (persistable.length >= 2) {
-        store.appendTurn(sessionId, [{ role: "user", content: message }, ...persistable]);
+        recordedTurn = store.appendTurn(sessionId, [{ role: "user", content: message }, ...persistable]);
+        // Mirror the persisted turn into the semantic sidecar (no-throw).
+        void mirror.recordTurn(sessionId, recordedTurn, persistable).catch(() => undefined);
       }
-      for (const msg of persistable) {
-        write("message", msg);
-      }
+      // (messages were already streamed live via the onMessage callback)
       if (turn.cancelled) {
         write("cancelled", {
           turn_id: turnId,

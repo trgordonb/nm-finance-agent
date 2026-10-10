@@ -5,6 +5,41 @@ The general build order (and the substrate discussion behind it) lives in the
 conversation history of the nm-memory-layer comparison; this file tracks the
 repo itself.
 
+## 2026-10-10 — streaming fixes, recovery semantics, OpenRouter cutover, hybrid recall
+
+- **Incremental SSE streaming.** The chat endpoint was buffering everything
+  until the turn finished; the UI saw the full tool sequence in one burst at
+  `done`. `AgentLoop.runTurn` gained an `onMessage` callback fired the moment
+  each assistant/tool message lands in the slice; the REST layer emits
+  `message` events incrementally (timestamps verified: tool events spread
+  across a 30s turn). LangGraph `astream(values)` parity.
+- **Recovery semantics refined after a live failure.** A research session was
+  cut short by `edit_file`'s `Error: '...' not found in file` — a wrong-args
+  denial wrongly classified as fatal. Contract sharpened: `Error:` = world
+  broke (system, I/O, timeout); `Rejected:` = model's args were wrong
+  (edit_file not-found, missing file/dir via ENOENT, budget denials,
+  workspace guard). `edit_file` gained exact → trimmed → whitespace-flexible
+  matching (indentation drift was the top rejection class — the failing
+  snippet had drifted indentation). Live cycle verified: Rejected → model
+  self-corrects → succeeds → turn completes.
+- **OpenRouter for all models.** Config layer moved to `OPENROUTER_*`:
+  `OPENROUTER_API_KEY`, `OPENROUTER_MODEL_MAIN` (z-ai/glm-5.3-flash),
+  `OPENROUTER_MODEL_SUMMARIZER` (liquid/lfm-2.5-2.6b:free, for the upcoming
+  nudge/summarizer increments), and `OPENROUTER_MAIN_MODEL_PROVIDER`
+  steering (`provider.order = [relace, open-inference/fp4, novita/fp8]` +
+  `allow_fallbacks`) + the `reasoning: {enabled}` block, both from the user's
+  example call and env-togglable (`OPENROUTER_PROVIDER_FALLBACKS=0`,
+  `OPENROUTER_REASONING=0`). `/api/health` exposes the live knobs so env
+  propagation is observable, not assumed.
+- **web_to_markdown double-leg fallback.** Jina account balance ran dry
+  (`InsufficientBalanceError`, HTTP 402 on every Reader call): Jina-side
+  failures now fall back per-URL to **Tavily Extract** (same working key as
+  search), with honest two-leg failure notes (`jina HTTP 402; tavily: ...`).
+  Verified on the exact failing URLs (FVG substack + secuora) via tool call
+  and full chat turn.
+- **Contract-test count**: 19 (`contracts` + `workspace` + `hybrid`).
+
+
 ## 2026-10-09 — ground-up TS harness (all of today's increments)
 
 The repo is the TypeScript rebuild of langgraph-demo's harness, bootstrapped by

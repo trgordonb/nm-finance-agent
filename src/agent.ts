@@ -11,7 +11,8 @@ import { toWire, buildToolRegistry } from "./tools/index.js";
 import { PromptMemory } from "./memory.js";
 import { MEMORY_CHAR_LIMIT } from "./config.js";
 import type { ChatMessage, ToolDef, ToolCall } from "./types.js";
-import { SessionStore } from "./store.js";
+import type { SessionDriver } from "./driver.js";
+import type { AgentDbMirror } from "./agentdb-mirror.js";
 import { trace } from "./tracing.js";
 
 export function buildSystemPrompt(memoryBlock: string): string {
@@ -53,20 +54,23 @@ export class AgentLoop {
   private memory: PromptMemory;
   private maxIterations: number;
 
-  constructor(opts: { memory: PromptMemory; store: SessionStore; maxIterations?: number }) {
+  constructor(opts: { memory: PromptMemory; store: SessionDriver; mirror?: AgentDbMirror | null; maxIterations?: number }) {
     this.memory = opts.memory;
     this.maxIterations = opts.maxIterations ?? Number(process.env.BUDGET_TOOL_MAX_ITERATIONS ?? "25");
-    this.tools = new Map<string, ToolDef>(buildToolRegistry(opts.store).map((t) => [t.name, t]));
+    this.tools = new Map<string, ToolDef>(buildToolRegistry(opts.store, opts.mirror).map((t) => [t.name, t]));
   }
 
   /** Memory block is rendered once per session by callers and passed in here.
    *  Tracing: one root "agent-turn" chain run per turn with llm/tool children
-   *  (LangSmith REST runs API — fire-and-forget, never breaks the turn). */
+   *  (LangSmith REST runs API — fire-and-forget, never breaks the turn).
+   *  onMessage fires the moment each assistant/tool message lands in the
+   *  slice — the REST layer streams these as SSE events incrementally. */
   async runTurn(
     history: ChatMessage[],
     userInput: string,
     shouldStop?: () => boolean,
     meta?: { sessionId?: string },
+    onMessage?: (msg: ChatMessage) => void,
   ): Promise<TurnResult> {
     const messages: ChatMessage[] = [...history, { role: "user", content: userInput }];
     const systemPrompt = buildSystemPrompt(this.memory.load());
@@ -131,6 +135,7 @@ export class AgentLoop {
         const out: ChatMessage = { role: "assistant", content: response.content };
         messages.push(out);
         newSlice.push(out);
+        onMessage?.(out);
         result = { messages: newSlice, iterations, cancelled, usage };
         break;
       }
@@ -147,6 +152,7 @@ export class AgentLoop {
       };
       messages.push(assistantMsg);
       newSlice.push(assistantMsg);
+      onMessage?.(assistantMsg);
 
       for (const call of calls) {
         if (shouldStop?.()) {
@@ -183,6 +189,7 @@ export class AgentLoop {
         };
         messages.push(toolMsg);
         newSlice.push(toolMsg);
+        onMessage?.(toolMsg);
         if (resultStr.startsWith("Error:")) {
           fatal = `${call.name}: ${resultStr.slice(0, 300)}`;
           break;

@@ -1,17 +1,80 @@
-// session_search + session archive: the episodic store is wired into the same
-// registry so the agent can consult prior sessions. (Kept simple; secondary-LLM
-// condensation is a later increment.)
+// session_search: hybrid episodic recall.
+// Base leg: the driver's keyword search (SQLite FTS5 chain: strict AND → OR →
+// LIKE). Optional semantic leg: the agentdb mirror's dense recall. Lists fuse
+// via Reciprocal Rank Fusion (k=60, the same constant as nm-memory-layer's
+// wiki hybrid), dedupe near-identical hits, and each result block carries
+// retriever tags so consumers can A/B the legs. Failure semantics preserved:
+// the tool never throws; empty fused list → explicit empty sentinel.
 
-import { SessionStore } from "../store.js";
 import type { ToolDef } from "../types.js";
+import type { SessionDriver, SessionHit } from "../driver.js";
+import type { AgentDbMirror, MirrorHit } from "../agentdb-mirror.js";
 
-export function createSessionSearchTool(store: SessionStore): ToolDef {
+const RRF_K = 60;
+
+interface RankedHit {
+  sessionId: string;
+  createdAt: string;
+  snippet: string;
+  retrievers: string; // "fts" | "semantic(0.83)" | "fts+semantic"
+  score: number;
+}
+
+function mergeTag(map: Map<string, RankedHit>, hit: RankedHit, leg: string): void {
+  const key = `${hit.sessionId}|${hit.createdAt}|${hit.snippet.slice(0, 80).replace(/\s+/g, " ")}`;
+  const cur = map.get(key) ?? { ...hit, retrievers: "", score: 0 };
+  if (!cur.retrievers.includes(leg.split("(")[0])) {
+    cur.retrievers = cur.retrievers ? `${cur.retrievers}+${leg}` : leg;
+  }
+  cur.score += 1 / (RRF_K + hit.score + 1);
+  map.set(key, cur);
+}
+
+function fuse(fts: SessionHit[], semantic: MirrorHit[], limit: number): RankedHit[] {
+  const map = new Map<string, RankedHit>();
+  fts.forEach((h, rank) => {
+    mergeTag(map, {
+      sessionId: h.session_id,
+      createdAt: h.created_at,
+      snippet: h.snippet,
+      retrievers: "",
+      score: rank,
+    }, "fts");
+  });
+  semantic.forEach((h, rank) => {
+    if (!h.sessionId || !h.content) return;
+    mergeTag(map, {
+      sessionId: h.sessionId,
+      createdAt: h.createdAt,
+      snippet: h.content.slice(0, 400),
+      retrievers: "",
+      score: rank,
+    }, `semantic(${h.similarity.toFixed(2)})`);
+  });
+  return [...map.values()].sort((a, b) => b.score - a.score).slice(0, limit);
+}
+
+function format(hits: RankedHit[]): string {
+  return hits
+    .map(
+      (h, i) =>
+        `[${i + 1}] session=${h.sessionId.slice(0, 8)} (${h.createdAt})` +
+        (h.retrievers ? ` · ${h.retrievers}` : "") +
+        `\n  ${h.snippet.slice(0, 400)}`,
+    )
+    .join("\n");
+}
+
+export function createSessionSearchTool(
+  driver: SessionDriver,
+  mirror?: AgentDbMirror | null,
+): ToolDef {
   return {
     name: "session_search",
     description:
       "Search YOUR archived past sessions (previous conversations). Call BEFORE redoing work when the " +
       "user's request may relate to prior decisions, findings, errors and fixes, or procedures you already " +
-      "worked out. Returns short excerpts, not full transcripts — cheap to consult.",
+      "worked out. Hybrid keyword+semantic recall returns short excerpts, not full transcripts — cheap to consult.",
     parameters: {
       type: "object",
       properties: {
@@ -20,10 +83,35 @@ export function createSessionSearchTool(store: SessionStore): ToolDef {
       },
       required: ["query"],
     },
-    execute(args) {
+    async execute(args) {
       try {
         const limit = Math.max(1, Math.min(Number(args.limit ?? 5) || 5, 20));
-        return store.search(String(args.query ?? ""), limit);
+        const query = String(args.query ?? "");
+        const fetchLimit = Math.max(limit * 2, 8); // extra candidates per leg for the fusion
+        const fts = driver.search(query, fetchLimit);
+        const semantic = mirror?.status.enabled ? await mirror.search(query, fetchLimit) : [];
+        if (!fts.length && !semantic.length) return "No past session matches found.";
+        if (!semantic.length || !fts.length) {
+          // single-leg fallback: skip RRF, keep dedicated numbering
+          if (!semantic.length) {
+            return format(fts.slice(0, limit).map((h) => ({
+              sessionId: h.session_id,
+              createdAt: h.created_at,
+              snippet: h.snippet,
+              retrievers: "",
+              score: 0,
+            })));
+          }
+          return format(semantic.slice(0, limit).map((h) => ({
+            sessionId: h.sessionId,
+            createdAt: h.createdAt,
+            snippet: h.content.slice(0, 400),
+            retrievers: `semantic(${h.similarity.toFixed(2)})`,
+            score: 0,
+          })));
+        }
+        return format(fuse(fts, semantic, limit))
+          || "No past session matches found.";
       } catch (e) {
         return `Error: session_search failed: ${(e as Error).message}`;
       }

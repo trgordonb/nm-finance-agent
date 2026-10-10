@@ -3,9 +3,12 @@
 // attempts, exponential backoff on 5xx/429/dial errors, hard-fail otherwise.
 
 import {
-  OPENAI_API_KEY,
-  OPENAI_BASE_URL,
-  OPENAI_MODEL_ID,
+  OPENROUTER_API_KEY,
+  OPENROUTER_BASE_URL,
+  OPENROUTER_MODEL_MAIN,
+  OPENROUTER_PROVIDER_ORDER,
+  OPENROUTER_PROVIDER_FALLBACKS,
+  OPENROUTER_REASONING,
   MAX_COMPLETION_TOKENS,
 } from "./config.js";
 import type { ChatMessage } from "./types.js";
@@ -64,7 +67,7 @@ export async function chat(
   messages: ChatMessage[],
   tools?: Array<{ name: string; description: string; parameters: unknown }>,
 ): Promise<ChatResponse> {
-  if (!OPENAI_API_KEY) throw new Error("OPENAI_API_KEY is not set");
+  if (!OPENROUTER_API_KEY) throw new Error("OPENROUTER_API_KEY is not set");
   // Rate limit: enforce minimum interval between calls (shared across turns).
   const elapsed = Date.now() - lastCallAt;
   if (elapsed < MIN_INTERVAL_MS) {
@@ -72,7 +75,7 @@ export async function chat(
   }
 
   const body: Record<string, unknown> = {
-    model: OPENAI_MODEL_ID,
+    model: OPENROUTER_MODEL_MAIN,
     max_tokens: MAX_COMPLETION_TOKENS,
     temperature: 1.0,
     messages: messages.map((m) => {
@@ -99,19 +102,27 @@ export async function chat(
       function: { name: t.name, description: t.description, parameters: t.parameters },
     }));
   }
+  // OpenRouter specifics (user example): preferred provider order + fallbacks,
+  // optional reasoning block for reasoning-capable models.
+  if (OPENROUTER_PROVIDER_ORDER.length) {
+    body.provider = { order: OPENROUTER_PROVIDER_ORDER, allow_fallbacks: OPENROUTER_PROVIDER_FALLBACKS };
+  }
+  if (OPENROUTER_REASONING) {
+    body.reasoning = { enabled: true };
+  }
 
   let lastErr: Error | null = null;
   for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
     try {
       console.error(
-        `[llm] POST ${OPENAI_BASE_URL}chat/completions model=${OPENAI_MODEL_ID} attempt=${attempt}/${MAX_ATTEMPTS}`,
+        `[llm] POST ${OPENROUTER_BASE_URL}/chat/completions model=${OPENROUTER_MODEL_MAIN} attempt=${attempt}/${MAX_ATTEMPTS}`,
       );
       lastCallAt = Date.now();
-      const res = await fetch(`${OPENAI_BASE_URL.replace(/\/$/, "")}/chat/completions`, {
+      const res = await fetch(`${OPENROUTER_BASE_URL.replace(/\/$/, "")}/chat/completions`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${OPENAI_API_KEY}`,
+          Authorization: `Bearer ${OPENROUTER_API_KEY}`,
         },
         body: JSON.stringify(body),
         signal: AbortSignal.timeout(Number(process.env.LLM_TIMEOUT_MS ?? "300000")),
@@ -138,7 +149,7 @@ export async function chat(
         })),
         raw: msg,
         usage: data.usage,
-        model: data.model || OPENAI_MODEL_ID,
+        model: data.model || OPENROUTER_MODEL_MAIN,
       };
     } catch (e) {
       const err = e as Error & { fatal?: boolean };

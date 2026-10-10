@@ -24,8 +24,8 @@ nm-finance-agent/
 │   │                     #   POST /api/chat (SSE), POST /api/chat/cancel; CORS + proxy target
 │   ├── agent.ts          # AgentLoop: explicit agent ↔ tool cycle (no graph lib),
 │   │                     #   buildSystemPrompt(), per-turn LangSmith run tree
-│   ├── llm.ts            # OpenAI-compatible client via fetch; retry/rate-limit
-│   │                     #   port of langgraph-demo main.py (4s spacing, 5 attempts)
+│   ├── llm.ts            # OpenRouter client via fetch; provider steering +
+│   │                     #   reasoning block; retry/rate-limit (main.py port)
 │   ├── memory.ts         # PromptMemory: MEMORY.md/USER.md, shared budget, load-once
 │   ├── store.ts          # SessionStore: turn-rows, tool-call fidelity, FTS5 fallback chain
 │   ├── tracing.ts        # LangSmith REST runs client (no SDK; fire-and-forget)
@@ -34,19 +34,25 @@ nm-finance-agent/
 │   ├── types.ts          # ToolDef, ChatMessage, ToolCall
 │   ├── tools/            # fs.ts, shell.ts, web.ts (Jina Reader + Tavily),
 │   │                     #   memory_manage.ts, session_search.ts, index.ts (registry)
-│   └── tests/            # contracts.test.ts + workspace.test.ts (13 tests)
+│   └── tests/            # contracts + workspace + hybrid tests (19)
 ├── frontend/             # Chat-only React app (ported from langgraph-demo; vite proxy → :3001)
 ├── memories/             # MEMORY.md + USER.md (local-only, agent-curated)
 └── workspace/            # Agent scratch area (gitignored) — all artifacts land here
 ```
 
-## Contracts (the suite is the contract — `npm test`, 13 tests)
+## Contracts (the suite is the contract — `npm test`, 19 tests)
 
-- **`Error:`-prefix is fatal, `Recovered:`-able denials never use it.** Tool
-  results starting with `Error:` end the agent turn (system failures, wrong
-  args, timeouts). Recoverable policy denials (memory budget over,
-  workspace-under-source writes) speak `Rejected:` so the model can retry.
+- **`Error:`-prefix is fatal, `Rejected:`-prefix is recoverable.** Tool
+  results starting with `Error:` end the agent turn — system failures,
+  timeouts, genuinely broken I/O only. Wrong-args class denials (edit_file
+  old_string not found, missing file/dir, memory budget over,
+  workspace-under-source writes) speak `Rejected:` so the model can retry;
+  `edit_file` additionally attempts exact → trimmed → whitespace-flexible
+  matching before denying (indentation drift is the top rejection class).
   Nonzero shell exits and stderr are *information*, not errors (Python parity).
+- **Incremental streaming.** `AgentLoop.runTurn(..., onMessage)` fires the
+  moment each assistant/tool message lands; the REST layer emits SSE per
+  message — the UI sees tool calls live, not one burst at `done`.
 - **3,575-char combined budget** over MEMORY.md + USER.md, enforced on every
   `memory_manage` write across BOTH files.
 - **Provider-valid round-trips.** `recordTurn`→`loadSession()` preserves
@@ -84,8 +90,14 @@ servers).
 
 ## Environment (see .env.example)
 
-- LLM: `OPENAI_API_KEY`, `OPENAI_MODEL_ID` (default glm-5.3-flash),
-  `OPENAI_BASE_URL`, `MAX_COMPLETION_TOKENS`.
+- LLM (OpenRouter for all models): `OPENROUTER_API_KEY`,
+  `OPENROUTER_BASE_URL` (default https://openrouter.ai/api/v1),
+  `OPENROUTER_MODEL_MAIN` (default z-ai/glm-5.3-flash; legacy `OPENAI_*`
+  respected as fallback), `OPENROUTER_MODEL_SUMMARIZER`
+  (liquid/lfm-2.5-2.6b:free — future secondary increments),
+  `OPENROUTER_MAIN_MODEL_PROVIDER` (CSV → `provider.order` steering),
+  `OPENROUTER_PROVIDER_FALLBACKS=0` / `OPENROUTER_REASONING=0` opt-outs;
+  `MAX_COMPLETION_TOKENS`. All live knobs are visible in `/api/health`.
 - Retrieval: `TAVILY_API_KEY` (search; required), `JINA_API_KEY` (Jina Reader
   fetch; optional). The s.jina.ai search API broke on the old key — search is
   Tavily now; Reader unchanged.
@@ -101,7 +113,7 @@ servers).
 - **Node 24 built-in `node:sqlite`** — FTS5 works out of the box, zero native
   deps (no better-sqlite3 build). WAL mode + busy_timeout, same single-writer
   discipline as nm-memory-layer.
-- **fetch over SDK** — the OpenAI-compatible endpoint is one POST; the
+- **fetch over SDK** — OpenRouter's `/chat/completions` is one POST; the
   retry policy (rate-limit spacing + transient backoff) ports verbatim and
   stays auditable in 40 lines.
 - **Redis-modeled on the python harness contracts, not its code** — the

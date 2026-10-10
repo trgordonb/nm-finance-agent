@@ -10,15 +10,12 @@
 import { DatabaseSync } from "node:sqlite";
 import { DB_PATH } from "./config.js";
 import type { ChatMessage } from "./types.js";
+import type { SessionDriver, SessionHit, SessionRow } from "./driver.js";
 
-export interface SessionRow {
-  session_id: string;
-  created_at: string;
-  turn_count: number;
-  message_count: number;
-}
+export type { SessionRow } from "./driver.js";
 
-export class SessionStore {
+export class SQLiteSessionStore implements SessionDriver {
+  readonly name = "sqlite";
   readonly dbPath: string;
   private db: DatabaseSync;
 
@@ -139,16 +136,15 @@ export class SessionStore {
       .all() as unknown as SessionRow[];
   }
 
-  search(query: string, limit: number = 5): string {
+  search(query: string, limit: number = 5): SessionHit[] {
     const tokens = query.split(/\s+/).filter(Boolean).map(sanitizeFts);
-    if (!tokens.length) return "No past session matches found.";
+    if (!tokens.length) return [];
     const phrase = tokens.map((t) => `"${t}"`).join(" AND ");
     const joined = tokens.join(" OR ");
     let hits = queryFts(this.db, phrase, limit);
     if (!hits.length) hits = queryFts(this.db, joined, limit);
     if (!hits.length) hits = queryLike(this.db, query, limit);
-    if (!hits.length) return "No past session matches found.";
-    return hits.join("\n");
+    return hits;
   }
 
   deleteSession(sessionId: string): void {
@@ -162,27 +158,30 @@ function sanitizeFts(token: string): string {
   return token.replace(/"/g, '""');
 }
 
-function queryFts(db: DatabaseSync, match: string, limit: number): string[] {
+function queryFts(db: DatabaseSync, match: string, limit: number): SessionHit[] {
   try {
     const rows = db
       .prepare(
         // external-content FTS5 has a single column (content, index 0)
-        `SELECT t.session_id, t.created_at, t.content, snippet(turns_fts, 0, '[', ']', ' … ', 32) AS snip
+        `SELECT t.session_id, t.created_at, t.content, snippet(turns_fts, 0, '', '', ' … ', 32) AS snip
          FROM turns_fts f JOIN turns t ON t.id = f.rowid
          WHERE turns_fts MATCH ?
          ORDER BY t.created_at DESC LIMIT ?`,
       )
       .all(match, limit) as Array<{ session_id: string; created_at: string; content: string; snip: string }>;
-    return rows.map(
-      (r, i) =>
-        `[${i + 1}] session=${r.session_id.slice(0, 8)} (${r.created_at})\n  ${r.snip || r.content.slice(0, 400)}`,
-    );
+    return rows.map((r, i) => ({
+      session_id: r.session_id,
+      created_at: r.created_at,
+      snippet: r.snip || r.content.slice(0, 400),
+      retriever: "fts" as const,
+      rank: i,
+    }));
   } catch {
     return [];
   }
 }
 
-function queryLike(db: DatabaseSync, query: string, limit: number): string[] {
+function queryLike(db: DatabaseSync, query: string, limit: number): SessionHit[] {
   // Last resort for FTS-invalid queries: match on individual significant words.
   const words = query.split(/\s+/).filter((w) => w.length >= 3).slice(0, 5);
   if (!words.length) return [];
@@ -199,9 +198,13 @@ function queryLike(db: DatabaseSync, query: string, limit: number): string[] {
       created_at: string;
       content: string;
     }>;
-    return rows.map(
-      (r, i) => `[${i + 1}] session=${r.session_id.slice(0, 8)} (${r.created_at})\n  ${r.content.slice(0, 400)}`,
-    );
+    return rows.map((r, i) => ({
+      session_id: r.session_id,
+      created_at: r.created_at,
+      snippet: r.content.slice(0, 400),
+      retriever: "fts" as const,
+      rank: i,
+    }));
   } catch {
     return [];
   }

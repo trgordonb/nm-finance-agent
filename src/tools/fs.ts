@@ -36,6 +36,11 @@ export const ls: ToolDef = {
       });
       return (lines.length ? lines.join("\n") : "(empty directory)") + `\n(dir: ${dir})`;
     } catch (e) {
+      // Missing directory is usually a wrong-path mistake the model can fix
+      // by listing the parent — recoverable, not turn-fatal.
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") {
+        return `Rejected: directory does not exist (${String(args.directory ?? "")}) — try ls on the parent or the workspace.`;
+      }
       return `Error: ${(e as Error).message}`;
     }
   },
@@ -56,6 +61,10 @@ export const read_file: ToolDef = {
     try {
       return fs.readFileSync(resolveInWorkspace(String(args.file_path)), "utf8");
     } catch (e) {
+      const missing = (e as NodeJS.ErrnoException).code === "ENOENT";
+      if (missing) {
+        return `Rejected: file does not exist — verify the path with ls/glob first.`;
+      }
       return `Error: ${(e as Error).message}`;
     }
   },
@@ -110,20 +119,26 @@ export const edit_file: ToolDef = {
   },
   execute(args) {
     const p = resolveInWorkspace(String(args.file_path));
-    const deny = guardWorkspaceWrite(p);
-    if (deny && !args.allow_outside) return deny;
-    try {
-      const content = fs.readFileSync(p, "utf8");
-      const oldString = String(args.old_string ?? "");
-      if (!content.includes(oldString)) {
-        return `Error: '${oldString}' not found in file`;
+      const deny = guardWorkspaceWrite(p);
+      if (deny && !args.allow_outside) return deny;
+      try {
+        const content = fs.readFileSync(p, "utf8");
+        const oldString = String(args.old_string ?? "");
+        const newText = String(args.new_string ?? "");
+        const match = findFlex(content, oldString);
+        if (!match) {
+          // Wrong-args class failure: the model can re-read and correct the
+          // edit — recoverable, must NOT end the turn (our "Error:" fatality
+          // is reserved for system-level failures).
+          return `Rejected: old_string not found in file — the file may have changed or the text is not an exact match (whitespace matters); re-read the relevant part of ${p} and retry with corrected text or a smaller unique match.`;
+        }
+        const updated = content.slice(0, match.start) + newText + content.slice(match.end);
+        fs.writeFileSync(p, updated, "utf8");
+        return `Successfully edited ${p}`;
+      } catch (e) {
+        return `Error: ${(e as Error).message}`;
       }
-      fs.writeFileSync(p, content.replace(oldString, String(args.new_string ?? "")), "utf8");
-      return `Successfully edited ${p}`;
-    } catch (e) {
-      return `Error: ${(e as Error).message}`;
-    }
-  },
+    },
 };
 
 export const glob: ToolDef = {
@@ -237,4 +252,43 @@ function globToRegex(pattern: string): RegExp {
     } else re += escapeRegex(c);
   }
   return new RegExp(`^${re}$`);
+}
+
+// --- edit_file matching helpers ----------------------------------------------
+
+/**
+ * Locate old text with graceful degradation: exact → trimmed →
+ * whitespace-flexible (any whitespace run matches any other). Returns the
+ * [start, end) span in the ORIGINAL content. Rebuilt for runs where the
+ * model's old_string indentation drifted from the file's (the single most
+ * common edit_file rejection class).
+ */
+function findFlex(content: string, target: string): { start: number; end: number } | null {
+  if (!target) return null;
+  // 1) exact
+  const exact = content.indexOf(target);
+  if (exact !== -1) return { start: exact, end: exact + target.length };
+  // 2) trimmed
+  const trimmed = target.trim();
+  if (trimmed && trimmed !== target) {
+    const at = content.indexOf(trimmed);
+    if (at !== -1) return { start: at, end: at + trimmed.length };
+  }
+  // 3) whitespace-flexible: match the non-whitespace token sequence, letting
+  //    any whitespace run in the content stand in for any other in the target.
+  const tokens = target.split(/\s+/).filter((t) => t.length > 0);
+  if (tokens.length < 2) return null;
+  const first = escapeRegex(tokens[0]);
+  const re = new RegExp(first + tokens.slice(1).map((t) => `\\s+${escapeRegex(t)}`).join(""), "");
+  const m = re.exec(content);
+  if (!m || m.index === undefined) return null;
+  const start = m.index;
+  let pos = start + tokens[0].length;
+  for (const tok of tokens.slice(1)) {
+    const ws = /^\s+/.exec(content.slice(pos));
+    if (!ws) return null;
+    pos += ws[0].length;
+    pos += tok.length;
+  }
+  return { start, end: pos };
 }

@@ -1,8 +1,7 @@
-// Tool registry — step 1 surface mirrors the langgraph-demo harness core:
-// filesystem ops, shell execution, web fetch/search, always-on prompt memory,
-// episodic session search. MCP binding, skills, wiki, nudge/compression are
-// later increments (design keeps ToolDef flat so they plug in as plain
-// registry entries, no special cases in the loop).
+// Tool registry — the flat ToolDef surface (no special cases in the loop).
+// Step-1 core: filesystem ops, shell execution, web fetch/search, always-on
+// prompt memory, episodic session search (now hybrid via the AgentDB mirror).
+// Skills, wiki, MCP binding, nudge/compression plug in later as plain entries.
 
 import type { ToolDef } from "../types.js";
 import { ls, read_file, write_file, edit_file, glob, grep } from "./fs.js";
@@ -10,9 +9,13 @@ import { execute } from "./shell.js";
 import { web_to_markdown, internet_search } from "./web.js";
 import { memory_manage } from "./memory_manage.js";
 import { createSessionSearchTool } from "./session_search.js";
-import { SessionStore } from "../store.js";
+import type { SessionDriver } from "../driver.js";
+import type { AgentDbMirror } from "../agentdb-mirror.js";
 
-export function buildToolRegistry(store: SessionStore): ToolDef[] {
+export function buildToolRegistry(
+  driver: SessionDriver,
+  mirror?: AgentDbMirror | null,
+): ToolDef[] {
   return [
     ls,
     read_file,
@@ -24,7 +27,7 @@ export function buildToolRegistry(store: SessionStore): ToolDef[] {
     web_to_markdown,
     internet_search,
     memory_manage,
-    createSessionSearchTool(store),
+    createSessionSearchTool(driver, mirror),
   ];
 }
 

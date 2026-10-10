@@ -1,8 +1,8 @@
 # nm-finance-agent – ground-up REST agent harness
 
 Rebuild of the langgraph-demo harness without Python/LangGraph: an explicit
-agentic loop over the OpenAI-compatible chat API, always-on prompt memory
-(MEMORY.md / USER.md), and the basic tool set, exposed only as a REST API
+agentic loop over OpenRouter (main model + provider steering), always-on prompt
+memory, and the basic tool set, exposed only as a REST API
 (Express + SSE). Designed to grow into a memory layer that will ultimately
 adopt `ruvector-core::AgenticDB` as its substrate.
 
@@ -20,9 +20,11 @@ doctrine (contracts, env vars, roadmap) in `CLAUDE.md`.
 - **node:sqlite** (Node 24 built-in, FTS5 available): zero native deps — no
   better-sqlite3 build step. WAL mode. Same "CWD-relative db" doctrine as
   nm-memory-layer.
-- **No LLM SDK**: `fetch` against the OpenAI-compatible endpoint, with the
+- **No LLM SDK**: `fetch` against OpenRouter (`/chat/completions`), with the
   langgraph-demo retry/rate-limit policy ported verbatim (4s spacing,
-  5 attempts, exponential backoff on 5xx/429/socket errors).
+  5 attempts, exponential backoff on 5xx/429/socket errors). Provider
+  steering (`provider.order` + fallbacks) and the `reasoning` block flow
+  from `.env` — surfaced in `/api/health`.
 
 **Scheduled for later increments** beyond the step-1 surface: skills, wiki,
 MCP, nudge + context compression, session titler.
@@ -56,7 +58,7 @@ cp .env.example .env    # then fill in keys
 npm install
 npm run start            # backend  → http://127.0.0.1:3001
 cd frontend && npm install && npm run dev   # web UI → http://localhost:5173 (proxies /api)
-npm test                 # 7 contract tests (repo root)
+npm test                 # 19 contract tests (repo root)
 ```
 
 The frontend is the Chat-only adaptation of langgraph-demo's React app
@@ -102,6 +104,25 @@ agent's scratch area, via mechanism rather than convention:
   outside-workspace writes pass loudly in GOTCHA mode; set
   `WORKSPACE_HARD_JAIL=1` to confine writes to the workspace entirely when the
   server is network-exposed.
+
+## AgentDB mirror (phase-in, additive)
+
+The SQLite archive stays authoritative; a **mirror sidecar** adds what it
+lacks — per-message embeddings for dense semantic `session_search` recall:
+- `src/mirror-child.ts` — the only process loading natives (ruvector engine +
+  onnx MiniLM both reserve colossal VA mappings that break fork); JSON-lines
+  protocol: `init/upsert/query/stats/bye` (embeds internally, no vectors cross
+  the pipe)
+- `src/agentdb-mirror.ts` — client + degradation policy (`AGENTDB_MIRROR=0`
+  off; missing engine → off with reason; archive never depends on the mirror)
+- `src/tools/session_search.ts` — RRF fusion (k=60, wiki-hybrid convention)
+  over the FTS5 leg ⊕ mirror's dense leg, retriever-tagged blocks
+  (`· fts`, `· semantic(0.83)`, `· fts+semantic`), empty sentinel preserved
+- `AGENTDB_PATH` (default `./agent-mirror.db`), `AGENTDB_REQUEST_TIMEOUT_MS`
+
+Verified live: keyword-orthogonal queries reach seeded turns (semantic-only
+tag), `execute` unaffected (the sidecar solves the fork/ENOMEM conflict),
+18 contract tests include fusion + degradation paths.
 
 ## Tools (step 1)
 
