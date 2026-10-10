@@ -136,3 +136,12 @@ test("edit_file: not-found old_string is recoverable, whitespace-flexible fallba
   });
   assert.match(denied, /^Rejected: old_string not found/);
 });
+
+test("unknown tool name -> recoverable Rejected with vocabulary hint (e.g. write -> write_file)", async () => {
+  const { unknownToolMessage } = await import("../agent.js");
+  const msg = unknownToolMessage("write", ["ls", "read_file", "write_file", "edit_file", "execute"]);
+  assert.match(msg, /^Rejected: unknown tool "write"/);
+  assert.match(msg, /write_file/);
+  assert.match(msg, /Bound tools:/);
+  assert.ok(!msg.startsWith("Error:"), "wrong tool NAME must not end the turn");
+});

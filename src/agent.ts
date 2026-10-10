@@ -15,8 +15,7 @@ import type { SessionDriver } from "./driver.js";
 import type { AgentDbMirror } from "./agentdb-mirror.js";
 import { trace } from "./tracing.js";
 
-export function buildSystemPrompt(memoryBlock: string): string {
-  const base =
+export function buildSystemPrompt(memoryBlock: string): string {  const base =
     "You are an adaptable AI agent.\n" +
     "\n" +
     "SESSION MEMORY (episodic, on-demand):\n" +
@@ -169,7 +168,10 @@ export class AgentLoop {
         const tool = this.tools.get(call.name);
         let resultStr: string;
         if (!tool) {
-          resultStr = `Error: unknown tool ${call.name}`;
+          // Unknown tool name is a wrong-args denial (models occasionally use
+          // another harness's vocabulary, e.g. `write` for `write_file`) —
+          // recoverable: tell the model what IS bound and continue.
+          resultStr = unknownToolMessage(call.name, [...this.tools.keys()]);
         } else {
           try {
             resultStr = await tool.execute(call.args ?? {});
@@ -215,4 +217,18 @@ export class AgentLoop {
 
     return result;
   }
+}
+
+/** Recoverable denial for a tool name outside the bound registry, with a
+ *  vocabulary hint so the model re-routes on its own (e.g. write → write_file). */
+export function unknownToolMessage(name: string, bound: string[]): string {
+  const lower = name.toLowerCase();
+  const suggestion = bound.find(
+    (t) => t.toLowerCase().startsWith(lower) || t.toLowerCase().includes(lower),
+  );
+  return (
+    `Rejected: unknown tool ${JSON.stringify(name)} — no tool with that name is bound.` +
+    ` Bound tools: ${bound.join(", ")}.` +
+    (suggestion ? ` Did you mean ${suggestion}?` : "")
+  );
 }
