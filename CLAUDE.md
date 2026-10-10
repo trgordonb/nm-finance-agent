@@ -30,6 +30,9 @@ nm-finance-agent/
 │   ├── store.ts          # SessionStore: turn-rows, tool-call fidelity, FTS5 fallback chain
 │   ├── tracing.ts        # LangSmith REST runs client (no SDK; fire-and-forget)
 │   ├── titler.ts         # Session titler: sync fallback + async refine (summarizer model)
+│   ├── skills/           # SkillLibrary core (local mirror; R2 stays in the
+│   │                     #   nginx-skills CLI lifecycle) — Phase 1 of the
+│   │                     #   approved C-strategy skills port
 │   ├── followups.ts      # End-of-turn "next steps" extraction: regex
 │   │                     #   pre-filter + cheap secondary-LLM pass; a
 │   │                     #   `followups` table in the archive (repo-owned)
@@ -114,6 +117,11 @@ servers).
   `<server>_<tool>`; GET /api/mcp, POST /api/mcp/{name}/enabled,
   POST /api/mcp/reload (409 while turns are in flight).
 - Follow-ups: `FOLLOWUPS_ENABLED=0` disables the extractor.
+- Skills: `SKILLS_DIR` (default ./skills, gitignored mirror), toggles at
+  `SKILLS_STATE_DIR` (default ./state, gitignored); R2 authority lifecycle
+  delegated to the sibling `nm-skills` CLI (Phase 2 wiring).
+  Deviation: the skills index re-renders per turn — toggles apply
+  immediately, unlike python's once-per-session stable prefix.
 - LLM (OpenRouter for all models): `OPENROUTER_API_KEY`,
   `OPENROUTER_BASE_URL` (default https://openrouter.ai/api/v1),
   `OPENROUTER_MODEL_MAIN` (default z-ai/glm-5.3-flash; legacy `OPENAI_*`
@@ -155,7 +163,10 @@ servers).
 ## Roadmap (Hermes-order, from nm-memory-layer doctrine)
 
 1. ~~Agentic loop + prompt memory + basic tools + SSE REST~~ ✓ 2026-10-09
-2. ~~Session titler ✓~~ · ~~MCP binding + toggles + McpTab UI ✓ (2026-10-10)~~
+2. ~~Skills: TS SkillLibrary core over the working copy ✓ (Phase 1;
+   delegate R2 lifecycle to the nm-skills CLI at boot (sync) and after
+   curation (debounced push); drift in health; SkillsTab UI; agent-edit CAS
+   conflicts at the push boundary~~ + titler ✓ · ~~MCP binding + toggles + McpTab UI ✓ (2026-10-10)~~
    — remaining: nudge policy (secondary-LLM curation, silence-bias)
 3. Secondary-LLM search condensation (observability header, silent fallback)
 4. Pre-flight context compression with persisted lineage

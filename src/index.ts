@@ -35,6 +35,7 @@ import { fallbackTitle, refineSessionTitle } from "./titler.js";
 import { loadMcpServers, setServerEnabled, type ServerStatus as McpStatus } from "./mcp-config.js";
 import { bindMcpTools, closeOpenClients } from "./mcp-tools.js";
 import type { ToolDef, ChatMessage } from "./types.js";
+import { getSkillLibrary } from "./tools/skill_tools.js";
 import {
   maybeExtractFollowups,
   getFollowups,
@@ -138,6 +139,7 @@ app.get("/api/health", (_req: Request, res: Response) => {
     memory_chars: memory.totalChars(),
     memory_budget: MEMORY_CHAR_LIMIT,
     tools: [...loop.tools.keys()],
+    skills: getSkillLibrary().listAll().length,
     sessions: store.listSessions().length,
     mirror: mirror.getFastStatus(),
     mcp_connected: mcpReport ? mcpReport.filter((r) => r.connected && r.enabled).length : null,
@@ -387,6 +389,30 @@ app.post("/api/sessions/:sessionId/followups/dismiss", (req, res) => {
     return;
   }
   res.json({ dismissed });
+});
+
+// --- skills (Hermes-style toggles; python server.py parity) --------------------
+
+app.get("/api/skills", (_req, res) => {
+  res.json(getSkillLibrary().listAll());
+});
+
+app.post("/api/skills/:name/enabled", (req, res) => {
+  const enabled = (req.body ?? {}) as { enabled?: boolean };
+  if (typeof enabled.enabled !== "boolean") {
+    res.status(400).json({ detail: "enabled must be boolean" });
+    return;
+  }
+  const result = getSkillLibrary().setEnabled(req.params.name, enabled.enabled);
+  if (result.startsWith("Rejected")) {
+    res.status(404).json({ detail: result });
+    return;
+  }
+  if (result.startsWith("ERROR")) {
+    res.status(409).json({ detail: result });
+    return;
+  }
+  res.json({ status: result });
 });
 
 app.post("/api/chat/cancel", (req, res) => {

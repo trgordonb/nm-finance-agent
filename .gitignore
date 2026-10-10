@@ -17,3 +17,5 @@ memories/USER.md
 sandbox/
 # agentdb mirror (ruvector engine sidecar)
 agent-mirror.db
+skills/
+state/

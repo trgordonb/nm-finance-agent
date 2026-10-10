@@ -8,6 +8,7 @@ import { ls, read_file, write_file, edit_file, glob, grep } from "./fs.js";
 import { execute } from "./shell.js";
 import { web_to_markdown, internet_search } from "./web.js";
 import { memory_manage } from "./memory_manage.js";
+import { skill_manage, load_skill } from "./skill_tools.js";
 import { createSessionSearchTool } from "./session_search.js";
 import type { SessionDriver } from "../driver.js";
 import type { AgentDbMirror } from "../agentdb-mirror.js";
@@ -27,6 +28,8 @@ export function buildToolRegistry(
     web_to_markdown,
     internet_search,
     memory_manage,
+    skill_manage,
+    load_skill,
     createSessionSearchTool(driver, mirror),
   ];
 }

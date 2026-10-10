@@ -29,6 +29,16 @@ export const WORKSPACE_DIR =
     ? path.resolve(process.env.WORKSPACE_DIR.trim())
     : path.resolve("./workspace");
 
+export const SKILLS_DIR =
+  process.env.SKILLS_DIR && process.env.SKILLS_DIR.trim()
+    ? path.resolve(process.env.SKILLS_DIR.trim())
+    : path.resolve("./skills");
+
+export const SKILLS_STATE_DIR =
+  process.env.SKILLS_STATE_DIR && process.env.SKILLS_STATE_DIR.trim()
+    ? path.resolve(process.env.SKILLS_STATE_DIR.trim())
+    : path.resolve("./state");
+
 // HARD_JAIL=1 refuses all fs writes/executes outside the workspace — the
 // posture for network-exposed deployments (SERVER_HOST=0.0.0.0 etc.).
 export const WORKSPACE_HARD_JAIL = ["1", "true", "yes", "on"].includes(

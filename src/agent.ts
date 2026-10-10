@@ -14,6 +14,7 @@ import type { ChatMessage, ToolDef, ToolCall } from "./types.js";
 import type { SessionDriver } from "./driver.js";
 import type { AgentDbMirror } from "./agentdb-mirror.js";
 import { trace } from "./tracing.js";
+import { getSkillLibrary } from "./tools/skill_tools.js";
 
 export function buildSystemPrompt(memoryBlock: string): string {  const base =
     "You are an adaptable AI agent.\n" +
@@ -35,9 +36,20 @@ export function buildSystemPrompt(memoryBlock: string): string {  const base =
     "All your file tools and shell commands are workspace-rooted — relative paths and " +
     "script outputs land in the workspace dir automatically. Put every artifact you " +
     "produce (reports, downloads, datasets, scripts) there; use absolute paths only to " +
-    "read outside sources. Writes into the harness's own source dirs are rejected.\n";
-  if (memoryBlock) return `${base}\n${memoryBlock}\n`;
-  return base;
+    "read outside sources. Writes into the harness's own source dirs are rejected.\n" +
+    "\n" +
+    "SKILLS (procedural memory, on demand):\n" +
+    "The skills index below lists names + descriptions ONLY. If a listed skill " +
+    "matches the task, call load_skill(name) FIRST and follow its loaded " +
+    "instructions before falling back to generic approaches. You can curate " +
+    "skills with skill_manage (create/patch/edit/delete/write_file/remove_file); " +
+    "PREFER patch for updates — targeted and safe, unlike full rewrites.\n";
+
+  let prompt = base;
+  if (memoryBlock) prompt += `\n${memoryBlock}\n`;
+  const skillsIndex = getSkillLibrary().renderIndex();
+  if (skillsIndex) prompt += `${skillsIndex}\n`;
+  return prompt;
 }
 
 export interface TurnResult {
