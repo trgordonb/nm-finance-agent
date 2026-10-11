@@ -28,7 +28,17 @@ export const execute: ToolDef = {
       };
       exec(command, opts, (err, stdout, stderr) => {
         if (err && err.killed) {
-          return resolve(`Error: Command timed out after ${Math.round(EXECUTE_TIMEOUT_MS / 1000)} seconds`);
+          // Recoverable per the loop contract: a foreground timeout is a
+          // planning failure the model must route around, not a broken
+          // system (live miss 2026-10-11 — a skill-driven python export hit
+          // a 30s timeout and ended the whole research turn).
+          const secs = Math.max(1, Math.round(EXECUTE_TIMEOUT_MS / 1000));
+          resolve(
+            `Rejected: command timed out after ${secs}s. For long-running pipelines ` +
+              "(data exports, backtests), run in the background instead: " +
+              "`nohup <cmd> > out.log 2>&1 &` (workspace-rooted), then poll out.log or `jobs`.",
+          );
+          return;
         }
         const numericExit = typeof err?.code === "number";
         const parts: string[] = [];

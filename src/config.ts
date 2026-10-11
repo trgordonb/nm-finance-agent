@@ -67,7 +67,7 @@ export const OPENROUTER_REASONING = (process.env.OPENROUTER_REASONING ?? "1") !=
 
 export const MAX_COMPLETION_TOKENS = Number(process.env.MAX_COMPLETION_TOKENS ?? "16384");
 export const BUDGET_TOOL_MAX_ITERATIONS = Number(process.env.BUDGET_TOOL_MAX_ITERATIONS ?? "25");
-export const EXECUTE_TIMEOUT_MS = Number(process.env.EXECUTE_TIMEOUT_MS ?? "30000");
+export const EXECUTE_TIMEOUT_MS = Number(process.env.EXECUTE_TIMEOUT_MS ?? "120000");
 
 export const serverHost = process.env.SERVER_HOST || "127.0.0.1";
 export const serverPort = Number(process.env.SERVER_PORT || "3001");

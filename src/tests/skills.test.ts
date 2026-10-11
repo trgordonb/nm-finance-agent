@@ -129,3 +129,17 @@ test("skills: trailing space on the closing fence tolerated (tradedesk-dukascopy
   fs.rmSync(path.join(skillsDir, "data"), { recursive: true, force: true });
   lib.refresh();
 });
+
+test("execute: foreground timeouts are recoverable (Rejected + background hint)", async () => {
+  const { execFile } = await import("node:child_process");
+  const out = await new Promise<string>((resolve) => {
+    execFile(
+      process.execPath,
+      ["node_modules/.bin/tsx", "/tmp/opencode/exec-timeout.mts"],
+      { env: { ...process.env, EXECUTE_TIMEOUT_MS: "300" }, timeout: 30000 },
+      (err, stdout) => resolve(stdout || String(err)),
+    );
+  });
+  assert.match(out, /RESULT: Rejected: command timed out after 1s/);
+  assert.ok(!out.includes("Error: Command timed out"), "timeouts must NOT end the turn");
+});
