@@ -630,5 +630,9 @@
 "skills/vela-charts/scripts/render_chart.py": {
 "etag": "\"6454ebc158cc41c2aaf8fec536d5e7bb\"",
 "size": 13912
+},
+"skills/vol-regime-detector/SKILL.md": {
+"etag": "\"2f3cf4d5ec8a41f3f4aa681fcff8f9eb\"",
+"size": 256
 }
 }

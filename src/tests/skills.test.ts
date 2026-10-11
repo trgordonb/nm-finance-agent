@@ -85,3 +85,33 @@ test("skills: unknown tool actions are recoverable denials", async () => {
   const res = await skill_manage.execute({ action: "rename", name: "x" });
   assert.match(res, /^Rejected: unknown action "rename"/);
 });
+
+test("skills: folded/literal YAML block scalars in description parse fully (paper-claim-repro case)", () => {
+  const md = [
+    "---",
+    "name: paper-claim-repro",
+    "description: >",
+    "  Reproduce the empirical claims of a quantitative-trading paper: extract its strategy into a",
+    '  machine-readable spec. Use this when a paper (arXiv ID, PDF, or link) is provided — e.g. "does',
+    '  the Sharpe hold up?". Not for free-form strategy ideas.',
+    "version: 1.0.0",
+    "---",
+    "",
+    "Body starts here.",
+  ].join("\n");
+  fs.mkdirSync(path.join(skillsDir, "research", "paper-claim-repro"), { recursive: true });
+  fs.writeFileSync(path.join(skillsDir, "research", "paper-claim-repro", "SKILL.md"), md, "utf8");
+  lib.refresh();
+  const entry = lib.resolve("paper-claim-repro")!;
+  assert.ok(entry.description.startsWith("Reproduce the empirical claims"), `description was: ${entry.description.slice(0, 20)}`);
+  assert.ok(!entry.description.includes("\n") && entry.description.includes("paper"), "folded into one line");
+  assert.match(lib.renderIndex(), /paper-claim-repro: Reproduce the empirical claims/);
+  // literal block scalar variant too
+  const md2 = md.replace("description: >", "description: |");
+  fs.writeFileSync(path.join(skillsDir, "research", "paper-claim-repro", "SKILL.md"), md2, "utf8");
+  lib.refresh();
+  const lit = lib.resolve("paper-claim-repro")!;
+  assert.ok(!lit.description.startsWith(">"), "literal block scalars parse as text, not a bare '>'");
+  fs.rmSync(path.join(skillsDir, "research"), { recursive: true, force: true });
+  lib.refresh();
+});
