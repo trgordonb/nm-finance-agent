@@ -33,6 +33,7 @@ import { enabled as tracingEnabled, TRACE_PROJECT } from "./tracing.js";
 import { log } from "./logger.js";
 import { fallbackTitle, refineSessionTitle } from "./titler.js";
 import { NudgePolicy, run_memory_nudge } from "./nudge.js";
+import { createCompressor, type ConversationCompressor } from "./compression.js";
 import { memory_manage } from "./tools/memory_manage.js";
 import { skill_manage } from "./tools/skill_tools.js";
 import { loadMcpServers, setServerEnabled, type ServerStatus as McpStatus } from "./mcp-config.js";
@@ -77,6 +78,13 @@ initSkills(getSkillLibrary(), skillsBridge);
 // reload endpoint. One bad server is skipped with a warning, never fatal.
 let mcpReport: McpReport | null = null;
 let runtimeReady: Promise<void> | null = null;
+
+// Pre-flight context compression (Hermes Phase 5): env-toggled compressor
+// (COMPRESSION_ENABLED=true w/ token threshold + keep-recent); the archive
+// stays verbatim — lineage is recorded per compression, and the LIVE x-row
+// window is the compressed view (idempotent on resume).
+const compressor: ConversationCompressor | null = createCompressor();
+if (compressor) log.info("context compression enabled");
 
 // Periodic nudge (learning loop curation; python maybe_nudge parity).
 import { chat } from "./llm.js";
@@ -262,8 +270,29 @@ app.post("/api/chat", (req, res) => {
   (async () => {
     try {
       await getRuntime(); // lazy runtime assembly (python getRuntime parity)
-      const history = store.loadSession(sessionId);
+      let history = store.loadSession(sessionId);
       write("session", { session_id: sessionId, turn_id: turnId, resumed: history.length > 0 });
+      if (compressor && history.length) {
+        const res = await compressor.compress(history);
+        if (res.compressed) {
+          store.recordCompression(sessionId, {
+            summary: res.summary,
+            firstTurn: res.summarizedFirstTurn,
+            lastTurn: res.summarizedLastTurn,
+            originalCount: res.originalCount,
+            model: res.modelLabel,
+          });
+          history = res.compressedMessages;
+          write("compression", {
+            first: res.summarizedFirstTurn,
+            last: res.summarizedLastTurn,
+            original: res.originalCount,
+            compressed: res.compressedCount,
+            elapsed_ms: res.elapsedMs,
+            model: res.modelLabel,
+          });
+        }
+      }
       const turn = await loop.runTurn(
         history,
         message,

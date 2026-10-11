@@ -37,6 +37,10 @@ export interface ChatMessage {
   tool_calls?: ToolCall[]; // assistant only
   tool_call_id?: string; // tool only
   name?: string; // tool only — the tool's name
+  /** Provider-observed usage on the assistant message that produced it —
+   *  the truest current-usage measure for the compression trigger (live
+   *  per run; not persisted — resume falls back to the chars/4 estimate). */
+  usage?: { prompt_tokens?: number; completion_tokens?: number };
 }
 
 // One completed agent turn as persisted in the archive (turn row in SQLite).

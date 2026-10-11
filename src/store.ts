@@ -8,6 +8,7 @@
 //   - FTS5 over vectors (exact/keyword recall now; semantic comes later)
 
 import { DatabaseSync } from "node:sqlite";
+import fs from "node:fs";
 import { DB_PATH } from "./config.js";
 import type { ChatMessage } from "./types.js";
 import type { SessionDriver, SessionHit, SessionRow } from "./driver.js";
@@ -28,6 +29,11 @@ export class SQLiteSessionStore implements SessionDriver {
   }
 
   private migrate(): void {
+    // pre-existing archives got schema v1 without the usage column
+    const cols = (this.db.prepare(`PRAGMA table_info(turns)`).all() as Array<{ name: string }>).map((c) => c.name);
+    if (fs.existsSync(this.dbPath) && cols.length && !cols.includes("usage")) {
+      this.db.exec("ALTER TABLE turns ADD COLUMN usage TEXT");
+    }
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS turns (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,6 +45,7 @@ export class SQLiteSessionStore implements SessionDriver {
         tool_calls TEXT,
         tool_call_id TEXT,
         tool_name TEXT,
+        usage TEXT,
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
       );
       CREATE INDEX IF NOT EXISTS idx_turns_session ON turns(session_id, turn_number, message_index);
@@ -52,6 +59,17 @@ export class SQLiteSessionStore implements SessionDriver {
         INSERT INTO turns_fts(turns_fts, rowid, content) VALUES ('delete', old.id, old.content);
       END;
 
+      CREATE TABLE IF NOT EXISTS compressions (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        session_id TEXT NOT NULL,
+        summary TEXT NOT NULL,
+        first_turn INTEGER NOT NULL,
+        last_turn INTEGER NOT NULL,
+        original_count INTEGER NOT NULL,
+        model TEXT NOT NULL,
+        created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+      );
+      CREATE INDEX IF NOT EXISTS idx_compressions_session ON compressions(session_id);
       CREATE TABLE IF NOT EXISTS session_titles (
         session_id TEXT PRIMARY KEY,
         title TEXT NOT NULL,
@@ -71,8 +89,8 @@ export class SQLiteSessionStore implements SessionDriver {
 
   appendTurn(sessionId: string, messages: ChatMessage[]): number {
     const insert = this.db.prepare(
-      `INSERT INTO turns (session_id, turn_number, message_index, role, content, tool_calls, tool_call_id, tool_name)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO turns (session_id, turn_number, message_index, role, content, tool_calls, tool_call_id, tool_name, usage)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     );
     this.db.exec("BEGIN IMMEDIATE");
     try {
@@ -90,6 +108,7 @@ export class SQLiteSessionStore implements SessionDriver {
           m.tool_calls ? JSON.stringify(m.tool_calls) : null,
           m.tool_call_id ?? null,
           m.name ?? null,
+          m.usage ? JSON.stringify(m.usage) : null,
         );
       });
       this.db.exec("COMMIT");
@@ -102,13 +121,14 @@ export class SQLiteSessionStore implements SessionDriver {
 
   loadSession(sessionId: string): ChatMessage[] {
     const rows = this.db
-      .prepare(`SELECT role, content, tool_calls, tool_call_id, tool_name FROM turns WHERE session_id = ? ORDER BY id`)
+      .prepare(`SELECT role, content, tool_calls, tool_call_id, tool_name, usage FROM turns WHERE session_id = ? ORDER BY id`)
       .all(sessionId) as Array<{
       role: string;
       content: string;
       tool_calls: string | null;
       tool_call_id: string | null;
       tool_name: string | null;
+      usage: string | null;
     }>;
     return rows.map((r) => {
       const msg: ChatMessage = {
@@ -127,6 +147,13 @@ export class SQLiteSessionStore implements SessionDriver {
         msg.tool_call_id = r.tool_call_id ?? "unknown";
         msg.name = r.tool_name ?? undefined;
       }
+      if (r.role === "assistant" && r.usage && r.usage !== "null") {
+        try {
+          msg.usage = JSON.parse(r.usage) as ChatMessage["usage"];
+        } catch {
+          /* tolerate corrupt usage, drop it */
+        }
+      }
       return msg;
     });
   }
@@ -143,6 +170,34 @@ export class SQLiteSessionStore implements SessionDriver {
          GROUP BY t.session_id ORDER BY created_at DESC`,
       )
       .all() as unknown as SessionRow[];
+  }
+
+  recordCompression(
+    sessionId: string,
+    meta: { summary: string; firstTurn: number; lastTurn: number; originalCount: number; model: string },
+  ): void {
+    this.db
+      .prepare(
+        `INSERT INTO compressions (session_id, summary, first_turn, last_turn, original_count, model)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+      )
+      .run(sessionId, meta.summary, meta.firstTurn, meta.lastTurn, meta.originalCount, meta.model);
+  }
+
+  listCompressions(sessionId: string): Array<{
+    id: number;
+    first_turn: number;
+    last_turn: number;
+    summary: string;
+    model: string;
+    created_at: string;
+  }> {
+    return this.db
+      .prepare(
+        `SELECT id, first_turn, last_turn, summary, model, created_at
+         FROM compressions WHERE session_id = ? ORDER BY id`,
+      )
+      .all(sessionId) as never;
   }
 
   /** Title persistence: sync fallback rows and refined titles share the table. */

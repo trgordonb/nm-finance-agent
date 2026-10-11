@@ -155,7 +155,11 @@ export class AgentLoop {
           cancelled = true;
           break;
         }
-        const out: ChatMessage = { role: "assistant", content: response.content };
+        const out: ChatMessage = {
+          role: "assistant",
+          content: response.content,
+          usage: response.usage,
+        };
         messages.push(out);
         newSlice.push(out);
         onMessage?.(out);
@@ -172,6 +176,7 @@ export class AgentLoop {
         role: "assistant",
         content: response.content || "",
         tool_calls: calls,
+        usage: response.usage,
       };
       messages.push(assistantMsg);
       newSlice.push(assistantMsg);

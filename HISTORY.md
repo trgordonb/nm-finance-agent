@@ -68,6 +68,32 @@ repo itself.
 - Verified: proxy 200 + cache-hit on repeat, frontend build passes,
   live turn emits the exact fenced block the renderer consumes.
 
+## 2026-10-11 — Phase 5: context compression w/ persisted lineage
+
+- **Ported from nm_memory_layer/compression.py** (src/compression.ts):
+  pre-flight usage check (provider-reported prompt_tokens of the last
+  assistant message — now PERSISTED in the turns table; chars/4
+  estimate as fallback — live debugging exposed the divergence: the
+  provider processes ~57-60k tokens incl. the 56-tool schema block
+  while the content-only estimate sees ~1.2k), throttle via
+  COMPRESSION_TOKEN_THRESHOLD (default 24000), middle turns summarized
+  into one <conversation_summary turn="N-M"> system message; first +
+  KEEP_RECENT_TURNS(2) verbatim; idempotent on resume; hard
+  never-raise / original history untouched on model errors and empty
+  or pseudo-tool outputs.
+- **Lineage persisted in the archive** (`compressions` table:
+  summary + turn range + model + count; listCompressions for trace),
+  and the SSE `compression` event surfaces the op to the UI
+  (python event vocabulary).
+- **Live evidence** (threshold lowered to 15k to force early firing):
+  skipped at 3 turns (structure gate logs cleanly), then on turn 5's
+  pre-flight: 16 → 13 messages, turns 2-2 summarized, 274-char
+  summary stored w/ model label `openrouter/z-ai/glm-5.3-flash`.
+- Usage metadata on assistant messages: live-per-turn only, not
+  persisted BEFORE this fix (resume falls back to estimate, python
+  parity). NOT stored in tool_call JSON — separate column, nullable.
+  Tests: 46.
+
 ## 2026-10-10 — streaming fixes, recovery semantics, OpenRouter cutover, hybrid recall
 
 - **Incremental SSE streaming.** The chat endpoint was buffering everything
