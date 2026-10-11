@@ -6,6 +6,7 @@ import fs from "node:fs";
 import path from "node:path";
 import type { ToolDef } from "../types.js";
 import { resolveInWorkspace, guardWorkspaceWrite } from "../workspace.js";
+import { SKILLS_DIR } from "../config.js";
 
 export const ls: ToolDef = {
   name: "ls",
@@ -39,7 +40,20 @@ export const ls: ToolDef = {
       // Missing directory is usually a wrong-path mistake the model can fix
       // by listing the parent — recoverable, not turn-fatal.
       if ((e as NodeJS.ErrnoException).code === "ENOENT") {
-        return `Rejected: directory does not exist (${String(args.directory ?? "")}) — try ls on the parent or the workspace.`;
+        const requested = String(args.directory ?? "");
+        // "ls skills/<skill>" — skills explore from the repo working copy, but
+        // relative paths run from the WORKSPACE: point at the absolute root.
+        const skillsIdx = requested.indexOf("skills/");
+        const skillsRoot = SKILLS_DIR.replace(/[\\/](skills)[\\/]?$/i, "");
+        const abs =
+          skillsIdx !== -1 &&
+          fs.existsSync(path.join(skillsRoot, requested.replace(/\\/g, "/").slice(skillsIdx)))
+            ? path.join(skillsRoot, requested.replace(/\\/g, "/").slice(skillsIdx))
+            : null;
+        return (
+          `Rejected: directory does not exist (${requested || "."}) — list the workspace root (ls) or use the absolute path.` +
+          (abs ? `\nActually on disk at: ${abs}` : "")
+        );
       }
       return `Error: ${(e as Error).message}`;
     }

@@ -37,6 +37,11 @@ export function buildSystemPrompt(memoryBlock: string): string {  const base =
     "script outputs land in the workspace dir automatically. Put every artifact you " +
     "produce (reports, downloads, datasets, scripts) there; use absolute paths only to " +
     "read outside sources. Writes into the harness's own source dirs are rejected.\n" +
+    "IMPORTANT: for skills/ scripts referenced in SKILL.md bodies, use their " +
+    "ABSOLUTE paths — $SKILLS_DIR is exported to your shells and points at the " +
+    "skills root (your commands run with the workspace as cwd, so bare " +
+    "`skills/...` paths would miss). Wrong-file attempts return the exact " +
+    "absolute path to re-run with.\n" +
     "\n" +
     "SKILLS (procedural memory, on demand):\n" +
     "The skills index below lists names + descriptions ONLY. If a listed skill " +

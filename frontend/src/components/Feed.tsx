@@ -38,10 +38,14 @@ function MessageRow({ item }: { item: MessageItem }) {
   if (item.role === "tool") {
     // Transport status is always "success" for a completed tool; outcome
     // labels key off content ("Error:"/"Rejected:" are in-band strings).
+    // Tool outputs carry diagnostics INSIDE the content (execute prints
+    // 'Error output:' + non-`Exit code: 0'): treat those as failures too.
     const failed =
       item.status === "error" ||
       item.content.startsWith("Rejected:") ||
-      item.content.startsWith("Error:");
+      item.content.startsWith("Error:") ||
+      item.content.includes("Error output:") ||
+      /Exit code: (?!0\b)\d+/.test(item.content);
     return (
       <details className={`tool-result${failed ? " failed" : ""}`}>
         <summary>
