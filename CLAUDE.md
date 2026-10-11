@@ -1,0 +1,167 @@
+# CLAUDE.md — nm-finance-agent
+
+Ground-up TypeScript agent harness (REST-only), rebuilt from the Python
+LangGraph repo (`~/projects/langgraph-demo`) without the LangGraph dependency.
+Financial research agent on OpenRouter. The memory substrate is deliberately
+seamed so the future `ruvector-core::AgenticDB` swap lands behind
+`SessionDriver` — the loop only knows `loadSession / recordTurn / search /
+listSessions / recordCompression`; hybrid recall already runs as the mirror.
+
+## Current status (2026-10-11)
+
+Full Hermes-order memory stack ported and live:
+loop+prompt memory+tools → titler → MCP → hybrid recall mirror → followups →
+skills (4 phases, R2 live) → context compression. UI: Chat + settings
+(Skills | MCP), streaming feed, to-do strip, badges, titler.
+
+## Layout
+
+```
+nm-finance-agent/
+├── src/
+│   ├── index.ts          # Express server: /api/health, /api/sessions*, /api/memory,
+│   │                     #   /api/mcp*, /api/skills*, followups, /api/yahoo/*,
+│   │                     #   POST /api/chat (SSE incl. compression+nudge events),
+│   │                     #   /api/chat/cancel; runtime assembly (lazy+lock, reloadable)
+│   ├── agent.ts          # AgentLoop: explicit agent↔tool cycle; onMessage streaming;
+│   │                     #   per-turn LangSmith run tree; usage metadata attached to
+│   │                     #   assistant messages (compression trigger fodder)
+│   ├── llm.ts            # OpenRouter client (provider steering + reasoning block);
+│   │                     #   ChatOpts {model, noReasoning, maxTokens}; retry/rate-limit
+│   ├── memory.ts         # PromptMemory: MEMORY.md/USER.md, 3575-char shared budget
+│   ├── store.ts          # SQLiteSessionStore (SessionDriver): turn rows incl. usage,
+│   │                     #   FTS5 fallback chain, titles, followups, compressions
+│   ├── hybrid + mirror   # driver.ts (SessionDriver seam) + agentdb-mirror.ts
+│   │                     #   (sidecar client) + mirror-child.ts (sidecar: redb/
+│   │                     #   ruvector VectorDB + onnx MiniLM — natives isolated from
+│   │                     #   the server process: fork after model load = ENOMEM)
+│   ├── compression.ts    # Phase-5 pre-flight compression (provider-reported usage
+│   │                     #   persisted per assistant row; verbatim anchors; lineage)
+│   ├── nudge.ts          # NudgePolicy + prompt + flattenTranscript + run (tool loop)
+│   ├── titler.ts         # sync fallback + async refine (summarizer model, once)
+│   ├── followups.ts      # regex prefilter → cheap LLM extraction → to-do strip
+│   ├── skills/           # library.ts (SkillLibrary core over skills/ working copy;
+│   │                     #   js-yaml frontmatter; toggles in SKILLS_STATE_DIR) +
+│   │                     #   sync.ts (R2 lifecycle: uv→nm-skills CLI boot pull+push,
+│   │                     #   debounced curation push; NOTE: CLI `sync` subcmd broken,
+│   │                     #   pull/push run as two invocations)
+│   ├── mcp-config.ts     # mcp_servers.json loader: ${VAR} fail-closed interpolation,
+│   │                     #   atomic toggles, keep_tools exact/suffix
+│   ├── mcp-tools.ts      # per-server binding via @modelcontextprotocol/sdk
+│   │                     #   (stdio/streamable_http/sse); one bad server skips
+│   ├── tracing.ts        # LangSmith REST runs client (no SDK, fire-and-forget)
+│   ├── workspace.ts      # workspace-rooted path resolution + harness write guard
+│   ├── config.ts         # all env (dotenv override=true); logger.ts: stderr-only
+│   ├── tools/            # fs (workspace-rooted), shell (execute: $SKILLS_DIR env,
+│   │                     #   skill-path redirect, recoverable timeouts), web (Jina
+│   │                     #   Reader→Tavily Extract fallback; Tavily search),
+│   │                     #   memory_manage, skill_tools (skill_manage/load_skill),
+│   │                     #   session_search (hybrid), registry
+│   └── tests/            # 46 contract tests across 6 files
+├── frontend/             # Vite React app: Chat feed (+ vela-chart cards), settings
+│   └── src/charts/       #   (Skills|MCP), Yahoo fetch via proxy, @luxalgo/vela lazy
+├── mcp_servers.json      # git-tracked MCP config
+├── skills/               # local working copy (gitignored mirror of the R2 bucket)
+├── memories/ workspace/ state/   # local-only, gitignored
+├── sessions.db           # the archive (turns+FTS5+titles+followups+compressions)
+└── agent-mirror.db       # ruvector redb sidecar store (rebuildable from archive)
+```
+
+## Contracts (the suite is the contract — `npm test`, 46 tests)
+
+- **`Error:` is fatal, `Rejected:` is recoverable.** `Error:` ends the turn —
+  reserved for system failures (spawn errors, unreadable I/O). Everything the
+  model can route out of speaks `Rejected:` with guidance baked in: unknown
+  tool (with closest-name hint), edit_file old_string not found (after
+  exact→trimmed→whitespace-flexible matching), ENOENT reads/ls (with
+  "Actually on disk at:" when the path belongs to skills/), execute
+  timeouts (with the nohup-background recipe), memory budget, workspace
+  guard. Nonzero exits and stderr are information, not errors.
+- **3,575-char combined budget** across MEMORY.md + USER.md.
+- **Provider-valid round-trips + every completed turn persisted** — tool_calls
+  + tool_call_id + tool_name + usage persisted; cancel persists only the
+  valid prefix (dangling groups dropped); single-reply turns archive too
+  (persist gate >=1 on the new slice; user row prepended at append).
+- **Hybrid search**: FTS5 chain (AND→OR→LIKE) ⊕ mirror dense leg, RRF k=60,
+  retriever-tagged blocks, empty sentinel preserved.
+- **Compression never breaks the agent**: threshold 24k provider-reported
+  tokens (fallback chars/4), first + KEEP_RECENT(2) verbatim, middle
+  summarized into `<conversation_summary turns=N-M>`; lineage in
+  `compressions`; idempotent on resume.
+- **Titles once; followups cosmetic**: sync fallback then async refine
+  (summarizer model, model-labeled); followups only fire on the tuned regex
+  prefilter, fire-and-forget, never block.
+- **Skills**: disabled = invisible to the agent surface, visible to admin;
+  curation writes through to R2 via debounced push; push failures surface
+  as Rejected-grade advisories in skill_manage results (conflict UX).
+- **Tracing never breaks the turn**; mirror never breaks the turn; bridge
+  never blocks turns (local-only degradation with health-visible reason).
+
+## Tool surface (flat registry; loop never special-cases)
+
+Core: `ls read_file write_file edit_file glob grep execute web_to_markdown
+internet_search memory_manage skill_manage load_skill session_search`.
+MCP: `<server>_<tool>` entries (agent_browser 29, luxalgo 13 keep_tools,
+agentdb 14 keep_tools; finance_toolkit dormant streamable_http).
+
+## Environment
+
+Full inventory with defaults in `.env.example`. Highlights:
+- OpenRouter: `OPENROUTER_API_KEY/BASE_URL/MODEL_MAIN/MODEL_SUMMARIZER/`
+  `MAIN_MODEL_PROVIDER` (+FALLBACKS/REASONING toggles)
+- Compression: `COMPRESSION_ENABLED` (default off), `_TOKEN_THRESHOLD=24000`,
+  `_KEEP_RECENT_TURNS=2`
+- Nudge: `NUDGE_INTERVAL=5`
+- Mirror: `AGENTDB_MIRROR=0` off, `AGENTDB_PATH`, embed/sidecar timeouts
+- Skills: `SKILLS_REGISTRY` (`s3://neuralmatrix`), `SKILLS_DIR`,
+  `SKILLS_STATE_DIR`, `NM_SKILLS_REGISTRY_HOME`, `SKILLS_CLI_BRIDGE=0`,
+  `SKILLS_PUSH_DEBOUNCE_MS`
+- MCP: `MCP_SERVERS_FILE`, connect/call timeouts
+- Workspace: `WORKSPACE_DIR`, `WORKSPACE_HARD_JAIL` (server exposure posture)
+- Server: `SERVER_HOST/PORT` (127.0.0.1:3001)
+
+## Design decisions
+
+- **node:sqlite** (Node 24, FTS5 built-in, WAL; zero native deps).
+- **fetch over SDK** for OpenRouter (retry policy is the main.py port).
+- **Sidecar isolation for natives**: onnx arena (~40GB VA) + ruvector HNSW
+  (~12GB guards) break fork()/spawn ENOMEM — both live ONLY in
+  `mirror-child.ts` (JSON-lines stdio; never forks after load). The server
+  forks freely (execute tool) without ENOMEM risk. Same trap killed the
+  mirror in an in-server build (documented at 2026-10-10).
+- **agentdb npm alpha wrappers unreliable** (sync/await bugs; RvfBackend not
+  exported) — the mirror drives the ruvector core directly; the MCP pilot
+  runs agentdb legacy SQLite mode. RVF containers NOT used (see HISTORY).
+- **Error/Rejected asymmetry** (installed across the porting sessions) is the
+  loop's core self-recovery mechanism — every failure class returns guidance.
+- **python-provider quirks carried**: OpenRouter reasoning-token cap on
+  extraction calls (max_tokens not max_completion_tokens), Yahoo UA rule,
+  keep_tools suffix matching, `${VAR}` fail-closed interpolation.
+- **Deviations from python, deliberate**: skills index re-renders per turn
+  (toggles apply next turn vs next session); followups live in the
+  repo-owned archive (no schema-rental constraint); mirror is additive
+  (archive stays authoritative) pending the AgenticDB evaluation.
+
+## Roadmap (Hermes-order)
+
+1-2. ✓ loop/prompt-memory/tools/REST/SSE · titler · MCP · followups ·
+     skills Phases 1-4 · usage/persist + compression
+3. Search condensation shell — the remaining Hermes-order item: a
+   secondary-LLM condensation of hybrid recall results with the
+   `[session_search: condensed by …]` observability header and
+   silent-fallback semantics (the mirror leg supplies candidates cheaply).
+4. Nudge-hardening candidates: reflexion-store escalation via the bound
+   agentdb MCP tools (python Gate-1), context-size aware nudging.
+6. `SessionDriver` → full AgenticDB sweep (RVF witness chains, COW
+   branches, learned ranking) — pending agentdb alpha stability; the
+   mirror already covers recall.
+7. (Deferred) vela offline HTML vendor step; skills registry drift doctor
+   in the UI.
+
+## Dev
+
+```bash
+npm install && npm run start   # backend on :3001 (env from ./.env)
+cd frontend && npm run dev     # web UI on :5173 (proxies /api)
+npm test                       # 46 contract tests
+```

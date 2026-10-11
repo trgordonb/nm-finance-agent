@@ -5,6 +5,45 @@ The general build order (and the substrate discussion behind it) lives in the
 conversation history of the nm-memory-layer comparison; this file tracks the
 repo itself.
 
+---
+
+## Summary of record (2026-10-11) — what this repo now is
+
+Twenty-two commits from empty (2026-10-09 → 10-11). The TS repo now carries
+the whole Hermes-order memory stack from the python trio (langgraph-demo +
+nm-memory-layer + nm-skills-registry), plus the detours. Headlines:
+
+- **Loop + memory**: explicit AgentLoop (LangGraph-free), incremental SSE
+  (onMessage), provider-valid persistence: every completed turn incl. single
+  replies, tool fidelity, `usage` metadata persisted per assistant row.
+- **Recovery doctrine**: `Error:` fatal vs `Rejected:` recoverable —
+  installed across every failure class found live (unknown tool names,
+  wrong edit strings w/ whitespace-flexible matching, ENOENT paths w/
+  skills-root redirect, execute timeouts w/ nohup recipe, budget, workspace
+  guard). Lots of "Error:-would-have-ended-the-turn" lives were saved.
+- **Pods of memory**: prompt memory (3575 budget), titler (fallback+refine),
+  followups (prefilter+cheap LLM+strip/badges), nudge (interval tool loop,
+  memory_manage+skill_manage), compression (provider-usage threshold,
+  verbatim anchors, persisted lineage).
+- **Hybrid recall**: SQLiteSessionStore (FTS5 chain) + agentdb mirror sidecar
+  (ruvector redb + onnx MiniLM; natives isolated in one sidecar — the
+  fork/ENOMEM class), RRF k=60, retriever tags. Archive stays authoritative.
+- **MCP**: mcp_servers.json port (interpolation fail-closed, atomic toggles,
+  keep_tools), SDK binding (3 servers live, reloadable), McpTab + settings.
+- **Skills**: 4-phase port per the approved C-strategy (TS core + nm-skills
+  CLI R2 lifecycle, live bucket verification incl. an agent patch byte-identical
+  on the bucket side), SkillsTab UI, frontmatter robustness fixes (js-yaml,
+  trailing-space fences), conflict UX via push-failure advisories.
+- **Surfacing**: titler + followups UI corrections (refetch-on-load,
+  badge/strip sync), streaming-order fix, UI failure styling for in-band
+  errors, vela-charts inline cards + Yahoo proxy (UA rule), skills-backend
+  sync line, settings sub-tabs.
+- **Hygiene**: orphan probe db removed + gitignored; env inventory reconciled
+  both ways into .env.example.
+
+Known deferred: full RVF/AgenticDB substrate sweep (agentdb alpha churn),
+offline HTML vendor step, drift doctor in UI, search condensation polish.
+
 ## 2026-10-10 — MCP port (config, binding, UI) + titler + streaming fixes
 
 - **MCP ported from langgraph-demo** (mcp_config.py + server.py endpoints +
