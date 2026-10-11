@@ -19,3 +19,6 @@ sandbox/
 agent-mirror.db
 skills/
 state/
+
+# probe artifacts + agentdb MCP vector default (lands in cwd)
+ruvector.db
