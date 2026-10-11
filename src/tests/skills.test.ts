@@ -115,3 +115,17 @@ test("skills: folded/literal YAML block scalars in description parse fully (pape
   fs.rmSync(path.join(skillsDir, "research"), { recursive: true, force: true });
   lib.refresh();
 });
+
+test("skills: trailing space on the closing fence tolerated (tradedesk-dukascopy case)", () => {
+  const md =
+    '---\nname: tradedesk-dukascopy\ndescription: This skill enables an agent to fetch new market data from dukascopy to use in backtests.\nlicense: MIT\nmetadata:\n  author: radiusred.uk\n--- \n\n# SKILL title follows.\n';
+  fs.mkdirSync(path.join(skillsDir, "data", "tradedesk-dukascopy"), { recursive: true });
+  fs.writeFileSync(path.join(skillsDir, "data", "tradedesk-dukascopy", "SKILL.md"), md, "utf8");
+  lib.refresh();
+  const entry = lib.resolve("tradedesk-dukascopy")!;
+  assert.match(entry.description, /^This skill enables an agent to fetch new market data/);
+  // nested metadata map must not bleed into description
+  assert.ok(!entry.description.includes("author"));
+  fs.rmSync(path.join(skillsDir, "data"), { recursive: true, force: true });
+  lib.refresh();
+});
