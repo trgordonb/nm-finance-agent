@@ -32,6 +32,19 @@ repo itself.
   so toggles apply from the agent's NEXT TURN — python's index was baked
   once per session.
 
+- **Skills Phase 4: nudge curation + CAS conflict UX** (closes the
+  approved four-phase skills plan). The nudge loop itself is now TS:
+  `src/nudge.ts` (NudgePolicy prompt/flatten/run port with the
+  silence-bias + skills-vs-facts split; memory_manage AND skill_manage
+  bound — the Gate-1 escalation shape, now native) wired post-turn with
+  the `nudge` SSE event (python event vocabulary); interval NUDGE
+  _INTERVAL default 5. Push-boundary conflict UX:
+  `SkillsCliBridge.lastPushFailure` consults surface in skill_manage
+  results (Rejected-grade advisory on the working-copy vs bucket
+  divergence before further edits; pushes re-attempt at the next
+  curation op). Live: NUDGE_INTERVAL=2 fired the nudge on the second
+  turn of one session without blocking `done`. Tests: 43.
+
 ## 2026-10-10 — streaming fixes, recovery semantics, OpenRouter cutover, hybrid recall
 
 - **Incremental SSE streaming.** The chat endpoint was buffering everything

@@ -32,6 +32,9 @@ import { buildToolRegistry } from "./tools/index.js";
 import { enabled as tracingEnabled, TRACE_PROJECT } from "./tracing.js";
 import { log } from "./logger.js";
 import { fallbackTitle, refineSessionTitle } from "./titler.js";
+import { NudgePolicy, run_memory_nudge } from "./nudge.js";
+import { memory_manage } from "./tools/memory_manage.js";
+import { skill_manage } from "./tools/skill_tools.js";
 import { loadMcpServers, setServerEnabled, type ServerStatus as McpStatus } from "./mcp-config.js";
 import { bindMcpTools, closeOpenClients } from "./mcp-tools.js";
 import type { ToolDef, ChatMessage } from "./types.js";
@@ -74,6 +77,22 @@ initSkills(getSkillLibrary(), skillsBridge);
 // reload endpoint. One bad server is skipped with a warning, never fatal.
 let mcpReport: McpReport | null = null;
 let runtimeReady: Promise<void> | null = null;
+
+// Periodic nudge (learning loop curation; python maybe_nudge parity).
+import { chat } from "./llm.js";
+const nudgeInterval = Number(process.env.NUDGE_INTERVAL || "5");
+const nudgePolicy = new NudgePolicy(nudgeInterval);
+
+async function maybeNudge(sessionId: string, newMessages: ChatMessage[]): Promise<string | undefined> {
+  nudgePolicy.recordTurn(sessionId);
+  if (!nudgePolicy.shouldNudge(sessionId)) return undefined;
+  nudgePolicy.markNudged(sessionId);
+  const skillTool = loop.tools.get("skill_manage") ?? skill_manage;
+  const tools: Array<typeof memory_manage> = [memory_manage, skillTool].filter(
+    (t, i, arr) => arr.findIndex((x) => x.name === t.name) === i,
+  ) as never;
+  return run_memory_nudge(newMessages, memory, tools as never, chat);
+}
 
 async function assembleRuntime(): Promise<McpReport> {
   const base = buildBaseRegistry();
@@ -269,6 +288,12 @@ app.post("/api/chat", (req, res) => {
         void mirror.recordTurn(sessionId, recordedTurn, persistable).catch(() => undefined);
         maybeTitleSession(sessionId, message, persistable);
         maybeExtractFollowups(sessionId, persistable);
+        try {
+          const nudgeSummary = await maybeNudge(sessionId, persistable);
+          if (nudgeSummary) write("nudge", { summary: nudgeSummary });
+        } catch (e) {
+          log.warn(`Memory nudge failed: ${String(e).slice(0, 160)}`);
+        }
       }
       // (messages were already streamed live via the onMessage callback)
       if (turn.cancelled) {

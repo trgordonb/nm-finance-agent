@@ -20,6 +20,17 @@ function notifyCuration(result: string): string {
   return result;
 }
 
+/** Phase-4 conflict UX: if the last R2 push failed, the working copy has
+ *  diverged from the bucket authority — surface an advisory so the model
+ *  re-reads skills before further edits. */
+function withSyncAdvisory(result: string): string {
+  if (!bridge) return result;
+  const failure = bridge.lastPushFailure();
+  if (!failure) return result;
+  if (result.startsWith("Rejected:")) return `${failure}\n\n${result}`;
+  return `${result}\n(Advisory: ${failure})`;
+}
+
 function lib(): SkillLibrary {
   if (!skillLibrary) skillLibrary = new SkillLibrary();
   return skillLibrary;
@@ -75,26 +86,29 @@ function execSkillManage(args: Record<string, unknown>): string {
     const oldContent = String(args.old_content ?? "");
     const relativePath = String(args.relative_path ?? "");
     const category = String(args.category ?? "") || null;
-    switch (action) {
-      case "create":
-        return notifyCuration(lib().createSkill(name, description, content, category));
-      case "patch":
-        return notifyCuration(lib().patchSkill(name, oldContent, content));
-      case "edit":
-        return notifyCuration(lib().editSkill(name, content));
-      case "delete":
-        return notifyCuration(lib().deleteSkill(name));
-      case "write_file":
-        return notifyCuration(lib().writeSkillFile(name, relativePath, content));
-      case "remove_file":
-        return notifyCuration(lib().removeSkillFile(name, relativePath));
-      case "enable":
-        return notifyCuration(lib().setEnabled(name, true));
-      case "disable":
-        return notifyCuration(lib().setEnabled(name, false));
-      default:
-        return `Rejected: unknown action ${JSON.stringify(action)}`;
-    }
+    const outcome = (() => {
+      switch (action) {
+        case "create":
+          return lib().createSkill(name, description, content, category);
+        case "patch":
+          return lib().patchSkill(name, oldContent, content);
+        case "edit":
+          return lib().editSkill(name, content);
+        case "delete":
+          return lib().deleteSkill(name);
+        case "write_file":
+          return lib().writeSkillFile(name, relativePath, content);
+        case "remove_file":
+          return lib().removeSkillFile(name, relativePath);
+        case "enable":
+          return lib().setEnabled(name, true);
+        case "disable":
+          return lib().setEnabled(name, false);
+        default:
+          return `Rejected: unknown action ${JSON.stringify(action)}`;
+      }
+    })();
+    return notifyCuration(withSyncAdvisory(outcome));
 }
 
 export const load_skill: ToolDef = {
