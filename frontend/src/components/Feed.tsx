@@ -1,8 +1,54 @@
 import { useEffect, useRef } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { isValidElement, type ReactNode } from "react";
 import { Bot, Check, LoaderCircle, SquareTerminal, UserRound, X } from "lucide-react";
+import { ChartCard } from "../charts/ChartCard";
+import { parseChartSpec } from "../charts/yahoo";
 import type { FeedItem, MessageItem, ToolCall } from "../types";
+
+// ```vela-chart fenced blocks render as live chart cards (the agent emits
+// them; pasting one into the composer renders it too). Everything else keeps
+// the default markdown rendering.
+const MD_COMPONENTS = {
+  pre: ({ children }: { children?: ReactNode }) => {
+    const child = Array.isArray(children) ? children[0] : children;
+    const isChart =
+      isValidElement(child) &&
+      (child.props as { className?: string }).className === "language-vela-chart";
+    return isChart ? <>{children}</> : <pre>{children}</pre>;
+  },
+  code: ({ className, children }: { className?: string; children?: ReactNode }) => {
+    if (className === "language-vela-chart") {
+      const spec = parseChartSpec(String(children));
+      if (spec) return <ChartCard spec={spec} />;
+    }
+    return <code className={className}>{children}</code>;
+  },
+};
+
+// User messages keep their plain pre-wrap rendering except for pasted
+// ```vela-chart blocks, which render as cards too.
+// User messages keep their plain pre-wrap rendering except for pasted
+// vela-chart blocks, which render as cards too.
+function UserContent({ content }: { content: string }) {
+  const parts = content.split(/```vela-chart\s*\n([\s\S]*?)```/g);
+  if (parts.length === 1) return <div className="user-content">{content}</div>;
+  return (
+    <div className="user-content">
+      {parts.map((part, i) =>
+        i % 2 === 0 ? (
+          part && <span key={i}>{part}</span>
+        ) : (
+          (() => {
+            const spec = parseChartSpec(part);
+            return spec ? <ChartCard key={i} spec={spec} /> : <span key={i}>{part}</span>;
+          })()
+        )
+      )}
+    </div>
+  );
+}
 
 function shortArgs(args: Record<string, unknown>): string {
   const raw = JSON.stringify(args);
@@ -30,7 +76,7 @@ function MessageRow({ item }: { item: MessageItem }) {
           </span>
           you
         </div>
-        <div className="user-content">{item.content}</div>
+        <UserContent content={item.content} />
       </div>
     );
   }
@@ -70,7 +116,7 @@ function MessageRow({ item }: { item: MessageItem }) {
       {item.toolCalls?.map((call) => <ToolRow key={call.id} call={call} />)}
       {item.content && (
         <div className="md">
-          <Markdown remarkPlugins={[remarkGfm]}>{item.content}</Markdown>
+          <Markdown remarkPlugins={[remarkGfm]} components={MD_COMPONENTS}>{item.content}</Markdown>
         </div>
       )}
     </div>

@@ -45,6 +45,29 @@ repo itself.
   curation op). Live: NUDGE_INTERVAL=2 fired the nudge on the second
   turn of one session without blocking `done`. Tests: 43.
 
+## 2026-10-11 — vela-charts inline rendering (project detour)
+
+- **Yahoo proxy** (server.py parity): GET /api/yahoo/* CORS bridge in the
+  Express app — 60s TTL cache (YAHOO_PROXY_TTL), query2 fallback,
+  statuses pass through verbatim (429s included), plain Mozilla/5.0 UA
+  only (verified: full Chrome UA strings from non-browser clients trip
+  Yahoo's 429 fingerprinting). Cache verified live (miss → hit on repeat).
+- **Charts module ported** (frontend/src/charts/): yahoo.ts (fetch/normalize,
+  adjclose-folding + intraday caps clamp), VelaChart.tsx (imperative
+  mount; lazy @luxalgo/vela import — no AGPL vela-pinets), ChartCard.tsx
+  (picker, expand-to-fullscreen, StrictMode-safe destroy), plus Feed.tsx
+  wiring: ```vela-chart fenced blocks in assistant messages render as live
+  cards; blocks in user bodies render too. CSS carried over from the
+  styles.css verbatim (chart-card + indicator pop grid).
+- **Skill assets**: skills/vela-charts/scripts + references copied from
+  the langgraph-demo working copy (they were absent from the R2 pull).
+  Vendor step for the OFFLINE html path: copy
+  frontend/node_modules/@luxalgo/vela/dist/vela.global.min.js →
+  workspace/charts/vendor/ (script-tag gotcha: class is window.Vela.
+  Vela — the ESM import used by React is unaffected).
+- Verified: proxy 200 + cache-hit on repeat, frontend build passes,
+  live turn emits the exact fenced block the renderer consumes.
+
 ## 2026-10-10 — streaming fixes, recovery semantics, OpenRouter cutover, hybrid recall
 
 - **Incremental SSE streaming.** The chat endpoint was buffering everything

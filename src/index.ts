@@ -450,6 +450,72 @@ app.post("/api/skills/:name/enabled", (req, res) => {
   res.json({ status: result });
 });
 
+// --- Yahoo Finance proxy (/api/yahoo) — server.py parity ----------------------
+// Yahoo chart API sends no CORS headers, so browsers cannot call it directly;
+// this same-origin forwarder covers the vela chart blocks. Friendly to Yahoo
+// by design (it rate-limits with HTTP 429): a gentle TTL cache answers repeat
+// polls, query2 backs up query1, and upstream statuses (429 included) pass
+// through verbatim so callers can back off. Plain UA only — verified
+// (2026-10-11): Yahoo fingerprints the client, a full Chrome UA from a
+// non-browser client is an instant 429; bare token passes.
+
+const YAHOO_HOSTS = ["https://query1.finance.yahoo.com", "https://query2.finance.yahoo.com"];
+const YAHOO_UA = "Mozilla/5.0";
+const YAHOO_CACHE_MAX = 256;
+const yahooCache = new Map<string, { expiresAt: number; status: number; body: string }>();
+
+const yahoo_upstream = async (upstream: string) => {
+  let lastError: unknown = null;
+  for (const host of YAHOO_HOSTS) {
+    try {
+      const resp = await fetch(`${host}${upstream}`, {
+        headers: { "User-Agent": YAHOO_UA },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (resp.status >= 500) {
+        lastError = new Error(`HTTP ${resp.status}`);
+        continue;
+      }
+      return { status: resp.status, body: await resp.text() };
+    } catch (err) {
+      lastError = err;
+    }
+  }
+  throw lastError ?? new Error("no yahoo host reachable");
+};
+
+app.get("/api/yahoo/*", async (req, res) => {
+  const basePath = (req.params as { 0?: string })[0] ?? "";
+  const query = new URLSearchParams(req.query as Record<string, string>).toString();
+  const url = `/${basePath}${query ? `?${query}` : ""}`;
+  const ttl = Math.max(0, Number(process.env.YAHOO_PROXY_TTL ?? "60")) * 1000;
+  const cached = yahooCache.get(url);
+  if (ttl && cached && cached.expiresAt > Date.now()) {
+    res
+      .status(cached.status)
+      .set({ "X-Yahoo-Cache": "hit" })
+      .type("application/json")
+      .send(cached.body);
+    return;
+  }
+  let result: { status: number; body: string };
+  try {
+    result = await yahoo_upstream(url);
+  } catch (err) {
+    res.status(502).json({ detail: `yahoo unreachable: ${String(err).slice(0, 200)}` });
+    return;
+  }
+  if (ttl && result.status === 200) {
+    if (yahooCache.size >= YAHOO_CACHE_MAX) {
+      const exp = [...yahooCache.entries()].find(([, v]) => v.expiresAt <= Date.now());
+      const toEvict = exp?.[0] ?? yahooCache.keys().next().value;
+      if (toEvict) yahooCache.delete(toEvict);
+    }
+    yahooCache.set(url, { expiresAt: Date.now() + ttl, status: result.status, body: result.body });
+  }
+  res.status(result.status).set({ "X-Yahoo-Cache": "miss" }).type("application/json").send(result.body);
+});
+
 app.post("/api/chat/cancel", (req, res) => {
   const turnId = (req.body ?? {}) as { turn_id: string };
   const target = ACTIVE_TURNS.get(turnId.turn_id);

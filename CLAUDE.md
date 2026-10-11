@@ -178,7 +178,10 @@ servers).
    CLI R2 lifecycle; full object-store port deferred)~~
 6. Memory substrate swap evaluation (`ruvector-core::AgenticDB`) behind
    `SessionDriver` — partially live as the hybrid mirror; full cutover TBD
-7. (Deferred) Yahoo proxy + vela-chart rendering for the finance surface
+7. ~~(Was deferred) Yahoo proxy + vela-chart inline rendering~~ ✓ — proxy in
+   the Express app; charts/ modules + Feed wiring; @luxalgo/vela (core, no
+   vela-pinets — AGPL). Skill scripts + references carried into the working
+   copy.
 
 ## Dev
 
