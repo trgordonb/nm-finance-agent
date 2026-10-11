@@ -15,6 +15,7 @@ import {
 } from "./api";
 import type { FeedItem, Followups, Health, NewItem, SessionInfo, ToolCall } from "./types";
 import Sidebar from "./components/Sidebar";
+import SkillsTab from "./components/SkillsTab";
 import McpTab from "./components/McpTab";
 import Feed from "./components/Feed";
 import Composer from "./components/Composer";
@@ -24,6 +25,7 @@ const nextId = () => `item-${++idCounter}`;
 
 export default function App() {
   const [view, setView] = useState<"chat" | "settings">("chat");
+  const [settingsSection, setSettingsSection] = useState<"skills" | "mcp">("skills");
   const [health, setHealth] = useState<Health | null>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -334,7 +336,27 @@ export default function App() {
           <Composer streaming={streaming} onSend={send} onStop={stop} draft={draft} />
         </main>
         ) : (
-          <McpTab />
+          <div className="settings">
+            <div className="tabbar" role="tablist" aria-label="Settings sections">
+              <button
+                className={`tab${settingsSection === "skills" ? " active" : ""}`}
+                role="tab"
+                aria-selected={settingsSection === "skills"}
+                onClick={() => setSettingsSection("skills")}
+              >
+                Skills
+              </button>
+              <button
+                className={`tab${settingsSection === "mcp" ? " active" : ""}`}
+                role="tab"
+                aria-selected={settingsSection === "mcp"}
+                onClick={() => setSettingsSection("mcp")}
+              >
+                MCP
+              </button>
+            </div>
+            {settingsSection === "skills" ? <SkillsTab health={health} /> : <McpTab />}
+          </div>
         )}
       </div>
     </div>

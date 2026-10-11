@@ -2,7 +2,7 @@
 // health, sessions, chat streaming, turn cancel. Everything identical to the
 // langgraph-demo client except session/health field names and no followups.
 
-import type { ApiMessage, Followups, Health, McpListResponse, SessionInfo } from "./types";
+import type { ApiMessage, Followups, Health, McpListResponse, SessionInfo, SkillInfo } from "./types";
 
 async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, init);
@@ -25,6 +25,22 @@ export const getSessionMessages = (sessionId: string) =>
   fetchJSON<{ session_id: string; messages: ApiMessage[] }>(
     `/api/sessions/${encodeURIComponent(sessionId)}`,
   );
+
+/** Admin view: every skill in the registry, including disabled ones. */
+export const getSkills = () => fetchJSON<SkillInfo[]>("/api/skills");
+
+/** Hermes-style toggle. Our skills index re-renders per turn, so this
+ *  applies to the NEXT tool call rather than only the next session. */
+export async function setSkillEnabled(skill: string, enabled: boolean): Promise<void> {
+  await fetchJSON<{ status: string }>(
+    `/api/skills/${encodeURIComponent(skill)}/enabled`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ enabled }),
+    },
+  );
+}
 
 /** MCP servers (mcp_servers.json): list, toggle, reload the assembled runtime. */
 export const getMcpServers = () => fetchJSON<McpListResponse>("/api/mcp");

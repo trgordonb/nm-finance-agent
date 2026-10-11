@@ -163,17 +163,21 @@ servers).
 
 ## Roadmap (Hermes-order, from nm-memory-layer doctrine)
 
-1. ~~Agentic loop + prompt memory + basic tools + SSE REST~~ ✓ 2026-10-09
-2. ~~Skills ✓ Phases 1-2 (TS core + R2 CLI lifecycle, live bucket verified)~~
-   titler ✓ — remaining: nudge + SkillsTab UI (Phase 3) + CAS-conflict UX· ~~MCP binding + toggles + McpTab UI ✓ (2026-10-10)~~
-   — remaining: nudge policy (secondary-LLM curation, silence-bias)
-3. Secondary-LLM search condensation (observability header, silent fallback)
+1. ~~Agentic loop + prompt memory + basic tools + SSE REST~~ ✓
+2. ~~Session titler ✓ 2026-10-10~~
+   ~~MCP binding + toggles + McpTab UI ✓ 2026-10-10~~
+   ~~Followups extraction + to-do strip ✓ 2026-10-10~~
+   ~~Skills ✓ Phases 1-3 (TS core; R2 CLI lifecycle; SkillsTab UI)~~
+   — remaining: nudge policy (secondary-LLM curation, silence-bias) +
+   agent-edit CAS-conflict UX (skills Phase 4)
+3. ~~Secondary-LLM search condensation...~~ — remaining: the observability
+   header + silent-fallback shell around the mirror's dense leg
 4. Pre-flight context compression with persisted lineage
-5. Skills: agentskills.io SKILL.md files, progressive disclosure,
-   per-user enable/disable (port nm-skills-registry client)
+5. ~~Skills: agentskills.io SKILL.md files, progressive disclosure,
+   per-user enable/disable — ported as the C-strategy (TS core + nm-skills
+   CLI R2 lifecycle; full object-store port deferred)~~
 6. Memory substrate swap evaluation (`ruvector-core::AgenticDB`) behind
-   `SessionStore` — hybrid recall + feedback learning then come from the
-   substrate instead of hand-rolled FTS5 upgrades
+   `SessionDriver` — partially live as the hybrid mirror; full cutover TBD
 7. (Deferred) Yahoo proxy + vela-chart rendering for the finance surface
 
 ## Dev

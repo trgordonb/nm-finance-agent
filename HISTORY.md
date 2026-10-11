@@ -23,6 +23,15 @@ repo itself.
   sidebar gear icon. `finance_toolkit` streamable_http entry carried over
   (dormant), transport implemented.
 
+- **Skills Phase 3: SkillsTab UI** (python SkillsTab parity, adapted:
+  relDir badge; skills_backend sync line — s3 mode shows the registry URL +
+  last pull/push counts, sync failures render error-styled). Settings view
+  now hosts Skills | MCP sub-tabs (sidebar gear lands on Skills). REST
+  toggles verified live (disable -> enabled:false -> re-enable). One
+  behavioral deviation, intentional: our skills index re-renders per turn
+  so toggles apply from the agent's NEXT TURN — python's index was baked
+  once per session.
+
 ## 2026-10-10 — streaming fixes, recovery semantics, OpenRouter cutover, hybrid recall
 
 - **Incremental SSE streaming.** The chat endpoint was buffering everything

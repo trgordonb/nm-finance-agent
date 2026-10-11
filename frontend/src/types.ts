@@ -64,6 +64,26 @@ export interface Health {
   /** Tool names bound into the agent loop. */
   tools: string[];
   sessions: number;
+  skills?: number;
+  /** Skills R2 lifecycle status (src/skills/sync.ts bridge). */
+  skills_backend?: {
+    mode: "s3" | "local";
+    registry?: string;
+    cliAvailable?: boolean;
+    lastSync?: { at: string; pulled: number; removed: number; unchanged: number; pushed?: number; error?: string };
+    lastPush?: { at: string; uploaded: number; pruned: number; error?: string };
+    pendingPush?: boolean;
+    error?: string;
+  };
+}
+
+/** Admin view of a registry skill (GET /api/skills — includes disabled ones). */
+export interface SkillInfo {
+  name: string;
+  description: string;
+  path: string;
+  relDir: string;
+  enabled: boolean;
 }
 
 /** One MCP server from mcp_servers.json (GET /api/mcp). */
