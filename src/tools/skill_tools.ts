@@ -4,11 +4,29 @@
 
 import type { ToolDef } from "../types.js";
 import { SkillLibrary } from "../skills/library.js";
+import type { SkillsCliBridge } from "../skills/sync.js";
 
-const skillLibrary = new SkillLibrary();
+let skillLibrary: SkillLibrary | null = null;
+let bridge: SkillsCliBridge | null = null;
+
+/** Bridge init — index.ts injects the R2 lifecycle client. */
+export function initSkills(newLibrary: SkillLibrary, newBridge?: SkillsCliBridge | null): void {
+  skillLibrary = newLibrary;
+  bridge = newBridge ?? null;
+}
+
+function notifyCuration(result: string): string {
+  if (result.startsWith("OK:") && bridge) bridge.notifyChange();
+  return result;
+}
+
+function lib(): SkillLibrary {
+  if (!skillLibrary) skillLibrary = new SkillLibrary();
+  return skillLibrary;
+}
 
 export function getSkillLibrary(): SkillLibrary {
-  return skillLibrary;
+  return lib();
 }
 
 export const skill_manage: ToolDef = {
@@ -45,6 +63,11 @@ export const skill_manage: ToolDef = {
     required: ["action", "name"],
   },
   execute(args) {
+    return execSkillManage(args);
+  },
+};
+
+function execSkillManage(args: Record<string, unknown>): string {
     const action = String(args.action ?? "");
     const name = String(args.name ?? "");
     const description = String(args.description ?? "");
@@ -54,26 +77,25 @@ export const skill_manage: ToolDef = {
     const category = String(args.category ?? "") || null;
     switch (action) {
       case "create":
-        return skillLibrary.createSkill(name, description, content, category);
+        return notifyCuration(lib().createSkill(name, description, content, category));
       case "patch":
-        return skillLibrary.patchSkill(name, oldContent, content);
+        return notifyCuration(lib().patchSkill(name, oldContent, content));
       case "edit":
-        return skillLibrary.editSkill(name, content);
+        return notifyCuration(lib().editSkill(name, content));
       case "delete":
-        return skillLibrary.deleteSkill(name);
+        return notifyCuration(lib().deleteSkill(name));
       case "write_file":
-        return skillLibrary.writeSkillFile(name, relativePath, content);
+        return notifyCuration(lib().writeSkillFile(name, relativePath, content));
       case "remove_file":
-        return skillLibrary.removeSkillFile(name, relativePath);
+        return notifyCuration(lib().removeSkillFile(name, relativePath));
       case "enable":
-        return skillLibrary.setEnabled(name, true);
+        return notifyCuration(lib().setEnabled(name, true));
       case "disable":
-        return skillLibrary.setEnabled(name, false);
+        return notifyCuration(lib().setEnabled(name, false));
       default:
         return `Rejected: unknown action ${JSON.stringify(action)}`;
     }
-  },
-};
+}
 
 export const load_skill: ToolDef = {
   name: "load_skill",
@@ -91,6 +113,6 @@ export const load_skill: ToolDef = {
     required: ["name"],
   },
   execute(args) {
-    return skillLibrary.loadSkill(String(args.name ?? ""));
+    return lib().loadSkill(String(args.name ?? ""));
   },
 };

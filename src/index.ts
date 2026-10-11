@@ -35,7 +35,8 @@ import { fallbackTitle, refineSessionTitle } from "./titler.js";
 import { loadMcpServers, setServerEnabled, type ServerStatus as McpStatus } from "./mcp-config.js";
 import { bindMcpTools, closeOpenClients } from "./mcp-tools.js";
 import type { ToolDef, ChatMessage } from "./types.js";
-import { getSkillLibrary } from "./tools/skill_tools.js";
+import { initSkills, getSkillLibrary } from "./tools/skill_tools.js";
+import { SkillsCliBridge } from "./skills/sync.js";
 import {
   maybeExtractFollowups,
   getFollowups,
@@ -62,6 +63,12 @@ void mirror
   .catch(() => undefined);
 const loop = new AgentLoop({ memory, store, mirror });
 
+// Skills R2 lifecycle (Phase 2): the CLI (uv + nm-skills-registry) is the
+// object-store authority tool; boot sync pulls the bucket into skills/ before
+// the first session indexes it, curation pushes are debounced client-side.
+const skillsBridge = new SkillsCliBridge();
+initSkills(getSkillLibrary(), skillsBridge);
+
 // MCP runtime assembly (python `_load_mcp_tools` + `assemble_agent_runtime`
 // parity): base registry + per-server bound MCP tools; re-runnable for the
 // reload endpoint. One bad server is skipped with a warning, never fatal.
@@ -86,6 +93,8 @@ function buildBaseRegistry() {
 function getRuntime(): Promise<void> {
   if (!runtimeReady) {
     runtimeReady = (async () => {
+      // skill mirror must reflect the bucket before the first index/render
+      await skillsBridge.syncAtBoot();
       mcpReport = await assembleRuntime();
     })().catch((e) => {
       // keep the server alive, toolless MCP; base tools remain bound
@@ -140,6 +149,7 @@ app.get("/api/health", (_req: Request, res: Response) => {
     memory_budget: MEMORY_CHAR_LIMIT,
     tools: [...loop.tools.keys()],
     skills: getSkillLibrary().listAll().length,
+    skills_backend: skillsBridge.info,
     sessions: store.listSessions().length,
     mirror: mirror.getFastStatus(),
     mcp_connected: mcpReport ? mcpReport.filter((r) => r.connected && r.enabled).length : null,

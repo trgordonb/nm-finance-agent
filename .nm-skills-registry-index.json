@@ -1,0 +1,634 @@
+{
+"skills/agent-browser/SKILL.md": {
+"etag": "\"6e0ec2f84d6051de43423874c988deb4\"",
+"size": 3457
+},
+"skills/arxiv-qfin-scan/SKILL.md": {
+"etag": "\"ebb5a71084e7b0813f2f5a33c82c0270\"",
+"size": 13527
+},
+"skills/arxiv-qfin-scan/evals/evals.json": {
+"etag": "\"67439209e7a8a44839495faf2a438500\"",
+"size": 3657
+},
+"skills/arxiv-qfin-scan/scripts/jev_screen.py": {
+"etag": "\"1e830258f969ccbe89a7f215050cf083\"",
+"size": 21781
+},
+"skills/arxiv-qfin-scan/scripts/scan_qfin.py": {
+"etag": "\"8f294aa67e0b471236d1536cb367e8b3\"",
+"size": 16081
+},
+"skills/browser-act/SKILL.md": {
+"etag": "\"bd70d92b12eb4f0fe47291cc13bd1388\"",
+"size": 3755
+},
+"skills/convert-arxiv-to-md/SKILL.md": {
+"etag": "\"b1c48ffc227ecf7a1bb68312ea8db348\"",
+"size": 7850
+},
+"skills/convert-arxiv-to-md/evals/evals.json": {
+"etag": "\"47ab2ee2417b70a9ea4c77c61755208d\"",
+"size": 3251
+},
+"skills/convert-arxiv-to-md/references/setup.md": {
+"etag": "\"3a729228680412afdba5304d8b2a8d9d\"",
+"size": 2152
+},
+"skills/convert-arxiv-to-md/scripts/convert_arxiv_to_md.py": {
+"etag": "\"f739ad7f7555027a19aee3769297e9bc\"",
+"size": 50654
+},
+"skills/convert-pdf-to-md/SKILL.md": {
+"etag": "\"c9314b61bb4623dc61ab5ca5578b2ebb\"",
+"size": 9052
+},
+"skills/convert-pdf-to-md/references/equation-recovery.md": {
+"etag": "\"9aebeae9cb9ea264daad276656828cc0\"",
+"size": 2183
+},
+"skills/convert-pdf-to-md/references/setup.md": {
+"etag": "\"9b942076cc4e30389daf53cc98800c56\"",
+"size": 3853
+},
+"skills/convert-pdf-to-md/scripts/convert_pdf_to_md.py": {
+"etag": "\"9b02867ad75fc9c052ed985cbddeaf2c\"",
+"size": 12988
+},
+"skills/convert-pdf-to-md/scripts/requirements.txt": {
+"etag": "\"744e1db3bc3e9782223f17550f45d544\"",
+"size": 60
+},
+"skills/convert-web-article-to-md/SKILL.md": {
+"etag": "\"7837d90250c7624668be0066738b3650\"",
+"size": 17048
+},
+"skills/convert-web-article-to-md/evals/evals.json": {
+"etag": "\"0d9bc3c2bf9e40de6d6739433e37a1c9\"",
+"size": 5213
+},
+"skills/convert-web-article-to-md/evals/fixtures/quantstart-style-article.html": {
+"etag": "\"15effbc90c6ac2e04a4a7c2ae8e4f18d\"",
+"size": 3176
+},
+"skills/convert-web-article-to-md/references/math-and-code-rules.md": {
+"etag": "\"1f80f5fe7178e1e8a8c71e5afe29d4ab\"",
+"size": 10544
+},
+"skills/convert-web-article-to-md/scripts/convert_web_article_to_md.py": {
+"etag": "\"aef254d40f40c9c214e51d4e948b295a\"",
+"size": 57494
+},
+"skills/edgar/SKILL.md": {
+"etag": "\"03d34ff8147a91c1e367d09fbe9b3a8c\"",
+"size": 12852
+},
+"skills/edgar/references/filings.md": {
+"etag": "\"879d2428fd4a46428b2db5de7ab853e0\"",
+"size": 6525
+},
+"skills/edgar/references/xbrl.md": {
+"etag": "\"c0c9f42a7ad8a51d5950c20d00955edf\"",
+"size": 2999
+},
+"skills/financial-toolkits/SKILL.md": {
+"etag": "\"c7cb6e3d0570b1e66dbdbd09f5c886b9\"",
+"size": 10230
+},
+"skills/financial-toolkits/references/core.md": {
+"etag": "\"83fdac8c386d1aab7cc7da4d3d4b8954\"",
+"size": 2644
+},
+"skills/financial-toolkits/references/discovery.md": {
+"etag": "\"eeee56fe92ea53eb0b0627e6bb0794a5\"",
+"size": 4401
+},
+"skills/financial-toolkits/references/economics.md": {
+"etag": "\"bc34e0954f89855da0af2682215d44f4\"",
+"size": 1377
+},
+"skills/financial-toolkits/references/fixedincome.md": {
+"etag": "\"76a4714c8b81d12fcb29def673f459ae\"",
+"size": 2432
+},
+"skills/financial-toolkits/references/models.md": {
+"etag": "\"a70c3d961ffd2cf517592d708afb868b\"",
+"size": 1066
+},
+"skills/financial-toolkits/references/options.md": {
+"etag": "\"a7b1fa4fc5d55feb7908cc4244ff59d0\"",
+"size": 1239
+},
+"skills/financial-toolkits/references/performance.md": {
+"etag": "\"86a06801f1582ec7d6c5a7d1a39d6ba8\"",
+"size": 1399
+},
+"skills/financial-toolkits/references/portfolio.md": {
+"etag": "\"1526a40f7607ee96b68d99e093af22e1\"",
+"size": 931
+},
+"skills/financial-toolkits/references/ratios.md": {
+"etag": "\"0762aaeaabe81c32d989f252a9a1b6d7\"",
+"size": 2697
+},
+"skills/financial-toolkits/references/risk.md": {
+"etag": "\"a1d02c67f6393fcb8d7b1a5eb5baa3dd\"",
+"size": 2314
+},
+"skills/financial-toolkits/references/technicals.md": {
+"etag": "\"2eb0663e8d95dfcb949744fc5ee5a845\"",
+"size": 2407
+},
+"skills/llm-wiki/SKILL.md": {
+"etag": "\"fa78ee40cbf3a07a1cd82af87983a2f7\"",
+"size": 24331
+},
+"skills/llm-wiki/assets/SCHEMA.md.template": {
+"etag": "\"255235d70c8901a2aa404919b5125284\"",
+"size": 7583
+},
+"skills/llm-wiki/assets/evolution_README.md.template": {
+"etag": "\"9200d4f311aec4a5304a73e5086bf33a\"",
+"size": 2321
+},
+"skills/llm-wiki/assets/experience.json.template": {
+"etag": "\"3321a50b59ec9607e43bb47c6869bb16\"",
+"size": 660
+},
+"skills/llm-wiki/assets/graph_README.md.template": {
+"etag": "\"d74f331f46aee67ac569d4cc1ceabfbd\"",
+"size": 2054
+},
+"skills/llm-wiki/assets/graph_gitignore.template": {
+"etag": "\"15d5dc5ab839563a7c3e132602c9e27b\"",
+"size": 27
+},
+"skills/llm-wiki/assets/index.md.template": {
+"etag": "\"d21bbd45a03bd829c243dcb1f09393e9\"",
+"size": 775
+},
+"skills/llm-wiki/assets/log.md.template": {
+"etag": "\"34193a708c90157eb0715ddca7812ea9\"",
+"size": 499
+},
+"skills/llm-wiki/assets/ontology.yaml.template": {
+"etag": "\"adbb2513d87ecec56fff16bbf3a00571\"",
+"size": 3320
+},
+"skills/llm-wiki/assets/page.md.template": {
+"etag": "\"270e4315c323c7d20c40031451bb4b7d\"",
+"size": 805
+},
+"skills/llm-wiki/assets/pattern.md.template": {
+"etag": "\"98421ee95e423e9469ccdf6fb4d281ef\"",
+"size": 839
+},
+"skills/llm-wiki/assets/wiki-cache_gitignore.template": {
+"etag": "\"4954fe3f439337e5535185debf8fb3dd\"",
+"size": 14
+},
+"skills/llm-wiki/references/agent-memory-integration.md": {
+"etag": "\"97a0937a423512d1a145b4dbd0fd6a8a\"",
+"size": 6181
+},
+"skills/llm-wiki/references/architecture.md": {
+"etag": "\"b5d744f5218fa7047139d32faace633f\"",
+"size": 9852
+},
+"skills/llm-wiki/references/evolution-workflow.md": {
+"etag": "\"fe60b46e97389cbf0bf2cb926f8c34c5\"",
+"size": 20135
+},
+"skills/llm-wiki/references/graph-workflow.md": {
+"etag": "\"ac6cc911c5f7179b413870ea35169889\"",
+"size": 8373
+},
+"skills/llm-wiki/references/ingest-workflow.md": {
+"etag": "\"7e9b146c956d110651a9e43e4b5ec0b2\"",
+"size": 12357
+},
+"skills/llm-wiki/references/lint-workflow.md": {
+"etag": "\"297352c77a63ca61dcd0a8a0a69bce01\"",
+"size": 7232
+},
+"skills/llm-wiki/references/page-conventions.md": {
+"etag": "\"cd8e15fb6e74bbb4de8b013a29dc9861\"",
+"size": 5981
+},
+"skills/llm-wiki/references/query-workflow.md": {
+"etag": "\"e17d62378aa1942ca1457dbae74d6a77\"",
+"size": 7662
+},
+"skills/llm-wiki/references/retrieval-setup.md": {
+"etag": "\"7397d34a043fe44cacb855059aebb412\"",
+"size": 4163
+},
+"skills/llm-wiki/references/scaling-playbook.md": {
+"etag": "\"7b54283aff3ba6d874d8d55f65fdab02\"",
+"size": 7000
+},
+"skills/llm-wiki/scripts/init_wiki.py": {
+"etag": "\"563e9d257b7775aa9e3d0443924af5e0\"",
+"size": 9716
+},
+"skills/llm-wiki/scripts/setup_wiki.py": {
+"etag": "\"cf313b4fc076c1a678b806baa6b819a6\"",
+"size": 2610
+},
+"skills/llm-wiki/scripts/test_link_resolution.py": {
+"etag": "\"93e72cacbabed2a46e30c097cc2c10e8\"",
+"size": 6361
+},
+"skills/llm-wiki/scripts/wiki_evolve.py": {
+"etag": "\"b944989c6384e702aa1ba4bbe4616893\"",
+"size": 29799
+},
+"skills/llm-wiki/scripts/wiki_evolve_agent.py": {
+"etag": "\"e2ea323e2d2a2d4afd1b7cd7e897ab30\"",
+"size": 15504
+},
+"skills/llm-wiki/scripts/wiki_evolve_api.py": {
+"etag": "\"7defad6a3a9f3700d9748ef234f053f3\"",
+"size": 7168
+},
+"skills/llm-wiki/scripts/wiki_evolve_claude.py": {
+"etag": "\"e672b2f2a5bb8ae71ef6971247bce2e0\"",
+"size": 2411
+},
+"skills/llm-wiki/scripts/wiki_evolve_loop.py": {
+"etag": "\"f7dc807fb92ce045a4f6fb64c34d1c76\"",
+"size": 44430
+},
+"skills/llm-wiki/scripts/wiki_evolve_stream.py": {
+"etag": "\"c9e87ed8a4add11ae9c7641baa873c7c\"",
+"size": 13277
+},
+"skills/llm-wiki/scripts/wiki_graph_extract.py": {
+"etag": "\"0eefebbf64530f26f1b690afec883fb4\"",
+"size": 21552
+},
+"skills/llm-wiki/scripts/wiki_graph_lint.py": {
+"etag": "\"5c66758d3c2d9c2f7d05932cc8a726c2\"",
+"size": 16749
+},
+"skills/llm-wiki/scripts/wiki_graph_query.py": {
+"etag": "\"9ee1101f5b73e0ef2c52a5d2c048207b\"",
+"size": 9551
+},
+"skills/llm-wiki/scripts/wiki_graph_visualize.py": {
+"etag": "\"7fd79f9b4324ce15149c19c84b1c30c2\"",
+"size": 9347
+},
+"skills/llm-wiki/scripts/wiki_lint.py": {
+"etag": "\"0775a1981ba7825dc884c3a5a70569c9\"",
+"size": 14890
+},
+"skills/llm-wiki/scripts/wiki_search.py": {
+"etag": "\"3b8aa31671aa89e596261886f0586c05\"",
+"size": 32921
+},
+"skills/llm-wiki/scripts/wiki_stats.py": {
+"etag": "\"cbbc87777a01e509723b81049230e7aa\"",
+"size": 6011
+},
+"skills/paper-claim-repro/SKILL.md": {
+"etag": "\"42723b9647fff95fdd582822910eb8d2\"",
+"size": 8573
+},
+"skills/paper-claim-repro/assets/repro_report.template.md": {
+"etag": "\"67f06b3627d25b00aedde3924c0e4ddc\"",
+"size": 2103
+},
+"skills/paper-claim-repro/assets/strategy_spec.template.json": {
+"etag": "\"18284f52ec4db00c26685f509896de66\"",
+"size": 1336
+},
+"skills/paper-claim-repro/evals/evals.json": {
+"etag": "\"77ba5377a14fa2ed514ac180afd0bc71\"",
+"size": 2019
+},
+"skills/scholar-search/SKILL.md": {
+"etag": "\"f131a8303b7d1ced7a4978a923a5b025\"",
+"size": 6918
+},
+"skills/scholar-search/scripts/scholar_search.py": {
+"etag": "\"2f443ed4c528e60b60b1ee05d7c44a3c\"",
+"size": 9952
+},
+"skills/strategy-backtest/README.md": {
+"etag": "\"3a5f18e8aea05040c791511d73d422c8\"",
+"size": 4780
+},
+"skills/strategy-backtest/SKILL.md": {
+"etag": "\"74d5ba9b4868fac10529edc86362c8c5\"",
+"size": 10937
+},
+"skills/strategy-backtest/assets/strategy_classic_template.py": {
+"etag": "\"2fccfac306fc005e885c61b20260eeec\"",
+"size": 2916
+},
+"skills/strategy-backtest/assets/strategy_pairs_template.py": {
+"etag": "\"f938c6859adee894d7d72b60b4474f1f\"",
+"size": 6488
+},
+"skills/strategy-backtest/assets/strategy_portfolio_template.py": {
+"etag": "\"c6dc120c862b066e05aa15aa00c65ed5\"",
+"size": 3960
+},
+"skills/strategy-backtest/evals/evals.json": {
+"etag": "\"9eeeaab409829d85c32061598f6ed84a\"",
+"size": 4830
+},
+"skills/strategy-backtest/examples/american_tf_spy/american_tf_spy.py": {
+"etag": "\"ed7273660cdd2e10a471faa4fd088f2f\"",
+"size": 7390
+},
+"skills/strategy-backtest/examples/american_tf_spy/data/SPY.csv": {
+"etag": "\"11763264a75135c2e7374f0a39afbd53\"",
+"size": 829527
+},
+"skills/strategy-backtest/examples/american_tf_spy/run_tf/american_tf_1997_2026/chart.png": {
+"etag": "\"4d8efac1293bec1c7e1764ad77886ec0\"",
+"size": 84919
+},
+"skills/strategy-backtest/examples/american_tf_spy/run_tf/american_tf_1997_2026/equity_curve.csv": {
+"etag": "\"2f115560a8a192c134d2b7c5088bb6d4\"",
+"size": 165845
+},
+"skills/strategy-backtest/examples/american_tf_spy/run_tf/american_tf_1997_2026/orders.csv": {
+"etag": "\"0c08fbb6d27f1a432ab1aa7b6d5f239b\"",
+"size": 215
+},
+"skills/strategy-backtest/examples/american_tf_spy/run_tf/american_tf_1997_2026/report.json": {
+"etag": "\"3322ae7ae552ab8132bd60f097e75dc1\"",
+"size": 3493
+},
+"skills/strategy-backtest/examples/american_tf_spy/run_tf/american_tf_1997_2026/report.md": {
+"etag": "\"e64bb9f88c095442bd545e234237b30e\"",
+"size": 1222
+},
+"skills/strategy-backtest/examples/american_tf_spy/run_tf/american_tf_1997_2026/run_config.json": {
+"etag": "\"ac790fd6328216f87c38ccc6552bc525\"",
+"size": 892
+},
+"skills/strategy-backtest/examples/american_tf_spy/run_tf/american_tf_1997_2026/strategy_snapshot.py": {
+"etag": "\"ed7273660cdd2e10a471faa4fd088f2f\"",
+"size": 7390
+},
+"skills/strategy-backtest/examples/american_tf_spy/run_tf/american_tf_1997_2026/trades.csv": {
+"etag": "\"c37dc8008938552d6f0f470cf54db970\"",
+"size": 92
+},
+"skills/strategy-backtest/examples/american_tf_spy/run_tf/index.jsonl": {
+"etag": "\"c229ceeab09d6c3dd39f6a23de4d68f6\"",
+"size": 782
+},
+"skills/strategy-backtest/examples/example_run/index.jsonl": {
+"etag": "\"57ccd2971df886608f42df0816db11df\"",
+"size": 804
+},
+"skills/strategy-backtest/examples/example_run/rsi_mean_reversion_aapl_2024/chart.png": {
+"etag": "\"6aabf5272974dcb98d8cfa456b65ccd3\"",
+"size": 93111
+},
+"skills/strategy-backtest/examples/example_run/rsi_mean_reversion_aapl_2024/equity_curve.csv": {
+"etag": "\"5723b91ee9dcb0617d74b20627663e3a\"",
+"size": 7115
+},
+"skills/strategy-backtest/examples/example_run/rsi_mean_reversion_aapl_2024/orders.csv": {
+"etag": "\"4d7113a1280d7f4b111f3684c97ff5fa\"",
+"size": 176
+},
+"skills/strategy-backtest/examples/example_run/rsi_mean_reversion_aapl_2024/report.json": {
+"etag": "\"4a4a4f1fdd63c1037f6fd90223c25cee\"",
+"size": 3257
+},
+"skills/strategy-backtest/examples/example_run/rsi_mean_reversion_aapl_2024/report.md": {
+"etag": "\"2aaae4675aca2baf2aa4c81863aeb8c1\"",
+"size": 1199
+},
+"skills/strategy-backtest/examples/example_run/rsi_mean_reversion_aapl_2024/run_config.json": {
+"etag": "\"11b91b3d2e22c2d8e1a2025a0a224e9c\"",
+"size": 867
+},
+"skills/strategy-backtest/examples/example_run/rsi_mean_reversion_aapl_2024/strategy_snapshot.py": {
+"etag": "\"45da729c8b4e37fd063ada224aa63384\"",
+"size": 3955
+},
+"skills/strategy-backtest/examples/example_run/rsi_mean_reversion_aapl_2024/trades.csv": {
+"etag": "\"9a2858d0027639a5320c7a4223f3fd25\"",
+"size": 101
+},
+"skills/strategy-backtest/examples/pairs_pep_ko/data/KO.csv": {
+"etag": "\"968ce8823e5c173c507fe175f9737125\"",
+"size": 376502
+},
+"skills/strategy-backtest/examples/pairs_pep_ko/data/PEP.csv": {
+"etag": "\"957751520596657a927432daa6798335\"",
+"size": 376817
+},
+"skills/strategy-backtest/examples/pairs_pep_ko/estimate_result.json": {
+"etag": "\"5d5096c1ac0de5079e64ec6dd315ce2d\"",
+"size": 332
+},
+"skills/strategy-backtest/examples/pairs_pep_ko/estimate_spread.py": {
+"etag": "\"9a53bfa18a4aebbdb40cbf1fd562d4f3\"",
+"size": 2604
+},
+"skills/strategy-backtest/examples/pairs_pep_ko/pairs_pep_ko_replication.py": {
+"etag": "\"5e739c897fe2c1f5ce8b102d052e3358\"",
+"size": 2631
+},
+"skills/strategy-backtest/examples/pairs_pep_ko/run_insample/index.jsonl": {
+"etag": "\"07051856e0a5592d6f5669234940a5f0\"",
+"size": 478
+},
+"skills/strategy-backtest/examples/pairs_pep_ko/run_insample/insample_2018_2022/chart.png": {
+"etag": "\"8a321330edd13de04ea0521a17aad3bf\"",
+"size": 111413
+},
+"skills/strategy-backtest/examples/pairs_pep_ko/run_insample/insample_2018_2022/equity_curve.csv": {
+"etag": "\"d54d9fbbcd9f3edc6dc508fa4deb4061\"",
+"size": 37400
+},
+"skills/strategy-backtest/examples/pairs_pep_ko/run_insample/insample_2018_2022/orders.csv": {
+"etag": "\"14293ef9f41fec23e21885fe17e0d042\"",
+"size": 2004
+},
+"skills/strategy-backtest/examples/pairs_pep_ko/run_insample/insample_2018_2022/report.json": {
+"etag": "\"5d118a8f11c135b2a3fd920467822d56\"",
+"size": 12432
+},
+"skills/strategy-backtest/examples/pairs_pep_ko/run_insample/insample_2018_2022/report.md": {
+"etag": "\"1dfc5400bf7f882ea1bc91a4081ee49b\"",
+"size": 1329
+},
+"skills/strategy-backtest/examples/pairs_pep_ko/run_insample/insample_2018_2022/run_config.json": {
+"etag": "\"100ca48c0b61b3366c5fd9823aa6ae6c\"",
+"size": 1383
+},
+"skills/strategy-backtest/examples/pairs_pep_ko/run_insample/insample_2018_2022/strategy_snapshot.py": {
+"etag": "\"cb57b85774aa662696ab58f8ec60edea\"",
+"size": 2261
+},
+"skills/strategy-backtest/examples/pairs_pep_ko/run_insample/insample_2018_2022/trades.csv": {
+"etag": "\"d79b8233dff8219ea756452f5b5466e4\"",
+"size": 756
+},
+"skills/strategy-backtest/examples/pairs_pep_ko/run_oos/index.jsonl": {
+"etag": "\"79dc2edc924b434801db63c9daf474f3\"",
+"size": 2475
+},
+"skills/strategy-backtest/examples/pairs_pep_ko/run_oos/oos_2023_2026_capbound/chart.png": {
+"etag": "\"671fdfd404b37ae64b646b06e92dc5f6\"",
+"size": 99527
+},
+"skills/strategy-backtest/examples/pairs_pep_ko/run_oos/oos_2023_2026_capbound/equity_curve.csv": {
+"etag": "\"9a273b6854dbe12b86d22c181ede45f0\"",
+"size": 27201
+},
+"skills/strategy-backtest/examples/pairs_pep_ko/run_oos/oos_2023_2026_capbound/orders.csv": {
+"etag": "\"14a4ebda4c68c971564ff7e0f2f68a3e\"",
+"size": 271
+},
+"skills/strategy-backtest/examples/pairs_pep_ko/run_oos/oos_2023_2026_capbound/report.json": {
+"etag": "\"54b951b730ae111422eda03aaf0d133c\"",
+"size": 4295
+},
+"skills/strategy-backtest/examples/pairs_pep_ko/run_oos/oos_2023_2026_capbound/report.md": {
+"etag": "\"c0cafb7f8335edcdeb73f3f2fb20241a\"",
+"size": 1259
+},
+"skills/strategy-backtest/examples/pairs_pep_ko/run_oos/oos_2023_2026_capbound/run_config.json": {
+"etag": "\"55e19c8019a9fbe23ae6d5b245ced143\"",
+"size": 1292
+},
+"skills/strategy-backtest/examples/pairs_pep_ko/run_oos/oos_2023_2026_capbound/strategy_snapshot.py": {
+"etag": "\"5e739c897fe2c1f5ce8b102d052e3358\"",
+"size": 2631
+},
+"skills/strategy-backtest/examples/pairs_pep_ko/run_oos/oos_2023_2026_capbound/trades.csv": {
+"etag": "\"e72af023af3b3ad1d87bbcd22847b44a\"",
+"size": 145
+},
+"skills/strategy-backtest/examples/rsi_mean_reversion.py": {
+"etag": "\"45da729c8b4e37fd063ada224aa63384\"",
+"size": 3955
+},
+"skills/strategy-backtest/references/langgraph_integration.md": {
+"etag": "\"d077b0e5b3d0daeb4fbf5a05bb8b251d\"",
+"size": 6122
+},
+"skills/strategy-backtest/references/runner_reference.md": {
+"etag": "\"ed3a1271b313b6c832c8c0429ba4d3a7\"",
+"size": 5547
+},
+"skills/strategy-backtest/references/strategy_patterns.md": {
+"etag": "\"a0a7de36514014fcd9e3f1ff87511da1\"",
+"size": 10744
+},
+"skills/strategy-backtest/scripts/fetch_data.py": {
+"etag": "\"cb7729f7f50bf7e192adb42e262f7435\"",
+"size": 4312
+},
+"skills/strategy-backtest/scripts/list_resources.py": {
+"etag": "\"a853c232398bc88050d6225d45c52e9d\"",
+"size": 4351
+},
+"skills/strategy-backtest/scripts/run_backtest.py": {
+"etag": "\"7c73816daded7beb426e7991fa510525\"",
+"size": 36235
+},
+"skills/strategy-extract/README.md": {
+"etag": "\"702264b8163c93df71b55a64f502f50d\"",
+"size": 2177
+},
+"skills/strategy-extract/SKILL.md": {
+"etag": "\"561b1d19bb95d2071e99c18a20cd1d55\"",
+"size": 6369
+},
+"skills/strategy-extract/assets/spec_template.json": {
+"etag": "\"10244ae7da23ff2a643cb5250baf545d\"",
+"size": 2430
+},
+"skills/strategy-extract/evals/evals.json": {
+"etag": "\"949fbbceb1d89dcb26dc1ac30ff1794f\"",
+"size": 4215
+},
+"skills/strategy-extract/references/spec_schema.md": {
+"etag": "\"5e3cc8962edcf9cc5722471baff0ef34\"",
+"size": 7028
+},
+"skills/strategy-extract/references/triage_guide.md": {
+"etag": "\"732e9a11642178a4025f54ce9a62bc5e\"",
+"size": 5130
+},
+"skills/strategy-extract/scripts/extract_rules.py": {
+"etag": "\"946f45e67a949a2f8bc9f9e81f959daf\"",
+"size": 33551
+},
+"skills/tradedesk-dukascopy/SKILL.md": {
+"etag": "\"5581ab3dacba8c2567d8d37876222a8a\"",
+"size": 21505
+},
+"skills/tradedesk-dukascopy/references/s3-daily-fallback.md": {
+"etag": "\"d67728de0dbe3b484238be299a52ec14\"",
+"size": 2971
+},
+"skills/tradedesk-dukascopy/references/split_s3_to_hourly.py": {
+"etag": "\"9424139bbecaaef406d00d30be8428cb\"",
+"size": 2793
+},
+"skills/tradedesk-dukascopy/references/troubleshooting.md": {
+"etag": "\"f2fef202eb2c7033c480af67beda2ace\"",
+"size": 9646
+},
+"skills/tradedesk-dukascopy/scripts/jetta_backfill.py": {
+"etag": "\"7023c3b796ae522cd16c4df9b0c0817d\"",
+"size": 9103
+},
+"skills/trading-strategy-review/SKILL.md": {
+"etag": "\"3acdb20f7fffd5c293590078411549a2\"",
+"size": 26985
+},
+"skills/trading-strategy-review/evals/evals.json": {
+"etag": "\"897927efd7001c2a4d305d5b2a88d6c7\"",
+"size": 1822
+},
+"skills/trading-strategy-review/examples/ma-crossover-review.md": {
+"etag": "\"d620fd58de93ddc38a14052183b7ba4e\"",
+"size": 6003
+},
+"skills/trading-strategy-review/examples/pine-rsi-review.md": {
+"etag": "\"7a60d15748f35df3df43fc5c724e9dd3\"",
+"size": 6103
+},
+"skills/trading-strategy-review/examples/repro-verdict-review.md": {
+"etag": "\"b2360ee8d21427b10172a65f0a6e14be\"",
+"size": 5594
+},
+"skills/trading-strategy-review/scripts/deflated_sharpe_pbo.py": {
+"etag": "\"42eac8eaeed46a717e90dbdeb0c4b453\"",
+"size": 11737
+},
+"skills/trading-strategy-review/scripts/validate_skill.py": {
+"etag": "\"2ded1ab7ff74ff4c06bca385d43f7647\"",
+"size": 3309
+},
+"skills/vela-charts/SKILL.md": {
+"etag": "\"d7d42df28fdfe6cf38562a2966116477\"",
+"size": 6281
+},
+"skills/vela-charts/references/native-indicators.md": {
+"etag": "\"cfb09635e0d1157f65075474a712edd8\"",
+"size": 3043
+},
+"skills/vela-charts/references/yahoo-data.md": {
+"etag": "\"8061486b2780fea77dbf624d6480be65\"",
+"size": 3178
+},
+"skills/vela-charts/scripts/render_chart.py": {
+"etag": "\"6454ebc158cc41c2aaf8fec536d5e7bb\"",
+"size": 13912
+}
+}
