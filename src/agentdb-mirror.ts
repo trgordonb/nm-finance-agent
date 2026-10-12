@@ -54,6 +54,7 @@ interface Waiter {
 
 export class AgentDbMirror {
   readonly status: MirrorStatus = { enabled: false, reason: "not initialized" };
+  private initialized = false;
   private child: ChildProcess | null = null;
   private nextId = 1;
   private inflight = new Map<number, Waiter>();
@@ -69,9 +70,17 @@ export class AgentDbMirror {
     this.dbPath = path.isAbsolute(p) ? p : path.resolve(process.cwd(), p);
   }
 
-  /** Async init — degrades to a disabled no-op when the sidecar can't start. */
+  /** Async init — degrades to a disabled no-op when the sidecar can't start.
+   *  Idempotent: a second call returns the settled status instead of spawning
+   *  a second sidecar (the phase-4-era double-boot fired a stale 120s timer
+   *  that logged a phantom "mirror off" at +2 min). */
   async initialize(): Promise<MirrorStatus> {
+    if (this.child || this.initialized) {
+      // already initialized (or initializing): just report
+      return this.status;
+    }
     if ((process.env.AGENTDB_MIRROR ?? "auto") === "0") {
+      this.initialized = true;
       this.status.reason = "disabled by env";
       return this.status;
     }
@@ -86,12 +95,16 @@ export class AgentDbMirror {
       this.status.path = this.dbPath;
       this.status.records = this.records;
       log.info(`agentdb mirror ready (sidecar): ${this.dbPath}`);
+      this.initialized = true;
       return this.status;
     } catch (e) {
       this.status.enabled = false;
       this.status.reason = `engine unavailable: ${errLine(e)}`;
-      this.child?.kill();
+      // TS narrows this.child to never here (control-flow doesn't see the
+      // assignment inside startSidecar) — use an explicit cast.
+      (this.child as ChildProcess | null)?.kill?.();
       this.child = null;
+      this.initialized = true;
       return this.status;
     }
   }

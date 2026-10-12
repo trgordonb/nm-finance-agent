@@ -107,6 +107,15 @@ offline HTML vendor step, drift doctor in UI, search condensation polish.
 - Verified: proxy 200 + cache-hit on repeat, frontend build passes,
   live turn emits the exact fenced block the renderer consumes.
 
+- **Post-commit find: the SSE compression event was silently invisible**
+  (user-reported 'no compression at turn 5' — the archive PROVED it had
+  fired: lineage row `2-2, 73 messages → openrouter/z-ai/glm-5.3-flash`
+  at 01:56:16Z w/ a dense arXiv-convert summary). Root cause: the chat-
+  only App port had dropped the python `compression` handler — the event
+  arrived but nothing rendered. Ported as python's dim system row:
+  `context compression — turns N-M summarized by <model> (a → b msgs).
+  Tests: 47 (lineage round-trip added).
+
 ## 2026-10-11 — Phase 5: context compression w/ persisted lineage
 
 - **Ported from nm_memory_layer/compression.py** (src/compression.ts):

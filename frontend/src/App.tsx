@@ -111,7 +111,14 @@ export default function App() {
           });
           break;
         }
-        case "cancelled":
+case "compression":
+  push({
+    kind: "system",
+    text: `context compression — turns ${data.first}-${data.last} summarized by ${data.model} (${data.original} → ${data.compressed} messages, ${data.elapsed_ms}ms)`,
+    tone: "info",
+  });
+  break;
+case "cancelled":
           push({ kind: "system", text: "turn cancelled — partial state saved", tone: "warn" });
           break;
         case "error":

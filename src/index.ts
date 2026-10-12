@@ -54,17 +54,7 @@ type McpReport = McpStatus[];
 
 const store = new SQLiteSessionStore();
 const memory = new PromptMemory();
-// AgentDB mirror (phase-in, dual-write): the archive stays authoritative; a
-// local ruvector vector db mirrors turn messages for dense semantic recall.
-// initialize() degrades to a no-op mirror when the engine/embedder is
-// unavailable — never fatal, logged with reason.
 const mirror = new AgentDbMirror();
-void mirror
-  .initialize()
-  .then((status) => {
-    if (!status.enabled) log.info(`agentdb mirror off — ${status.reason}`);
-  })
-  .catch(() => undefined);
 const loop = new AgentLoop({ memory, store, mirror });
 
 // Skills R2 lifecycle (Phase 2): the CLI (uv + nm-skills-registry) is the

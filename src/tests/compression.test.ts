@@ -47,3 +47,16 @@ test("splitIntoTurns: each turn starts at a user msg; leading system rides along
   assert.equal(segs[1].length, 2);
   assert.equal(segs[2].length, 1);
 });
+
+test("storage: recordCompression + listCompressions round-trip the lineage", async () => {
+  process.env.SESSION_DB_PATH = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "nmfa-c-")), "s.db");
+  const { SQLiteSessionStore: Store } = await import("../store.js");
+  const store = new Store();
+  const sid = store.newSessionId();
+  store.recordCompression(sid, { summary: "turn 2 summarized", firstTurn: 2, lastTurn: 2, originalCount: 73, model: "openrouter/z-ai/glm-5.3-flash" });
+  const rows = store.listCompressions(sid);
+  assert.equal(rows.length, 1);
+  assert.equal(rows[0].first_turn, 2);
+  assert.match(rows[0].summary, /turn 2 summarized/);
+  store.close();
+});
