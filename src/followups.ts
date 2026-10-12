@@ -18,6 +18,7 @@ import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { chat } from "./llm.js";
+import { trace } from "./tracing.js";
 import { OPENROUTER_MODEL_SUMMARIZER } from "./config.js";
 import { DB_PATH } from "./config.js";
 import { log } from "./logger.js";
@@ -188,32 +189,45 @@ export function looksLikeFollowups(closingText: string): boolean {
   return TIP_MARKER_RE.test(text.slice(-2000));
 }
 
-async function invokeExtractor(closingText: string, instruction: string): Promise<string[]> {
-  const response = await chat(
-    [
-      { role: "system", content: EXTRACTION_SYSTEM_PROMPT },
-      {
-        role: "user",
-        content: `FINAL ASSISTANT MESSAGE:\n${closingText.trim().slice(-2000)}\n\n${instruction}`,
-      },
-    ],
-    undefined,
-    { model: OPENROUTER_MODEL_SUMMARIZER, noReasoning: true, maxTokens: 512 },
-  );
-  return parseFollowups(response.content);
+async function invokeExtractor(closingText: string, instruction: string, parentRun?: string): Promise<string[]> {
+  const payload = [
+    { role: "system" as const, content: EXTRACTION_SYSTEM_PROMPT },
+    { role: "user" as const, content: `FINAL ASSISTANT MESSAGE:\n${closingText.trim().slice(-2000)}\n\n${instruction}` },
+  ];
+  const llmRun = parentRun
+    ? trace.create({ name: "extract[llm]", runType: "llm", inputs: { messages: payload }, parent: parentRun, tags: ["nm-finance-agent", "followups"] })
+    : undefined;
+  try {
+    const response = await chat(payload, undefined, { model: OPENROUTER_MODEL_SUMMARIZER, noReasoning: true, maxTokens: 512 });
+    if (llmRun) trace.update(llmRun, { outputs: { model: response.model, usage: response.usage, text: response.content } });
+    return parseFollowups(response.content);
+  } catch (e) {
+    if (llmRun) trace.update(llmRun, { error: String(e).slice(0, 160) });
+    throw e;
+  }
 }
 
 async function extractFollowups(closingText: string): Promise<string[]> {
-  const items = await invokeExtractor(closingText, "JSON array:");
-  if (items.length) return items;
+  const rootRun = trace.create({
+    name: "followups-extract",
+    runType: "chain",
+    inputs: { closing_chars: closingText.length },
+    tags: ["nm-finance-agent", "followups"],
+  });
+  const items = await invokeExtractor(closingText, "JSON array:", rootRun);
+  if (items.length) { trace.update(rootRun, { outputs: { items: items.length } }); return items;
+  }
   // Small models sometimes answer [] lazily even when the pre-filter saw
   // suggestion-shaped text — one firm retry before giving up (python parity).
-  return invokeExtractor(
+  const retry = await invokeExtractor(
     closingText,
     "The message above ends with suggestions or offers to the user. " +
       "List them as a JSON array of short imperative sentences. " +
       "Reply [] only if there is truly nothing actionable.",
+    rootRun,
   );
+  trace.update(rootRun, { outputs: { items: retry.length }, error: retry.length ? undefined : "no items extracted" });
+  return retry;
 }
 
 /** Post-turn hook: extract and store follow-ups for the closing message.

@@ -29,6 +29,7 @@ import { chat } from "./llm.js";
 import { OPENROUTER_MODEL_MAIN } from "./config.js";
 import { log } from "./logger.js";
 import { flattenTranscript } from "./nudge.js";
+import { trace } from "./tracing.js";
 
 export const DEFAULT_COMPRESSION_TOKEN_THRESHOLD = 24000;
 export const DEFAULT_COMPRESSION_KEEP_RECENT = 2;
@@ -161,22 +162,41 @@ export class ConversationCompressor {
 
     const transcript = flattenTranscript(middle.flat());
     const start = Date.now();
+    // LangSmith: the (otherwise invisible) compaction call gets its own
+    // run tree — root chain "context-compression" + llm child.
+    const rootRun = trace.create({
+      name: "context-compression",
+      runType: "chain",
+      inputs: {
+        turns: segments.length,
+        middle_turns: middle.length,
+        messages: messages.length,
+        estimated_usage_tokens: usage,
+        threshold: this.tokenThreshold,
+      },
+      tags: ["nm-finance-agent", "compression"],
+    });
+    const payload: ChatMessage[] = [
+      { role: "system", content: SUMMARY_SYSTEM_PROMPT },
+      { role: "user", content: `TRANSCRIPT SLICE (${middle.length} turns):\n\n${transcript}\n\nSummarize now.` },
+    ];
+    const llmRun = trace.create({
+      name: `summarize[${this.label}]`,
+      runType: "llm",
+      inputs: { messages: payload },
+      parent: rootRun,
+      tags: ["nm-finance-agent", "compression"],
+    });
     try {
-      const response = await chat(
-        [
-          { role: "system", content: SUMMARY_SYSTEM_PROMPT },
-          {
-            role: "user",
-            content: `TRANSCRIPT SLICE (${middle.length} turns):\n\n${transcript}\n\nSummarize now.`,
-          },
-        ],
-        undefined,
-        { noReasoning: true },
-      );
+      const response = await chat(payload, undefined, { noReasoning: true });
       const elapsedMs = Date.now() - start;
+      trace.update(llmRun, {
+        outputs: { text: response.content, usage: response.usage, model: response.model },
+      });
       let summary = response.content.replace(/<\|[^|>]*\|>/g, "").trim();
       if (!summary || PSEUDO_TOOL_RE.test(summary)) {
         log.warn("context compression got empty/pseudo-tool output — keeping original history");
+        trace.update(rootRun, { outputs: { reason: "empty or malformed model output" }, error: "empty or malformed model output" });
         return noop("empty or malformed model output", messages);
       }
       if (summary.length > MAX_SUMMARY_CHARS) {
@@ -198,6 +218,16 @@ export class ConversationCompressor {
         `context compression [${this.label}]: ${elapsedMs}ms, turns ${firstTurn}-${lastTurn} summarized, ` +
           `${messages.length} -> ${compressed.length} messages, summary ${summary.length} chars`,
       );
+      trace.update(rootRun, {
+        outputs: {
+          reason: "compressed",
+          turns: `${firstTurn}-${lastTurn}`,
+          original: messages.length,
+          compressed: compressed.length,
+          summary_chars: summary.length,
+          elapsed_ms: elapsedMs,
+        },
+      });
       return {
         compressed: true,
         reason: "compressed",
@@ -211,9 +241,10 @@ export class ConversationCompressor {
         modelLabel: this.label,
       };
     } catch (e) {
-      log.warn(
-        `context compression failed (${String(e).slice(0, 160)}) — keeping original history`,
-      );
+      const msg = String(e).slice(0, 200);
+      log.warn(`context compression failed (${msg}) — keeping original history`);
+      trace.update(llmRun, { error: msg });
+      trace.update(rootRun, { outputs: { reason: "model error" }, error: msg });
       return noop("model error", messages);
     }
   }

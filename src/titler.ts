@@ -10,6 +10,7 @@
 // cosmetic and must not touch the turn path.
 
 import { chat } from "./llm.js";
+import { trace } from "./tracing.js";
 import { OPENROUTER_MODEL_SUMMARIZER } from "./config.js";
 export function fallbackTitle(text: string, limit: number = 60): string {
   const cleaned = String(text ?? "").replace(/\s+/g, " ").trim();
@@ -40,12 +41,26 @@ export async function refineSessionTitle(
   // Free-tier models occasionally return HTTP 200 with an empty body — one
   // spaced retry, then surface the failure (the fallback title stays).
   let lastErr: Error | null = null;
+  const rootRun = trace.create({
+    name: "session-title",
+    runType: "chain",
+    inputs: { user_message: firstUserMessage.slice(0, 280), reply_excerpt: firstAssistantReply.slice(0, 200) },
+    tags: ["nm-finance-agent", "titler"],
+  });
   for (let attempt = 1; attempt <= 2; attempt++) {
+    const llmRun = trace.create({
+      name: `title-attempt${attempt}`,
+      runType: "llm",
+      inputs: { messages: prompt, model: OPENROUTER_MODEL_SUMMARIZER },
+      parent: rootRun,
+      tags: ["nm-finance-agent", "titler"],
+    });
     try {
       const response = await chat(prompt, undefined, {
         model: OPENROUTER_MODEL_SUMMARIZER,
         noReasoning: true,
       });
+      trace.update(llmRun, { outputs: { model: response.model, usage: response.usage, text: response.content } });
       const title = response.content
         .trim()
         .replace(/^["'“”]+|["'“”]+$/g, "")
@@ -53,8 +68,12 @@ export async function refineSessionTitle(
         .slice(0, 80)
         .trim();
       if (!title || title.length < 4) throw new Error("empty title response");
+      trace.update(rootRun, { outputs: { title, model: response.model } });
       return { title, model: `openrouter/${OPENROUTER_MODEL_SUMMARIZER}` };
     } catch (e) {
+      const msg = String(e).slice(0, 160);
+      trace.update(llmRun, { error: msg });
+      if (attempt === 2) trace.update(rootRun, { outputs: { error: msg }, error: msg });
       lastErr = e as Error;
       if (attempt === 1) await new Promise((r) => setTimeout(r, 2000));
     }
