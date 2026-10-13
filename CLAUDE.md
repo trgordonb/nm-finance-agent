@@ -100,7 +100,9 @@ nm-finance-agent/
 ## Tool surface (flat registry; loop never special-cases)
 
 Core: `ls read_file write_file edit_file glob grep execute web_to_markdown
-internet_search memory_manage skill_manage load_skill session_search`.
+internet_search memory_manage skill_manage load_skill session_search`
+(session_search is hybrid + condensable via the SEARCH_SUMMARIZER_ENABLED
+gate; the tool's context command references the condensed header).
 MCP: `<server>_<tool>` entries (agent_browser 29, luxalgo 13 keep_tools,
 agentdb 14 keep_tools; finance_toolkit dormant streamable_http).
 
@@ -146,10 +148,12 @@ Full inventory with defaults in `.env.example`. Highlights:
 
 1-2. ✓ loop/prompt-memory/tools/REST/SSE · titler · MCP · followups ·
      skills Phases 1-4 · usage/persist + compression
-3. Search condensation shell — the remaining Hermes-order item: a
-   secondary-LLM condensation of hybrid recall results with the
-   `[session_search: condensed by …]` observability header and
-   silent-fallback semantics (the mirror leg supplies candidates cheaply).
+3. ~~Search condensation ✓ 2026-10-13~~: secondary-LLM condensation over
+   hybrid recall (summarizer.ts): SEARCH_SUMMARIZER_ENABLED (default off),
+   one cheap model call over ≥8 fused candidates, python-parity observability
+   header, silent-fallback-to-raw semantics; LangSmith'd like every
+   secondary call. Note runtime-reload wiring: buildToolRegistry keeps the
+   summarizer through assembleRuntime.
 4. Nudge-hardening candidates: reflexion-store escalation via the bound
    agentdb MCP tools (python Gate-1), context-size aware nudging.
 6. `SessionDriver` → full AgenticDB sweep (RVF witness chains, COW

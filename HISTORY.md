@@ -116,6 +116,26 @@ offline HTML vendor step, drift doctor in UI, search condensation polish.
   `context compression — turns N-M summarized by <model> (a → b msgs).
   Tests: 47 (lineage round-trip added).
 
+## 2026-10-13 — Secondary-LLM search summarization (the last Hermes-order item)
+
+- **Ported from nm_memory_layer/summarizer.py** (src/summarizer.ts):
+  `SearchSummarizer` wraps ONE cheap OpenRouter call
+  (OPENROUTER_MODEL_SUMMARIZER) over the fused hybrid-recall excerpts
+  — python's Has-the-full-philanthropy (special-token strip +
+  pseudo-tool-call guard) preserved; LangSmith'd
+  (session-search-summarize chain + condense[...] llm child),
+  model-labeled observational header
+  `[session_search: condensed by <model> in <ms>ms from <n> raw excerpts]`.
+- session_search executes: fuse both legs → condenser over ≥8 fused
+  candidates → condensed text (python header parity, `[n]` refs kept) —
+  silent fallback to raw fused list on failure / empty / none-relevant.
+**Wiring bug found & fixed by live watch**: assembleRuntime called
+`buildToolRegistry(store, mirror)` WITHOUT the summarizer — so the
+runtime's setTools() silently DROPPED the summarizer after boot (the
+tool ran raw); registry now carries the summarizer. Live verified:
+the exact python-header condensation in a real turn (24264ms, 8
+excerpts, 440 chars), stored into the archive; Tests: 49.
+
 ## 2026-10-11 — Phase 5: context compression w/ persisted lineage
 
 - **Ported from nm_memory_layer/compression.py** (src/compression.ts):

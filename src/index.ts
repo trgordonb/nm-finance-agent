@@ -34,6 +34,7 @@ import { log } from "./logger.js";
 import { fallbackTitle, refineSessionTitle } from "./titler.js";
 import { NudgePolicy, run_memory_nudge } from "./nudge.js";
 import { createCompressor, type ConversationCompressor } from "./compression.js";
+import { createSessionSearchSummarizer } from "./summarizer.js";
 import { memory_manage } from "./tools/memory_manage.js";
 import { skill_manage } from "./tools/skill_tools.js";
 import { loadMcpServers, setServerEnabled, type ServerStatus as McpStatus } from "./mcp-config.js";
@@ -55,7 +56,10 @@ type McpReport = McpStatus[];
 const store = new SQLiteSessionStore();
 const memory = new PromptMemory();
 const mirror = new AgentDbMirror();
-const loop = new AgentLoop({ memory, store, mirror });
+// Secondary-LLM search condensation (Hermes-style): SEARCH_SUMMARIZER_ENABLED
+// toggles the cheap-model filter over hybrid recall results (raw fallback).
+const searchSummarizer = createSessionSearchSummarizer();
+const loop = new AgentLoop({ memory, store, mirror, summarizer: searchSummarizer });
 
 // Skills R2 lifecycle (Phase 2): the CLI (uv + nm-skills-registry) is the
 // object-store authority tool; boot sync pulls the bucket into skills/ before
@@ -104,7 +108,7 @@ async function assembleRuntime(): Promise<McpReport> {
 
 /** The always-bound core registry (fs/shell/web/memory/session_search). */
 function buildBaseRegistry() {
-  return buildToolRegistry(store, mirror);
+  return buildToolRegistry(store, mirror, searchSummarizer);
 }
 
 function getRuntime(): Promise<void> {

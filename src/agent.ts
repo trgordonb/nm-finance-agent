@@ -15,6 +15,7 @@ import type { SessionDriver } from "./driver.js";
 import type { AgentDbMirror } from "./agentdb-mirror.js";
 import { trace } from "./tracing.js";
 import { getSkillLibrary } from "./tools/skill_tools.js";
+import type { SearchSummarizer } from "./summarizer.js";
 
 export function buildSystemPrompt(memoryBlock: string): string {  const base =
     "You are an adaptable AI agent.\n" +
@@ -70,10 +71,10 @@ export class AgentLoop {
   private memory: PromptMemory;
   private maxIterations: number;
 
-  constructor(opts: { memory: PromptMemory; store: SessionDriver; tools?: ToolDef[]; mirror?: AgentDbMirror | null; maxIterations?: number }) {
+  constructor(opts: { memory: PromptMemory; store: SessionDriver; tools?: ToolDef[]; mirror?: AgentDbMirror | null; summarizer?: SearchSummarizer | null; maxIterations?: number }) {
     this.memory = opts.memory;
     this.maxIterations = opts.maxIterations ?? Number(process.env.BUDGET_TOOL_MAX_ITERATIONS ?? "25");
-    const base = opts.tools ?? buildToolRegistry(opts.store, opts.mirror);
+    const base = opts.tools ?? buildToolRegistry(opts.store, opts.mirror, opts.summarizer);
     this.tools = new Map<string, ToolDef>(base.map((t) => [t.name, t]));
   }
 

@@ -143,3 +143,62 @@ test("execute: foreground timeouts are recoverable (Rejected + background hint)"
   assert.match(out, /RESULT: Rejected: command timed out after 1s/);
   assert.ok(!out.includes("Error: Command timed out"), "timeouts must NOT end the turn");
 });
+
+test("summarizer: env-gated factory + pseudo-tool guard + header shape", async () => {
+  process.env.SEARCH_SUMMARIZER_ENABLED = "";
+  const { createSessionSearchSummarizer } = await import("../summarizer.js");
+  assert.equal(createSessionSearchSummarizer(), null, "off by default");
+  process.env.SEARCH_SUMMARIZER_ENABLED = "true";
+  try {
+    const s = createSessionSearchSummarizer();
+    assert.ok(s, "enabled with the key present");
+    // condensed header shape: this is the python parity exact format
+    const header = `[session_search: condensed by ${"openrouter/liquid/lfm-2.5-2.6b:free"} in 42ms from 8 raw excerpts]`;
+    assert.match(header, /^\[session_search: condensed by openrouter\/[^\]]+ in \d+ms from \d+ raw excerpts\]$/);
+  } finally {
+    process.env.SEARCH_SUMMARIZER_ENABLED = "";
+  }
+});
+
+test("summarizer: session_search condenses with header, silent-fallback unaffected", async () => {
+  const { SQLiteSessionStore: SessionStore } = await import("../store.js");
+  const { createSessionSearchTool } = await import("../tools/session_search.js");
+  process.env.SESSION_DB_PATH = path.join(fs.mkdtempSync(path.join(os.tmpdir(), "nmfa-sz-")), "s.db");
+  const store = new SessionStore();
+  const sid = store.newSessionId();
+  store.appendTurn(sid, [
+    { role: "user", content: "asked about seasonal commodity futures DVR vs SSA backtest windows" },
+    { role: "assistant", content: "the deep read summary with 15 liquid commodity futures, monthly returns, Jan 2016 OOS window, Newey-West SEs" },
+  ]);
+  class FakeSummarizer {
+    label = "openrouter/liquid/lfm-2.5-2.6b:free";
+    async summarize(_query: string, hits: unknown[]): Promise<{ text: string; modelLabel: string; elapsedMs: number; excerptCount: number }> {
+      void hits;
+      return {
+        text: "Summary: the seasonal-futures run used monthly returns with a fixed pre-OOS screen.",
+        modelLabel: this.label,
+        elapsedMs: 42,
+        excerptCount: 8,
+      };
+    }
+  }
+  const tool = createSessionSearchTool(store, null, new FakeSummarizer() as never);
+  const res = await tool.execute({ query: "seasonal futures", limit: 5 });
+  assert.match(res, /^\[session_search: condensed by openrouter\/liquid\/lfm-2\.5-2\.6b:free in \d+ms from \d+ raw excerpts\]/);
+  assert.match(res, /seasonal-futures run/);
+  // "none relevant" → decay to raw list
+  class EmptySummarizer {
+    label = "openrouter/liquid/lfm-2.5-2.6b:free";
+    async summarize() { return { text: "none relevant", modelLabel: this.label, elapsedMs: 9, excerptCount: 3 }; }
+  }
+  // "none relevant" merges back into raw fused hits for an actually-matching query
+  const fallback = await createSessionSearchTool(store, null, new EmptySummarizer() as never).execute({ query: "seasonal futures", limit: 5 });
+  assert.ok(!fallback.includes("condensed by"), "none-relevant output does not masquerade as a condensation");
+  assert.match(fallback, /seasonal/i);
+  // python sentinel parity: unrelated query = no matches (not a silent empty)
+  assert.deepEqual(
+    await createSessionSearchTool(store, null, new EmptySummarizer() as never).execute({ query: "zzz-nothing", limit: 5 }),
+    "No past session matches found.",
+  );
+  store.close();
+});

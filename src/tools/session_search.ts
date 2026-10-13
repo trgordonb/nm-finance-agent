@@ -9,6 +9,7 @@
 import type { ToolDef } from "../types.js";
 import type { SessionDriver, SessionHit } from "../driver.js";
 import type { AgentDbMirror, MirrorHit } from "../agentdb-mirror.js";
+import type { SearchSummarizer } from "../summarizer.js";
 
 const RRF_K = 60;
 
@@ -68,6 +69,7 @@ function format(hits: RankedHit[]): string {
 export function createSessionSearchTool(
   driver: SessionDriver,
   mirror?: AgentDbMirror | null,
+  summarizer?: SearchSummarizer | null,
 ): ToolDef {
   return {
     name: "session_search",
@@ -91,27 +93,36 @@ export function createSessionSearchTool(
         const fts = driver.search(query, fetchLimit);
         const semantic = mirror?.status.enabled ? await mirror.search(query, fetchLimit) : [];
         if (!fts.length && !semantic.length) return "No past session matches found.";
-        if (!semantic.length || !fts.length) {
-          // single-leg fallback: skip RRF, keep dedicated numbering
-          if (!semantic.length) {
-            return format(fts.slice(0, limit).map((h) => ({
-              sessionId: h.session_id,
-              createdAt: h.created_at,
+
+        // RRF fusion runs over both legs (a single leg degenerates to its
+        // own ordering) — one ordered candidate list for summarizer + output.
+        const fused = fuse(fts, semantic, Math.max(limit, 8));
+        if (!fused.length) return "No past session matches found.";
+
+        // Hermes-style: the condensed form walks one cheap LLM pass over the
+        // fused extras (>=8) with an observability header. Any failure
+        // silently falls back to the raw fused list — search never breaks
+        // because the summarizer did; "none relevant" also decays to raw.
+        if (summarizer) {
+          try {
+            const s = await summarizer.summarize(query, fused.map((h) => ({
+              session_id: h.sessionId,
+              created_at: h.createdAt,
               snippet: h.snippet,
-              retrievers: "",
-              score: 0,
+              retriever: "fts" as const,
+              rank: 0,
             })));
+            if (s.text && !/^none relevant/i.test(s.text.trim())) {
+              return (
+                `[session_search: condensed by ${s.modelLabel} in ${s.elapsedMs}ms from ${fused.length} raw excerpts]\n\n` +
+                s.text
+              );
+            }
+          } catch {
+            /* silent fallback below */
           }
-          return format(semantic.slice(0, limit).map((h) => ({
-            sessionId: h.sessionId,
-            createdAt: h.createdAt,
-            snippet: h.content.slice(0, 400),
-            retrievers: `semantic(${h.similarity.toFixed(2)})`,
-            score: 0,
-          })));
         }
-        return format(fuse(fts, semantic, limit))
-          || "No past session matches found.";
+        return format(fused.slice(0, limit));
       } catch (e) {
         return `Error: session_search failed: ${(e as Error).message}`;
       }

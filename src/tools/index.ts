@@ -12,10 +12,12 @@ import { skill_manage, load_skill } from "./skill_tools.js";
 import { createSessionSearchTool } from "./session_search.js";
 import type { SessionDriver } from "../driver.js";
 import type { AgentDbMirror } from "../agentdb-mirror.js";
+import type { SearchSummarizer } from "../summarizer.js";
 
 export function buildToolRegistry(
   driver: SessionDriver,
   mirror?: AgentDbMirror | null,
+  summarizer?: SearchSummarizer | null,
 ): ToolDef[] {
   return [
     ls,
@@ -30,7 +32,7 @@ export function buildToolRegistry(
     memory_manage,
     skill_manage,
     load_skill,
-    createSessionSearchTool(driver, mirror),
+    createSessionSearchTool(driver, mirror, summarizer),
   ];
 }
 
