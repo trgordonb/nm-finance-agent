@@ -9,11 +9,11 @@
 import { chat } from "./llm.js";
 import { toWire, buildToolRegistry } from "./tools/index.js";
 import { PromptMemory } from "./memory.js";
-import { MEMORY_CHAR_LIMIT } from "./config.js";
+import { MEMORY_CHAR_LIMIT, OPENROUTER_MODEL_MAIN } from "./config.js";
 import type { ChatMessage, ToolDef, ToolCall } from "./types.js";
 import type { SessionDriver } from "./driver.js";
 import type { AgentDbMirror } from "./agentdb-mirror.js";
-import { trace } from "./tracing.js";
+import { trace, llmRunMetadata, llmRunOutputs } from "./tracing.js";
 import { getSkillLibrary } from "./tools/skill_tools.js";
 import type { SearchSummarizer } from "./summarizer.js";
 
@@ -93,7 +93,7 @@ export class AgentLoop {
     history: ChatMessage[],
     userInput: string,
     shouldStop?: () => boolean,
-    meta?: { sessionId?: string },
+    meta?: { sessionId?: string; signal?: AbortSignal },
     onMessage?: (msg: ChatMessage) => void,
   ): Promise<TurnResult> {
     const messages: ChatMessage[] = [...history, { role: "user", content: userInput }];
@@ -132,6 +132,7 @@ export class AgentLoop {
         inputs: { messages: [{ role: "system", content: systemPrompt }, ...messages], tools: toolNames },
         parent: turnRun,
         tags: ["nm-finance-agent"],
+        metadata: llmRunMetadata(OPENROUTER_MODEL_MAIN),
       });
       const response = await chat([{ role: "system", content: systemPrompt }, ...messages], wire);
       if (response.usage) {
@@ -139,16 +140,11 @@ export class AgentLoop {
         usage.completion_tokens += response.usage.completion_tokens ?? 0;
       }
       trace.update(llmRun, {
-        outputs: {
-          generations: [
-            {
-              text: response.content,
-              message: { role: "assistant", content: response.content, tool_calls: response.toolCalls },
-              usage: response.usage ?? {},
-            },
-          ],
-          model: response.model,
-        },
+        outputs: llmRunOutputs(response.content, {
+          usage: response.usage,
+          message: { role: "assistant", content: response.content, tool_calls: response.toolCalls },
+        }),
+        metadata: llmRunMetadata(response.model, response.usage),
       });
 
       if (!response.toolCalls.length) {
@@ -204,7 +200,7 @@ export class AgentLoop {
           resultStr = unknownToolMessage(call.name, [...this.tools.keys()]);
         } else {
           try {
-            resultStr = await tool.execute(call.args ?? {});
+            resultStr = await tool.execute(call.args ?? {}, { signal: meta?.signal });
           } catch (e) {
             resultStr = `Error: tool ${call.name} raised: ${(e as Error).message}`.slice(0, 2000);
           }

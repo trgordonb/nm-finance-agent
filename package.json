@@ -12,7 +12,8 @@
     "start": "tsx src/index.ts",
     "check": "tsc --noEmit",
     "test": "tsx --test \"src/**/*.test.ts\"",
-    "test:help": "tsx src/tests/run-tests.ts"
+    "test:help": "tsx src/tests/run-tests.ts",
+    "research": "tsx src/research/cli.ts"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.32.1",

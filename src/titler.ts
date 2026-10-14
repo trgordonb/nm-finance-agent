@@ -10,7 +10,7 @@
 // cosmetic and must not touch the turn path.
 
 import { chat } from "./llm.js";
-import { trace } from "./tracing.js";
+import { trace, llmRunMetadata, llmRunOutputs } from "./tracing.js";
 import { OPENROUTER_MODEL_SUMMARIZER } from "./config.js";
 export function fallbackTitle(text: string, limit: number = 60): string {
   const cleaned = String(text ?? "").replace(/\s+/g, " ").trim();
@@ -51,16 +51,23 @@ export async function refineSessionTitle(
     const llmRun = trace.create({
       name: `title-attempt${attempt}`,
       runType: "llm",
-      inputs: { messages: prompt, model: OPENROUTER_MODEL_SUMMARIZER },
+      inputs: { messages: prompt },
       parent: rootRun,
       tags: ["nm-finance-agent", "titler"],
+      metadata: llmRunMetadata(OPENROUTER_MODEL_SUMMARIZER),
     });
     try {
       const response = await chat(prompt, undefined, {
         model: OPENROUTER_MODEL_SUMMARIZER,
         noReasoning: true,
       });
-      trace.update(llmRun, { outputs: { model: response.model, usage: response.usage, text: response.content } });
+      trace.update(llmRun, {
+        outputs: llmRunOutputs(response.content, {
+          usage: response.usage,
+          message: { role: "assistant", content: response.content },
+        }),
+        metadata: llmRunMetadata(response.model, response.usage),
+      });
       const title = response.content
         .trim()
         .replace(/^["'“”]+|["'“”]+$/g, "")

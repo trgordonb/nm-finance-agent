@@ -15,6 +15,20 @@ import type { SessionDriver, SessionHit, SessionRow } from "./driver.js";
 
 export type { SessionRow } from "./driver.js";
 
+/** One deep-research run row (`/research` mode). Keyed by session_id — the
+ *  session's latest run; the archive keeps the actual conversation. */
+export interface ResearchRunRow {
+  session_id: string;
+  status: string;
+  step: string | null;
+  question: string;
+  clarification: string | null;
+  report: string | null;
+  error: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
 export class SQLiteSessionStore implements SessionDriver {
   readonly name = "sqlite";
   readonly dbPath: string;
@@ -75,6 +89,18 @@ export class SQLiteSessionStore implements SessionDriver {
         title TEXT NOT NULL,
         model TEXT NOT NULL,
         created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS research_runs (
+        session_id    TEXT PRIMARY KEY,
+        status        TEXT NOT NULL,
+        step          TEXT,
+        question      TEXT NOT NULL,
+        clarification TEXT,
+        report        TEXT,
+        error         TEXT,
+        started_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
+        finished_at   TEXT
       );
     `);
   }
@@ -165,8 +191,11 @@ export class SQLiteSessionStore implements SessionDriver {
                 MIN(t.created_at) AS created_at,
                 COUNT(DISTINCT t.turn_number) AS turn_count,
                 COUNT(*) AS message_count,
-                st.title AS summary
-         FROM turns t LEFT JOIN session_titles st ON st.session_id = t.session_id
+                st.title AS summary,
+                rr.status AS research_status
+         FROM turns t
+         LEFT JOIN session_titles st ON st.session_id = t.session_id
+         LEFT JOIN research_runs rr ON rr.session_id = t.session_id
          GROUP BY t.session_id ORDER BY created_at DESC`,
       )
       .all() as unknown as SessionRow[];
@@ -239,6 +268,82 @@ export class SQLiteSessionStore implements SessionDriver {
 
   deleteSession(sessionId: string): void {
     this.db.prepare(`DELETE FROM turns WHERE session_id = ?`).run(sessionId);
+  }
+
+  // --- deep research runs (/research) ----------------------------------------
+
+  /** Start (or restart) a session's research run row. */
+  startResearchRun(sessionId: string, question: string): void {
+    this.db
+      .prepare(
+        `INSERT INTO research_runs (session_id, status, step, question, clarification, report, error, started_at, finished_at)
+         VALUES (?, 'running', 'scope', ?, NULL, NULL, NULL, ?, NULL)
+         ON CONFLICT(session_id) DO UPDATE SET
+           status = 'running', step = 'scope', question = excluded.question,
+           clarification = NULL, report = NULL, error = NULL,
+           started_at = excluded.started_at, finished_at = NULL`,
+      )
+      .run(sessionId, question, new Date().toISOString());
+  }
+
+  /** Resume a paused (awaiting_clarification) run — question/started_at kept. */
+  resumeResearchRun(sessionId: string): void {
+    this.db
+      .prepare(
+        `UPDATE research_runs SET status = 'running', step = 'scope',
+           clarification = NULL, error = NULL, finished_at = NULL
+         WHERE session_id = ?`,
+      )
+      .run(sessionId);
+  }
+
+  /** Per-stage progress for the status endpoint (best-effort). */
+  updateResearchStep(sessionId: string, step: string): void {
+    this.db.prepare(`UPDATE research_runs SET step = ? WHERE session_id = ?`).run(step, sessionId);
+  }
+
+  /** Pause the run on a clarifying question (resumable; finished_at stays NULL). */
+  awaitResearchRun(sessionId: string, clarification: string): void {
+    this.db
+      .prepare(
+        `UPDATE research_runs SET status = 'awaiting_clarification', step = 'scope',
+           clarification = ?
+         WHERE session_id = ?`,
+      )
+      .run(clarification, sessionId);
+  }
+
+  /** Terminal transition (completed / failed / cancelled / interrupted). */
+  finishResearchRun(
+    sessionId: string,
+    patch: { status: "completed" | "failed" | "cancelled" | "interrupted"; report?: string; error?: string },
+  ): void {
+    this.db
+      .prepare(
+        `UPDATE research_runs SET status = ?, report = COALESCE(?, report),
+           error = ?, finished_at = ?
+         WHERE session_id = ?`,
+      )
+      .run(patch.status, patch.report ?? null, patch.error ?? null, new Date().toISOString(), sessionId);
+  }
+
+  getResearchRun(sessionId: string): ResearchRunRow | null {
+    const row = this.db
+      .prepare(
+        `SELECT session_id, status, step, question, clarification, report, error, started_at, finished_at
+         FROM research_runs WHERE session_id = ?`,
+      )
+      .get(sessionId) as ResearchRunRow | undefined;
+    return row ?? null;
+  }
+
+  /** Boot sweep: runs that were mid-flight when the process died can never
+   *  resume (no task survives a restart); mark them interrupted. */
+  markStaleResearchRunsInterrupted(): number {
+    const res = this.db
+      .prepare(`UPDATE research_runs SET status = 'interrupted', finished_at = ? WHERE status = 'running'`)
+      .run(new Date().toISOString());
+    return Number(res.changes ?? 0);
   }
 }
 

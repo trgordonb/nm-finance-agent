@@ -13,6 +13,13 @@ export interface ToolParam {
   items?: { type: JsonSchemaType; description?: string };
 }
 
+/** Optional per-call execution context (passed by the loop; tools that don't
+ *  need it ignore the second parameter). The signal carries turn cancellation
+ *  — e.g. the deep_research tool aborts its run on Stop. */
+export interface ToolContext {
+  signal?: AbortSignal;
+}
+
 export interface ToolDef {
   name: string;
   description: string;
@@ -21,7 +28,7 @@ export interface ToolDef {
     properties: Record<string, ToolParam>;
     required?: string[];
   };
-  execute(args: Record<string, unknown>): Promise<string> | string;
+  execute(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> | string;
 }
 
 export interface ToolCall {

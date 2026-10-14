@@ -6,6 +6,8 @@
 //   GET  /api/sessions             archived sessions
 //   GET  /api/sessions/:id         full message history
 //   GET  /api/memory               MEMORY.md/USER.md rendered block + usage
+//   POST /api/uploads/wiki         raw PDF body → workspace, for llm-wiki ingest
+//   GET  /api/wiki/*               read-only llmwiki passthrough (Wiki tab)
 //   POST /api/chat                 one agent turn as an SSE event stream
 //   POST /api/chat/cancel          abort an active turn ({turn_id})
 //
@@ -14,6 +16,7 @@
 
 import express, { type Request, type Response } from "express";
 import { randomUUID } from "node:crypto";
+import path from "node:path";
 import {
   serverHost,
   serverPort,
@@ -23,7 +26,16 @@ import {
   OPENROUTER_PROVIDER_FALLBACKS,
   OPENROUTER_REASONING,
   MEMORY_CHAR_LIMIT,
+  WORKSPACE_DIR,
+  WIKI_API_URL,
+  EXA_API_KEY,
+  RESEARCH_AS_TOOL,
+  RESEARCH_MAX_CONCURRENT,
+  RESEARCH_MODE_ENABLED,
+  RESEARCH_SAVE_REPORTS,
 } from "./config.js";
+import { looksLikePdf, saveWikiUpload } from "./uploads.js";
+import { buildWikiTarget, fetchWiki } from "./wiki-proxy.js";
 import { PromptMemory } from "./memory.js";
 import { SQLiteSessionStore } from "./store.js";
 import { AgentDbMirror } from "./agentdb-mirror.js";
@@ -48,12 +60,21 @@ import {
   followupCounts,
   dismissFollowup,
 } from "./followups.js";
+import { detectResearchMode, cleanResearchQuestion } from "./research/mode.js";
+import { runDeepResearch } from "./research/orchestrator.js";
+import { saveResearchReport } from "./research/reports.js";
+import { createDeepResearchTool } from "./research/tool.js";
+import type { ResearchEvent, ResearchOutcome } from "./research/types.js";
 
 type McpReport = McpStatus[];
 
 // --- runtime assembly ---------------------------------------------------------
 
 const store = new SQLiteSessionStore();
+// Runs mid-flight when the process last died can never resume (no task
+// survives a restart) — mark them interrupted for the status API.
+const staleRuns = store.markStaleResearchRunsInterrupted();
+if (staleRuns) log.info(`research: marked ${staleRuns} stale running run(s) as interrupted`);
 const memory = new PromptMemory();
 const mirror = new AgentDbMirror();
 // Secondary-LLM search condensation (Hermes-style): SEARCH_SUMMARIZER_ENABLED
@@ -108,7 +129,11 @@ async function assembleRuntime(): Promise<McpReport> {
 
 /** The always-bound core registry (fs/shell/web/memory/session_search). */
 function buildBaseRegistry() {
-  return buildToolRegistry(store, mirror, searchSummarizer);
+  const tools = buildToolRegistry(store, mirror, searchSummarizer);
+  // Optional integration: expose the research engine to the main agent
+  // (RESEARCH_AS_TOOL, default off — a run takes 20-40 min and real spend).
+  if (RESEARCH_MODE_ENABLED && RESEARCH_AS_TOOL) tools.push(createDeepResearchTool());
+  return tools;
 }
 
 function getRuntime(): Promise<void> {
@@ -176,6 +201,13 @@ app.get("/api/health", (_req: Request, res: Response) => {
     mcp_connected: mcpReport ? mcpReport.filter((r) => r.connected && r.enabled).length : null,
     mcp_tools: [...loop.tools.keys()].filter((n) => n.includes("_")).length,
     tracing: tracingEnabled() ? TRACE_PROJECT : null,
+    research: {
+      enabled: RESEARCH_MODE_ENABLED,
+      model: OPENROUTER_MODEL_MAIN,
+      tavily: !!process.env.TAVILY_API_KEY,
+      exa: !!EXA_API_KEY,
+      max_concurrent: RESEARCH_MAX_CONCURRENT,
+    },
     time: Date.now() / 1000,
   });
 });
@@ -219,12 +251,70 @@ app.get("/api/sessions/:sessionId", (req, res) => {
   res.json({ session_id: req.params.sessionId, messages });
 });
 
+// Deep-research run state for a session (reconnect / status polling; the live
+// stream carries the same steps as `research` SSE events).
+app.get("/api/research/:sessionId", (req, res) => {
+  const row = store.getResearchRun(req.params.sessionId);
+  if (!row) {
+    res.status(404).json({ detail: `no research run for session: ${req.params.sessionId}` });
+    return;
+  }
+  res.json(row);
+});
+
 app.get("/api/memory", (_req, res) => {
   res.json({
     block: memory.load(),
     usage: memory.totalChars(),
     budget: MEMORY_CHAR_LIMIT,
   });
+});
+
+// --- wiki PDF upload (Chat UI attach → agent-side llm-wiki ingest) -----------
+// The browser posts the PDF as the raw request body (the tree has no multipart
+// parser); the filename rides the query string. The file lands under the
+// workspace so the agent can hand it to the llm-wiki service, which cannot see
+// host paths. The response is what the composer folds into the turn message.
+
+app.post(
+  "/api/uploads/wiki",
+  express.raw({ type: ["application/pdf", "application/octet-stream"], limit: "25mb" }),
+  (req, res) => {
+    const body = Buffer.isBuffer(req.body) ? req.body : Buffer.alloc(0);
+    if (!body.length) {
+      res.status(400).json({ detail: "empty body (POST the PDF as the raw request body)" });
+      return;
+    }
+    if (!looksLikePdf(body)) {
+      res.status(415).json({ detail: "not a PDF (no %PDF- header in the first KiB)" });
+      return;
+    }
+    const name = String((req.query as Record<string, unknown>).name ?? "upload.pdf");
+    const saved = saveWikiUpload(path.join(WORKSPACE_DIR, "uploads"), body, name);
+    res.json({ path: `uploads/${saved.fileName}`, filename: saved.fileName, bytes: saved.bytes });
+  },
+);
+
+// --- wiki read proxy (Wiki tab) ----------------------------------------------
+// Read-only, allow-listed passthrough to the llmwiki service (see
+// wiki-proxy.ts). The UI structurally cannot reach ingest/upload/compile
+// through this route — only the read surface is forwardable.
+
+app.get("/api/wiki/*", async (req, res) => {
+  const splat = (req.params as { 0?: string })[0] ?? "";
+  const built = buildWikiTarget(splat, req.query as Record<string, unknown>);
+  if ("error" in built) {
+    res.status(400).json({ detail: built.error });
+    return;
+  }
+  try {
+    const upstream = await fetchWiki(WIKI_API_URL, built.path);
+    res.status(upstream.status).type(upstream.contentType).send(upstream.body);
+  } catch (err) {
+    res.status(502).json({
+      detail: `llmwiki unreachable at ${WIKI_API_URL}: ${String(err).slice(0, 160)}`,
+    });
+  }
 });
 
 interface ChatRequest {
@@ -266,6 +356,44 @@ app.post("/api/chat", (req, res) => {
       await getRuntime(); // lazy runtime assembly (python getRuntime parity)
       let history = store.loadSession(sessionId);
       write("session", { session_id: sessionId, turn_id: turnId, resumed: history.length > 0 });
+
+      // --- deep research (/research) ---------------------------------------
+      // Prefix-detected, or the continuation of a run paused on a clarifying
+      // question (no prefix needed) — python app.py parity.
+      const pendingRun = store.getResearchRun(sessionId);
+      const wantsResearch = detectResearchMode(message);
+      const resumesResearch = !wantsResearch && pendingRun?.status === "awaiting_clarification";
+      if (wantsResearch || resumesResearch) {
+        const cleanedQuestion = cleanResearchQuestion(message);
+        if (!RESEARCH_MODE_ENABLED) {
+          write("error", { error: "deep research is disabled (RESEARCH_MODE_ENABLED=0)" });
+          write("done", { session_id: sessionId, messages: -1, mode: "research" });
+        } else if (!process.env.TAVILY_API_KEY) {
+          write("error", { error: "deep research needs TAVILY_API_KEY — add it to .env" });
+          write("done", { session_id: sessionId, messages: -1, mode: "research" });
+        } else if (!cleanedQuestion) {
+          write("error", { error: "empty research question — type /research followed by your question" });
+          write("done", { session_id: sessionId, messages: -1, mode: "research" });
+        } else if (pendingRun?.status === "running") {
+          write("error", { error: "a research run is already in progress for this session" });
+          write("done", { session_id: sessionId, messages: -1, mode: "research" });
+        } else {
+          await runResearchTurn({
+            sessionId,
+            cleanedQuestion,
+            history,
+            turnId,
+            controller,
+            write,
+            ping: () => {
+              if (!abandoned && !res.writableEnded && !res.destroyed) res.write(": ping\n\n");
+            },
+            resumed: resumesResearch,
+          });
+        }
+        return;
+      }
+
       if (compressor && history.length) {
         const res = await compressor.compress(history);
         if (res.compressed) {
@@ -291,7 +419,7 @@ app.post("/api/chat", (req, res) => {
         history,
         message,
         () => controller.signal.aborted,
-        { sessionId },
+        { sessionId, signal: controller.signal },
         // Stream each message as it lands — the UI sees tool calls/results
         // incrementally, not as one burst at `done` (python astream parity).
         (msg) => write("message", msg),
@@ -359,6 +487,130 @@ function maybeTitleSession(sessionId: string, userMessage: string, newMessages: 
   } catch (e) {
     log.warn(`session title fallback failed: ${String(e).slice(0, 140)}`);
   }
+}
+
+// --- deep research turn (/research) -------------------------------------------
+// Streams step events (`research`) + produced messages over the same SSE
+// channel as chat; the run is not tied to the HTTP connection (a client
+// disconnect only stops writes — same as normal turns). The research_runs row
+// + archive keep the state for reconnect via GET /api/research/:sessionId.
+
+interface ResearchTurnArgs {
+  sessionId: string;
+  cleanedQuestion: string;
+  history: ChatMessage[];
+  turnId: string;
+  controller: AbortController;
+  write: (event: string, payload: unknown) => void;
+  ping: () => void;
+  resumed: boolean;
+}
+
+async function runResearchTurn(args: ResearchTurnArgs): Promise<void> {
+  const { sessionId, cleanedQuestion, history, turnId, controller, write, ping, resumed } = args;
+  const startedAt = Date.now();
+
+  if (resumed) store.resumeResearchRun(sessionId);
+  else store.startResearchRun(sessionId, cleanedQuestion);
+
+  // Persist the user turn up front so a crash/restart mid-run keeps the
+  // question row; the sidebar title lands immediately.
+  const userMessage: ChatMessage = { role: "user", content: cleanedQuestion };
+  const userTurn = store.appendTurn(sessionId, [userMessage]);
+  void mirror.recordTurn(sessionId, userTurn, [userMessage]).catch(() => undefined);
+  maybeTitleSession(sessionId, cleanedQuestion, []);
+
+  const produced: ChatMessage[] = [];
+  let outcome: ResearchOutcome | null = null;
+  let failure: string | null = null;
+
+  const heartbeat = setInterval(ping, 20_000);
+  try {
+    outcome = await runDeepResearch({
+      question: cleanedQuestion,
+      history,
+      deps: {
+        emit: (event: ResearchEvent) => {
+          try {
+            store.updateResearchStep(sessionId, event.step);
+          } catch {
+            /* progress tracking is best-effort */
+          }
+          write("research", event);
+        },
+        onMessage: (message) => {
+          produced.push(message);
+          write("message", message);
+        },
+        shouldStop: () => controller.signal.aborted,
+        signal: controller.signal,
+      },
+    });
+  } catch (e) {
+    failure = String((e as Error).message).slice(0, 500);
+  } finally {
+    clearInterval(heartbeat);
+  }
+
+  // Persist the assistant-visible messages produced (clarification question /
+  // verification / final report); the user row is already in the archive.
+  if (produced.length) {
+    const turnNumber = store.appendTurn(sessionId, produced);
+    void mirror.recordTurn(sessionId, turnNumber, produced).catch(() => undefined);
+  }
+  const messageCount = store.loadSession(sessionId).length;
+
+  if (failure) {
+    store.finishResearchRun(sessionId, { status: "failed", error: failure });
+    write("error", { error: failure });
+    write("done", { session_id: sessionId, messages: -1, mode: "research" });
+    return;
+  }
+
+  const result = outcome as ResearchOutcome;
+  if (result.status === "completed") {
+    let reportPath: string | null = null;
+    if (result.report && RESEARCH_SAVE_REPORTS) {
+      try {
+        reportPath = saveResearchReport({
+          question: cleanedQuestion,
+          report: result.report,
+          tag: sessionId.slice(0, 8),
+        });
+      } catch (e) {
+        log.warn(`research report save failed: ${String(e).slice(0, 160)}`);
+      }
+    }
+    store.finishResearchRun(sessionId, { status: "completed", report: result.report ?? "" });
+    const elapsed = ((Date.now() - startedAt) / 1000).toFixed(1);
+    const tokens = result.usage.prompt_tokens + result.usage.completion_tokens;
+    log.info(
+      `research completed: ${sessionId.slice(0, 8)} — ${elapsed}s, ${tokens} tokens${reportPath ? `, report ${reportPath}` : ""}`,
+    );
+    write("done", {
+      session_id: sessionId,
+      messages: messageCount,
+      usage: result.usage,
+      mode: "research",
+      report_path: reportPath,
+    });
+    return;
+  }
+  if (result.status === "awaiting_clarification") {
+    store.awaitResearchRun(sessionId, result.clarification ?? "");
+    write("done", {
+      session_id: sessionId,
+      messages: messageCount,
+      usage: result.usage,
+      mode: "research",
+      clarification: result.clarification ?? null,
+    });
+    return;
+  }
+  // cancelled (Stop button) — whatever was produced is already persisted.
+  store.finishResearchRun(sessionId, { status: "cancelled" });
+  write("cancelled", { turn_id: turnId, persisted: produced.length ? 1 : 0 });
+  write("done", { session_id: sessionId, messages: messageCount, usage: result.usage, mode: "research" });
 }
 
 // --- MCP surface (python server.py parity) -----------------------------------

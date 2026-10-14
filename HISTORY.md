@@ -44,6 +44,74 @@ nm-memory-layer + nm-skills-registry), plus the detours. Headlines:
 Known deferred: full RVF/AgenticDB substrate sweep (agentdb alpha churn),
 offline HTML vendor step, drift doctor in UI, search condensation polish.
 
+## 2026-10-14 — deep research (/research) Stage 1: engine + CLI (thinkdepth-ai port)
+
+Plan + decisions: docs/deep-research-plan.md. LangGraph-free explicit port of
+the thinkdepth-ai Python/LangGraph research mode.
+
+- **Engine** (`src/research/`): 10 prompts ported near-verbatim; researcher
+  sub-loop (parallel tool fan-out, order-preserving, token-budget → lossless
+  compress); supervisor loop (parallel ConductResearch fan-out, inline
+  refine_draft_report writer call, ResearchComplete/iteration caps,
+  tool-message notes); orchestrator (clarify → brief → pre-research outline →
+  supervisor → final report) with clarification pause/cancel/deadline.
+- **Tools**: research-only tavily_search (raw content → URL dedupe → Exa
+  structured summary → cheap-LLM fallback → snippet, per-URL cache) +
+  think_tool; bound only inside researcher loops.
+- **CLI**: `npm run research -- "question" [--out f] [--quiet]`; report
+  auto-save (RESEARCH_SAVE_REPORTS) to workspace/research/, durable per-run
+  logs in workspace/research/logs/ (steps + outcome + stack + signal
+  interrupts).
+- **Config**: single z-ai/glm-5.3-flash for all research roles (roles seam
+  kept); RESEARCH_* knobs; EXA_API_KEY first-choice summarizer; llm.ts gains
+  signal/minIntervalMs/reasoningEffort opts.
+- **Tracing**: root `deep-research` chain run + `llm:research:*` / `tool:*`
+  children; LangSmith project switched default → nm-finance-agent.
+- **Tests**: 17 offline contract tests (stubbed models; tracing muted).
+- **Live**: first run (DAL) died at the final report — 5-min request timeout
+  then empty content (reasoning-token exhaustion); fixed with final-report
+  effort=low (FINAL_REPORT_THINKING parity), empty→retry, 32k/12k writer
+  caps. Second run (XOM) completed: 35.2 min, 261k tokens, 2,277-word report,
+  35 gap-free sources, full trace tree + log verified.
+- **Stage 2 (server wiring)**: `POST /api/chat` routes `/research`
+  (prefix-detected; a continuation after a clarification pause needs no
+  prefix) to the engine; SSE gains `research` step events, `message` events
+  for produced messages, and `done` payloads with `mode:"research"` +
+  `report_path`; Stop/cancel aborts in-flight LLM calls via the AbortSignal;
+  new `research_runs` table (status/step/question/clarification/report/error)
+  with `GET /api/research/:sessionId` and a boot sweep marking stale
+  `running` rows `interrupted`; report auto-save shares `reports.ts` with the
+  CLI; health reports the research block. Live smoke on an isolated `:3099`
+  instance: prefix routing + scope→brief→outline events, cancel → `cancelled`
+  row (step preserved) + persisted user/verification rows, normal chat path
+  untouched. Tests 75/75.
+- **Stage 3 (frontend)**: `research` SSE events render as dim system rows
+  (progress trail) + a live progress strip above the composer (current step,
+  pulsing dot, elapsed mm:ss clock); `done` markers differentiate research
+  complete/paused and surface `report_path` (workspace-relative); composer
+  placeholder advertises `/research`; research turns skip followups polling.
+  `npm run build` green. Deferred: session-list research tag, reconnect-time
+  strip recovery.
+- **Stage 4 (polish & integrations)**: session-list `research` tag
+  (`research_status` via a research_runs join in listSessions + sidebar
+  chip); reconnect recovery (an opened session with a non-terminal run polls
+  `GET /api/research/:sid`, shows last-step + elapsed, and reloads the
+  archive when the report lands); gated `deep_research` main-agent tool
+  (`RESEARCH_AS_TOOL=1`, forwards the turn AbortSignal via the new
+  `ToolDef.execute(args, ctx?)` seam); completion marker shows token spend;
+  README repaired from a pre-existing "No change"-interleaved corruption
+  (lossless strip; corrupted original in git history) + refreshed with a
+  Deep-research section. Tests 76/76; smoke-verified tags (running →
+  cancelled) and gated tool binding on an isolated :3099.
+- **Trace payload enrichment** (follow-up to the SDK investigation — same
+  wire protocol either way; the UI conventions were what we skipped): full
+  message inputs, generations outputs carrying the assistant message,
+  `usage_metadata` in both outputs and extra.metadata, plus
+  `ls_provider`/`ls_model_name` for the token/cost panels; tool results
+  uncapped; `trace.update` can now PATCH `extra.metadata`; helpers
+  `usageMetadata`/`llmRunMetadata`/`llmRunOutputs` in tracing.ts. Payload
+  verified stored through our own client (probe deleted). Tests 79/79.
+
 ## 2026-10-10 — MCP port (config, binding, UI) + titler + streaming fixes
 
 - **MCP ported from langgraph-demo** (mcp_config.py + server.py endpoints +

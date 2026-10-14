@@ -1,6 +1,7 @@
-// Chat-only shell (step 1): no wiki tab, no settings screens, no followups.
-// Same conversation-feed behavior as the langgraph-demo frontend: SSE-driven
-// feed, tool-call rows, collapsible tool results, turn cancel, session restore.
+// Tabbed shell (Chat | Wiki | MCP). Same conversation-feed behavior as the
+// langgraph-demo frontend: SSE-driven feed, tool-call rows, collapsible tool
+// results, turn cancel, session restore. The Wiki tab is the native llmwiki
+// browser (docs/wiki-tab-plan.md), read-only over the /api/wiki/* proxy.
 
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
@@ -9,6 +10,7 @@ import {
   getFollowupCounts,
   getFollowups,
   getHealth,
+  getResearchRun,
   getSessionMessages,
   getSessions,
   streamChat,
@@ -17,14 +19,22 @@ import type { FeedItem, Followups, Health, NewItem, SessionInfo, ToolCall } from
 import Sidebar from "./components/Sidebar";
 import SkillsTab from "./components/SkillsTab";
 import McpTab from "./components/McpTab";
+import WikiTab from "./components/WikiTab";
 import Feed from "./components/Feed";
 import Composer from "./components/Composer";
 
 let idCounter = 0;
 const nextId = () => `item-${++idCounter}`;
 
+/** mm:ss for the deep-research progress strip. */
+function formatElapsed(ms: number): string {
+  if (!Number.isFinite(ms)) return "";
+  const total = Math.max(0, Math.floor(ms / 1000));
+  return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
+}
+
 export default function App() {
-  const [view, setView] = useState<"chat" | "settings">("chat");
+  const [view, setView] = useState<"chat" | "wiki" | "settings">("chat");
   const [settingsSection, setSettingsSection] = useState<"skills" | "mcp">("skills");
   const [health, setHealth] = useState<Health | null>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
@@ -36,6 +46,18 @@ export default function App() {
   const [draft, setDraft] = useState<{ text: string; n: number }>({ text: "", n: 0 });
   // the follow-up tip currently sitting in the composer (dismissed on submit)
   const [pendingTip, setPendingTip] = useState<{ sid: string; index: number; text: string } | null>(null);
+  // Live deep-research progress (driven by `research` SSE events; null when no
+  // run is active). nowTick re-renders the elapsed clock while it runs.
+  const [researchLive, setResearchLive] = useState<{ detail: string; since: number } | null>(null);
+  const [nowTick, setNowTick] = useState<number>(() => Date.now());
+  // Recovered run state for the OPEN session (page reloaded mid-run): polled
+  // from GET /api/research/:sid; cleared when the run is terminal or a live
+  // stream takes over.
+  const [sessionResearch, setSessionResearch] = useState<{
+    status: string;
+    step: string | null;
+    sinceMs: number;
+  } | null>(null);
   // mirror of sessionId for stale async followups fetches
   const sessionIdRef = useRef<string | null>(null);
   // track streaming for stale guards
@@ -83,6 +105,13 @@ export default function App() {
     refreshFollowupCounts();
   }, [refreshSessions, refreshFollowupCounts]);
 
+  // ticking clock while a deep-research run is live (or recovered from reload)
+  useEffect(() => {
+    if (!researchLive && !sessionResearch) return;
+    const t = window.setInterval(() => setNowTick(Date.now()), 1000);
+    return () => window.clearInterval(t);
+  }, [researchLive, sessionResearch]);
+
   const push = useCallback((item: NewItem) => {
     setItems((prev) => [...prev, { id: nextId(), ...item } as FeedItem]);
   }, []);
@@ -111,30 +140,65 @@ export default function App() {
           });
           break;
         }
-case "compression":
-  push({
-    kind: "system",
-    text: `context compression — turns ${data.first}-${data.last} summarized by ${data.model} (${data.original} → ${data.compressed} messages, ${data.elapsed_ms}ms)`,
-    tone: "info",
-  });
-  break;
-case "cancelled":
+        case "compression":
+          push({
+            kind: "system",
+            text: `context compression — turns ${data.first}-${data.last} summarized by ${data.model} (${data.original} → ${data.compressed} messages, ${data.elapsed_ms}ms)`,
+            tone: "info",
+          });
+          break;
+        case "research": {
+          // Deep-research progress (docs/deep-research-plan.md, stage 3): a
+          // durable system row for the feed trail + the live progress strip.
+          const detail = String(data.detail ?? data.step ?? "working");
+          setResearchLive((prev) => ({ detail, since: prev?.since ?? Date.now() }));
+          setNowTick(Date.now());
+          push({ kind: "system", text: `research · ${detail}`, tone: "info" });
+          break;
+        }
+        case "cancelled":
+          setResearchLive(null);
           push({ kind: "system", text: "turn cancelled — partial state saved", tone: "warn" });
           break;
         case "error":
+          setResearchLive(null);
           push({ kind: "notice", text: `error: ${data.error}`, tone: "warn" });
           setStreaming(false);
           break;
-        case "done":
+        case "done": {
+          setResearchLive(null);
           if (data.messages !== -1) {
             const at = new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-            push({ kind: "system", text: `turn complete ∙ ${at}`, tone: "info" });
+            const isResearch = data.mode === "research";
+            const clarification = typeof data.clarification === "string" ? data.clarification : "";
+            const reportPath = typeof data.report_path === "string" ? data.report_path : "";
+            const usage = (data.usage ?? {}) as { prompt_tokens?: number; completion_tokens?: number };
+            const tokens = (usage.prompt_tokens ?? 0) + (usage.completion_tokens ?? 0);
+            push({
+              kind: "system",
+              text: isResearch
+                ? clarification
+                  ? `research paused — answer the question above ∙ ${at}`
+                  : `research complete ∙ ${at}${tokens ? ` ∙ ${(tokens / 1000).toFixed(1)}k tokens` : ""}`
+                : `turn complete ∙ ${at}`,
+              tone: "info",
+            });
+            if (reportPath) {
+              // absolute server path → short workspace-relative form
+              push({
+                kind: "system",
+                text: `report saved ∙ ${reportPath.replace(/^.*?(workspace\/)/, "$1")}`,
+                tone: "info",
+              });
+            }
           }
           setStreaming(false);
           refreshSessions();
-          refreshFollowups(String(data.session_id ?? ""), 0);
-          // extraction lands up to ~10s after done — badge refresh then
-          window.setTimeout(refreshFollowupCounts, 12000);
+          if (data.mode !== "research") {
+            refreshFollowups(String(data.session_id ?? ""), 0);
+            // extraction lands up to ~10s after done — badge refresh then
+            window.setTimeout(refreshFollowupCounts, 12000);
+          }
           // The session titler refines the fallback title asynchronously
           // (secondary LLM lands ~2-8s after the first turn) — re-fetch so the
           // sidebar picks up the refined one-liner without a manual reload
@@ -142,6 +206,7 @@ case "cancelled":
           window.setTimeout(refreshSessions, 5000);
           window.setTimeout(refreshSessions, 12000);
           break;
+        }
       }
     },
     [push, refreshSessions],
@@ -194,11 +259,29 @@ case "cancelled":
     }
   }, []);
 
+  // Render one session's archive into the feed — shared by opening a session
+  // and the reconnect poll that picks up a report written while away.
+  const renderSessionMessages = useCallback(async (sid: string) => {
+    const { messages } = await getSessionMessages(sid);
+    setItems(
+      messages.map((m) => ({
+        kind: "message" as const,
+        id: nextId(),
+        role: m.role,
+        content: m.content,
+        toolCalls: m.tool_calls,
+        toolCallId: m.tool_call_id,
+        toolName: m.tool_name ?? m.name,
+        status: m.status,
+      })),
+    );
+  }, []);
+
   const loadSession = useCallback(
     async (sid: string) => {
       if (streaming) return;
       try {
-        const { messages } = await getSessionMessages(sid);
+        await renderSessionMessages(sid);
         setSessionId(sid);
         sessionIdRef.current = sid;
         setPendingTip(null);
@@ -213,18 +296,6 @@ case "cancelled":
           delete next[sid];
           return next;
         });
-        setItems(
-          messages.map((m) => ({
-            kind: "message" as const,
-            id: nextId(),
-            role: m.role,
-            content: m.content,
-            toolCalls: m.tool_calls,
-            toolCallId: m.tool_call_id,
-            toolName: m.tool_name ?? m.name,
-            status: m.status,
-          })),
-        );
       } catch (err) {
         push({
           kind: "notice",
@@ -233,8 +304,51 @@ case "cancelled":
         });
       }
     },
-    [streaming, push, refreshFollowups],
+    [streaming, push, refreshFollowups, renderSessionMessages],
   );
+
+  // Reconnect recovery: a page reload mid-run loses the live SSE stream — pull
+  // the run state from GET /api/research/:sid, poll while it is in flight, and
+  // reload the archived messages once it finishes (server-side the report
+  // lands in the archive).
+  useEffect(() => {
+    if (!sessionId || streaming) {
+      setSessionResearch(null);
+      return;
+    }
+    let cancelled = false;
+    let timer: number | undefined;
+    let sawActive = false;
+    const check = async () => {
+      try {
+        const row = await getResearchRun(sessionId);
+        if (cancelled) return;
+        const active = row.status === "running" || row.status === "awaiting_clarification";
+        if (active) {
+          sawActive = true;
+          setSessionResearch({
+            status: row.status,
+            step: row.step,
+            sinceMs: Date.parse(row.started_at),
+          });
+          timer = window.setTimeout(check, 12000);
+        } else {
+          setSessionResearch(null);
+          if (sawActive && row.status === "completed") {
+            await renderSessionMessages(sessionId);
+            refreshSessions();
+          }
+        }
+      } catch {
+        if (!cancelled) setSessionResearch(null); // 404: no research run
+      }
+    };
+    void check();
+    return () => {
+      cancelled = true;
+      if (timer) window.clearTimeout(timer);
+    };
+  }, [sessionId, streaming, renderSessionMessages, refreshSessions]);
 
   const newChat = useCallback(() => {
     if (streaming) return;
@@ -274,6 +388,20 @@ case "cancelled":
         .filter((it) => !followups.dismissed.includes(it.idx))
     : [];
 
+  // Strip source: the live SSE stream when present, else the recovered run
+  // state polled for the open session.
+  const researchStrip = researchLive
+    ? { text: `research · ${researchLive.detail}`, since: researchLive.since }
+    : sessionResearch
+      ? {
+          text:
+            sessionResearch.status === "awaiting_clarification"
+              ? "research · paused — answer the question above"
+              : `research · running on the server — last step: ${sessionResearch.step ?? "…"}`,
+          since: sessionResearch.sinceMs,
+        }
+      : null;
+
   return (
     <div className="app">
       <Sidebar
@@ -296,6 +424,14 @@ case "cancelled":
             onClick={() => setView("chat")}
           >
             Chat
+          </button>
+          <button
+            className={`tab${view === "wiki" ? " active" : ""}`}
+            role="tab"
+            aria-selected={view === "wiki"}
+            onClick={() => setView("wiki")}
+          >
+            Wiki
           </button>
           <button
             className={`tab${view === "settings" ? " active" : ""}`}
@@ -340,8 +476,24 @@ case "cancelled":
               ))}
             </div>
           )}
+          {researchStrip && (
+            <div className="research-strip" aria-label="Research progress">
+              <span className="research-strip-dot" />
+              <span className="research-strip-text" title={researchStrip.text}>
+                {researchStrip.text}
+              </span>
+              <span className="research-strip-time">{formatElapsed(nowTick - researchStrip.since)}</span>
+            </div>
+          )}
           <Composer streaming={streaming} onSend={send} onStop={stop} draft={draft} />
         </main>
+        ) : view === "wiki" ? (
+          <WikiTab
+            onAsk={(text) => {
+              prefillComposer(text);
+              setView("chat");
+            }}
+          />
         ) : (
           <div className="settings">
             <div className="tabbar" role="tablist" aria-label="Settings sections">

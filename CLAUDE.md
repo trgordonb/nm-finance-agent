@@ -7,12 +7,18 @@ seamed so the future `ruvector-core::AgenticDB` swap lands behind
 `SessionDriver` — the loop only knows `loadSession / recordTurn / search /
 listSessions / recordCompression`; hybrid recall already runs as the mirror.
 
-## Current status (2026-10-11)
+## Current status (2026-10-14)
 
 Full Hermes-order memory stack ported and live:
 loop+prompt memory+tools → titler → MCP → hybrid recall mirror → followups →
 skills (4 phases, R2 live) → context compression. UI: Chat + settings
 (Skills | MCP), streaming feed, to-do strip, badges, titler.
+Deep research (`/research`): thinkdepth-ai port complete (stages 1–4) —
+engine + CLI + server routing (prefix detection, research SSE events, cancel,
+`research_runs` status endpoint) + frontend (feed trail, progress strip,
+session tags, reconnect recovery) + gated `deep_research` tool
+(`RESEARCH_AS_TOOL`) + LangSmith tracing + durable logs
+(docs/deep-research-plan.md).
 
 ## Layout
 
@@ -21,8 +27,10 @@ nm-finance-agent/
 ├── src/
 │   ├── index.ts          # Express server: /api/health, /api/sessions*, /api/memory,
 │   │                     #   /api/mcp*, /api/skills*, followups, /api/yahoo/*,
-│   │                     #   POST /api/chat (SSE incl. compression+nudge events),
-│   │                     #   /api/chat/cancel; runtime assembly (lazy+lock, reloadable)
+│   │                     #   POST /api/chat (SSE incl. compression/nudge/research
+│   │                     #   events; /research prefix → deep research turn),
+│   │                     #   /api/research/:sessionId run status, /api/chat/cancel;
+│   │                     #   runtime assembly (lazy+lock, reloadable)
 │   ├── agent.ts          # AgentLoop: explicit agent↔tool cycle; onMessage streaming;
 │   │                     #   per-turn LangSmith run tree; usage metadata attached to
 │   │                     #   assistant messages (compression trigger fodder)
@@ -49,15 +57,22 @@ nm-finance-agent/
 │   │                     #   atomic toggles, keep_tools exact/suffix
 │   ├── mcp-tools.ts      # per-server binding via @modelcontextprotocol/sdk
 │   │                     #   (stdio/streamable_http/sse); one bad server skips
-│   ├── tracing.ts        # LangSmith REST runs client (no SDK, fire-and-forget)
+│   ├── tracing.ts        # LangSmith REST runs client (no SDK, fire-and-forget);
+│   │                     #   SDK-parity payload helpers (full messages,
+│   │                     #   usage_metadata, ls_provider/ls_model_name)
 │   ├── workspace.ts      # workspace-rooted path resolution + harness write guard
 │   ├── config.ts         # all env (dotenv override=true); logger.ts: stderr-only
+│   ├── research/         # deep research engine (/research, stages 1–4):
+│   │                     #   orchestrator (clarify→brief→outline→supervisor→
+│   │                     #   final), researcher/supervisor loops, near-verbatim
+│   │                     #   prompts, tavily_search w/ Exa→LLM summaries,
+│   │                     #   cli.ts + reports.ts + tool.ts (gated deep_research)
 │   ├── tools/            # fs (workspace-rooted), shell (execute: $SKILLS_DIR env,
 │   │                     #   skill-path redirect, recoverable timeouts), web (Jina
 │   │                     #   Reader→Tavily Extract fallback; Tavily search),
 │   │                     #   memory_manage, skill_tools (skill_manage/load_skill),
 │   │                     #   session_search (hybrid), registry
-│   └── tests/            # 46 contract tests across 6 files
+│   └── tests/            # 76 contract tests across 11 files
 ├── frontend/             # Vite React app: Chat feed (+ vela-chart cards), settings
 │   └── src/charts/       #   (Skills|MCP), Yahoo fetch via proxy, @luxalgo/vela lazy
 ├── mcp_servers.json      # git-tracked MCP config
@@ -67,7 +82,7 @@ nm-finance-agent/
 └── agent-mirror.db       # ruvector redb sidecar store (rebuildable from archive)
 ```
 
-## Contracts (the suite is the contract — `npm test`, 46 tests)
+## Contracts (the suite is the contract — `npm test`, 76 tests)
 
 - **`Error:` is fatal, `Rejected:` is recoverable.** `Error:` ends the turn —
   reserved for system failures (spawn errors, unreadable I/O). Everything the
@@ -103,6 +118,8 @@ Core: `ls read_file write_file edit_file glob grep execute web_to_markdown
 internet_search memory_manage skill_manage load_skill session_search`
 (session_search is hybrid + condensable via the SEARCH_SUMMARIZER_ENABLED
 gate; the tool's context command references the condensed header).
+`deep_research` joins the registry only with `RESEARCH_AS_TOOL=1` (40-min
+runs — off by default).
 MCP: `<server>_<tool>` entries (agent_browser 29, luxalgo 13 keep_tools,
 agentdb 14 keep_tools; finance_toolkit dormant streamable_http).
 
@@ -156,6 +173,9 @@ Full inventory with defaults in `.env.example`. Highlights:
    summarizer through assembleRuntime.
 4. Nudge-hardening candidates: reflexion-store escalation via the bound
    agentdb MCP tools (python Gate-1), context-size aware nudging.
+5. Deep research (`/research`): Stages 1–4 ✓ 2026-10-14 (engine + CLI +
+   server wiring + frontend + polish: session tags, reconnect recovery,
+   gated `deep_research` tool; docs/deep-research-plan.md).
 6. `SessionDriver` → full AgenticDB sweep (RVF witness chains, COW
    branches, learned ranking) — pending agentdb alpha stability; the
    mirror already covers recall.
@@ -167,5 +187,6 @@ Full inventory with defaults in `.env.example`. Highlights:
 ```bash
 npm install && npm run start   # backend on :3001 (env from ./.env)
 cd frontend && npm run dev     # web UI on :5173 (proxies /api)
-npm test                       # 46 contract tests
+npm test                       # 76 contract tests
+npm run research -- "question" # deep research CLI (saves to workspace/research/)
 ```

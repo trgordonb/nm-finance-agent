@@ -53,6 +53,9 @@ export interface SessionInfo {
   message_count: number;
   /** One-line title (fallback truncated first user message, LLM-refined). */
   summary?: string | null;
+  /** Deep-research run state when the session has one (running,
+   *  awaiting_clarification, completed, failed, cancelled, interrupted). */
+  research_status?: string | null;
 }
 
 export interface Health {
@@ -121,4 +124,36 @@ export interface ApiMessage {
   tool_name?: string;
   name?: string;
   status?: string;
+}
+
+/** Wiki tab: one registered llmwiki domain (GET /api/wiki/domains). */
+export interface WikiDomain {
+  name: string;
+  description: string;
+  created: string | null;
+}
+
+/** Wiki tab: one page row of the progressive-disclosure index
+ *  (GET /api/wiki/concepts?domain=). */
+export interface WikiGist {
+  slug: string;
+  title: string;
+  type: string;
+  gist: string;
+  sources: string[];
+  updated: string | null;
+  version: number;
+}
+
+/** Wiki tab: one retrieval result (GET /api/wiki/search). Wiki-origin hits
+ *  carry `slug`; chunk-origin hits carry `source_id` (its source-note page). */
+export interface WikiSearchHit {
+  id: string;
+  score: number;
+  origin: "wiki" | "chunk";
+  text: string;
+  slug: string | null;
+  source_id: string | null;
+  metadata: Record<string, unknown>;
+  domain: string;
 }

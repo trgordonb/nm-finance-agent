@@ -18,7 +18,7 @@ import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 import { chat } from "./llm.js";
-import { trace } from "./tracing.js";
+import { trace, llmRunMetadata, llmRunOutputs } from "./tracing.js";
 import { OPENROUTER_MODEL_SUMMARIZER } from "./config.js";
 import { DB_PATH } from "./config.js";
 import { log } from "./logger.js";
@@ -195,11 +195,26 @@ async function invokeExtractor(closingText: string, instruction: string, parentR
     { role: "user" as const, content: `FINAL ASSISTANT MESSAGE:\n${closingText.trim().slice(-2000)}\n\n${instruction}` },
   ];
   const llmRun = parentRun
-    ? trace.create({ name: "extract[llm]", runType: "llm", inputs: { messages: payload }, parent: parentRun, tags: ["nm-finance-agent", "followups"] })
+    ? trace.create({
+        name: "extract[llm]",
+        runType: "llm",
+        inputs: { messages: payload },
+        parent: parentRun,
+        tags: ["nm-finance-agent", "followups"],
+        metadata: llmRunMetadata(OPENROUTER_MODEL_SUMMARIZER),
+      })
     : undefined;
   try {
     const response = await chat(payload, undefined, { model: OPENROUTER_MODEL_SUMMARIZER, noReasoning: true, maxTokens: 512 });
-    if (llmRun) trace.update(llmRun, { outputs: { model: response.model, usage: response.usage, text: response.content } });
+    if (llmRun) {
+      trace.update(llmRun, {
+        outputs: llmRunOutputs(response.content, {
+          usage: response.usage,
+          message: { role: "assistant", content: response.content },
+        }),
+        metadata: llmRunMetadata(response.model, response.usage),
+      });
+    }
     return parseFollowups(response.content);
   } catch (e) {
     if (llmRun) trace.update(llmRun, { error: String(e).slice(0, 160) });

@@ -116,6 +116,14 @@ export default function Sidebar({
                       {s.turn_count === 1 ? "1-turn" : `${s.turn_count}-turns`}
                     </span>
                     <span className="session-time">{relativeTime(s.created_at)}</span>
+                    {s.research_status && (
+                      <span
+                        className={`session-tag${s.research_status === "running" ? " live" : ""}`}
+                        title={`deep research: ${s.research_status}`}
+                      >
+                        research
+                      </span>
+                    )}
                     {s.summary && <span className="session-title-text">{s.summary}</span>}
                     {(followupCounts[s.session_id] ?? 0) > 0 && s.session_id !== activeId && (
                       <span

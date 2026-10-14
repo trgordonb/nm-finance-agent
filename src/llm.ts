@@ -22,6 +22,12 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, ms));
 }
 
+function abortError(): Error {
+  const err = new Error("aborted by caller");
+  err.name = "AbortError";
+  return err;
+}
+
 const RETRYABLE = [
   "500",
   "502",
@@ -73,6 +79,16 @@ export interface ChatOpts {
    *  models count reasoning tokens against the cap and can return empty
    *  content with finish_reason=length; python parity max_tokens=512). */
   maxTokens?: number;
+  /** Caller-supplied abort (deep-research cancel): kills the in-flight
+   *  request immediately and stops the retry loop. */
+  signal?: AbortSignal;
+  /** Override the global min-interval between calls — deep-research runs
+   *  make bursts of parallel calls and use a tighter spacing. */
+  minIntervalMs?: number;
+  /** Reasoning effort (OpenRouter unified `reasoning.effort`) — verified
+   *  accepted by z-ai/glm-5.3-flash. Applies only when the reasoning block
+   *  is sent (ignored under noReasoning). */
+  reasoningEffort?: "low" | "medium" | "high";
 }
 
 export async function chat(
@@ -84,10 +100,13 @@ export async function chat(
   const model = opts.model || OPENROUTER_MODEL_MAIN;
   const reasoning = OPENROUTER_REASONING && !opts.noReasoning;
   // Rate limit: enforce minimum interval between calls (shared across turns).
+  // Deep-research runs override with a tighter interval via opts.minIntervalMs.
+  const minInterval = opts.minIntervalMs ?? MIN_INTERVAL_MS;
   const elapsed = Date.now() - lastCallAt;
-  if (elapsed < MIN_INTERVAL_MS) {
-    await sleep(MIN_INTERVAL_MS - elapsed);
+  if (elapsed < minInterval) {
+    await sleep(minInterval - elapsed);
   }
+  if (opts.signal?.aborted) throw abortError();
 
   const body: Record<string, unknown> = {
     model,
@@ -123,7 +142,9 @@ export async function chat(
     body.provider = { order: OPENROUTER_PROVIDER_ORDER, allow_fallbacks: OPENROUTER_PROVIDER_FALLBACKS };
   }
   if (reasoning) {
-    body.reasoning = { enabled: true };
+    body.reasoning = opts.reasoningEffort
+      ? { enabled: true, effort: opts.reasoningEffort }
+      : { enabled: true };
   }
 
   let lastErr: Error | null = null;
@@ -133,6 +154,10 @@ export async function chat(
         `[llm] POST ${OPENROUTER_BASE_URL}/chat/completions model=${model} attempt=${attempt}/${MAX_ATTEMPTS}`,
       );
       lastCallAt = Date.now();
+      const timeoutSignal = AbortSignal.timeout(Number(process.env.LLM_TIMEOUT_MS ?? "300000"));
+      // A caller-supplied abort (deep-research cancel) kills the in-flight
+      // request immediately, not just at the next loop boundary.
+      const requestSignal = opts.signal ? AbortSignal.any([timeoutSignal, opts.signal]) : timeoutSignal;
       const res = await fetch(`${OPENROUTER_BASE_URL.replace(/\/$/, "")}/chat/completions`, {
         method: "POST",
         headers: {
@@ -140,7 +165,7 @@ export async function chat(
           Authorization: `Bearer ${OPENROUTER_API_KEY}`,
         },
         body: JSON.stringify(body),
-        signal: AbortSignal.timeout(Number(process.env.LLM_TIMEOUT_MS ?? "300000")),
+        signal: requestSignal,
       });
       if (!res.ok) {
         const text = await res.text();
@@ -169,6 +194,7 @@ export async function chat(
     } catch (e) {
       const err = e as Error & { fatal?: boolean };
       lastErr = err;
+      if (opts.signal?.aborted) break; // caller cancelled — no retries
       if (err.fatal) break;
       if (!retryable(err.message || String(e))) break;
       const wait = 2000 * Math.pow(2, attempt - 1);

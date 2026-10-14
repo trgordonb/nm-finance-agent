@@ -29,7 +29,7 @@ import { chat } from "./llm.js";
 import { OPENROUTER_MODEL_MAIN } from "./config.js";
 import { log } from "./logger.js";
 import { flattenTranscript } from "./nudge.js";
-import { trace } from "./tracing.js";
+import { trace, llmRunMetadata, llmRunOutputs } from "./tracing.js";
 
 export const DEFAULT_COMPRESSION_TOKEN_THRESHOLD = 24000;
 export const DEFAULT_COMPRESSION_KEEP_RECENT = 2;
@@ -186,12 +186,17 @@ export class ConversationCompressor {
       inputs: { messages: payload },
       parent: rootRun,
       tags: ["nm-finance-agent", "compression"],
+      metadata: llmRunMetadata(OPENROUTER_MODEL_MAIN),
     });
     try {
       const response = await chat(payload, undefined, { noReasoning: true });
       const elapsedMs = Date.now() - start;
       trace.update(llmRun, {
-        outputs: { text: response.content, usage: response.usage, model: response.model },
+        outputs: llmRunOutputs(response.content, {
+          usage: response.usage,
+          message: { role: "assistant", content: response.content },
+        }),
+        metadata: llmRunMetadata(response.model, response.usage),
       });
       let summary = response.content.replace(/<\|[^|>]*\|>/g, "").trim();
       if (!summary || PSEUDO_TOOL_RE.test(summary)) {

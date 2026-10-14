@@ -4,8 +4,8 @@
 "size": 3457
 },
 "skills/arxiv-qfin-scan/SKILL.md": {
-"etag": "\"ebb5a71084e7b0813f2f5a33c82c0270\"",
-"size": 13527
+"etag": "\"515faf16a15c7842f27139c7a0e750f2\"",
+"size": 13499
 },
 "skills/arxiv-qfin-scan/evals/evals.json": {
 "etag": "\"67439209e7a8a44839495faf2a438500\"",
@@ -140,156 +140,16 @@
 "size": 2407
 },
 "skills/llm-wiki/SKILL.md": {
-"etag": "\"fa78ee40cbf3a07a1cd82af87983a2f7\"",
-"size": 24331
+"etag": "\"48cd3990e323b050f48f608b2ac0300d\"",
+"size": 13890
 },
-"skills/llm-wiki/assets/SCHEMA.md.template": {
-"etag": "\"255235d70c8901a2aa404919b5125284\"",
-"size": 7583
+"skills/llm-wiki/references/revert-ingest.md": {
+"etag": "\"01aa0f7708b25cb969024fae1f1a0d18\"",
+"size": 3496
 },
-"skills/llm-wiki/assets/evolution_README.md.template": {
-"etag": "\"9200d4f311aec4a5304a73e5086bf33a\"",
-"size": 2321
-},
-"skills/llm-wiki/assets/experience.json.template": {
-"etag": "\"3321a50b59ec9607e43bb47c6869bb16\"",
-"size": 660
-},
-"skills/llm-wiki/assets/graph_README.md.template": {
-"etag": "\"d74f331f46aee67ac569d4cc1ceabfbd\"",
-"size": 2054
-},
-"skills/llm-wiki/assets/graph_gitignore.template": {
-"etag": "\"15d5dc5ab839563a7c3e132602c9e27b\"",
-"size": 27
-},
-"skills/llm-wiki/assets/index.md.template": {
-"etag": "\"d21bbd45a03bd829c243dcb1f09393e9\"",
-"size": 775
-},
-"skills/llm-wiki/assets/log.md.template": {
-"etag": "\"34193a708c90157eb0715ddca7812ea9\"",
-"size": 499
-},
-"skills/llm-wiki/assets/ontology.yaml.template": {
-"etag": "\"adbb2513d87ecec56fff16bbf3a00571\"",
-"size": 3320
-},
-"skills/llm-wiki/assets/page.md.template": {
-"etag": "\"270e4315c323c7d20c40031451bb4b7d\"",
-"size": 805
-},
-"skills/llm-wiki/assets/pattern.md.template": {
-"etag": "\"98421ee95e423e9469ccdf6fb4d281ef\"",
-"size": 839
-},
-"skills/llm-wiki/assets/wiki-cache_gitignore.template": {
-"etag": "\"4954fe3f439337e5535185debf8fb3dd\"",
-"size": 14
-},
-"skills/llm-wiki/references/agent-memory-integration.md": {
-"etag": "\"97a0937a423512d1a145b4dbd0fd6a8a\"",
-"size": 6181
-},
-"skills/llm-wiki/references/architecture.md": {
-"etag": "\"b5d744f5218fa7047139d32faace633f\"",
-"size": 9852
-},
-"skills/llm-wiki/references/evolution-workflow.md": {
-"etag": "\"fe60b46e97389cbf0bf2cb926f8c34c5\"",
-"size": 20135
-},
-"skills/llm-wiki/references/graph-workflow.md": {
-"etag": "\"ac6cc911c5f7179b413870ea35169889\"",
-"size": 8373
-},
-"skills/llm-wiki/references/ingest-workflow.md": {
-"etag": "\"7e9b146c956d110651a9e43e4b5ec0b2\"",
-"size": 12357
-},
-"skills/llm-wiki/references/lint-workflow.md": {
-"etag": "\"297352c77a63ca61dcd0a8a0a69bce01\"",
-"size": 7232
-},
-"skills/llm-wiki/references/page-conventions.md": {
-"etag": "\"cd8e15fb6e74bbb4de8b013a29dc9861\"",
-"size": 5981
-},
-"skills/llm-wiki/references/query-workflow.md": {
-"etag": "\"e17d62378aa1942ca1457dbae74d6a77\"",
-"size": 7662
-},
-"skills/llm-wiki/references/retrieval-setup.md": {
-"etag": "\"7397d34a043fe44cacb855059aebb412\"",
-"size": 4163
-},
-"skills/llm-wiki/references/scaling-playbook.md": {
-"etag": "\"7b54283aff3ba6d874d8d55f65fdab02\"",
-"size": 7000
-},
-"skills/llm-wiki/scripts/init_wiki.py": {
-"etag": "\"563e9d257b7775aa9e3d0443924af5e0\"",
-"size": 9716
-},
-"skills/llm-wiki/scripts/setup_wiki.py": {
-"etag": "\"cf313b4fc076c1a678b806baa6b819a6\"",
-"size": 2610
-},
-"skills/llm-wiki/scripts/test_link_resolution.py": {
-"etag": "\"93e72cacbabed2a46e30c097cc2c10e8\"",
-"size": 6361
-},
-"skills/llm-wiki/scripts/wiki_evolve.py": {
-"etag": "\"b944989c6384e702aa1ba4bbe4616893\"",
-"size": 29799
-},
-"skills/llm-wiki/scripts/wiki_evolve_agent.py": {
-"etag": "\"e2ea323e2d2a2d4afd1b7cd7e897ab30\"",
-"size": 15504
-},
-"skills/llm-wiki/scripts/wiki_evolve_api.py": {
-"etag": "\"7defad6a3a9f3700d9748ef234f053f3\"",
-"size": 7168
-},
-"skills/llm-wiki/scripts/wiki_evolve_claude.py": {
-"etag": "\"e672b2f2a5bb8ae71ef6971247bce2e0\"",
-"size": 2411
-},
-"skills/llm-wiki/scripts/wiki_evolve_loop.py": {
-"etag": "\"f7dc807fb92ce045a4f6fb64c34d1c76\"",
-"size": 44430
-},
-"skills/llm-wiki/scripts/wiki_evolve_stream.py": {
-"etag": "\"c9e87ed8a4add11ae9c7641baa873c7c\"",
-"size": 13277
-},
-"skills/llm-wiki/scripts/wiki_graph_extract.py": {
-"etag": "\"0eefebbf64530f26f1b690afec883fb4\"",
-"size": 21552
-},
-"skills/llm-wiki/scripts/wiki_graph_lint.py": {
-"etag": "\"5c66758d3c2d9c2f7d05932cc8a726c2\"",
-"size": 16749
-},
-"skills/llm-wiki/scripts/wiki_graph_query.py": {
-"etag": "\"9ee1101f5b73e0ef2c52a5d2c048207b\"",
-"size": 9551
-},
-"skills/llm-wiki/scripts/wiki_graph_visualize.py": {
-"etag": "\"7fd79f9b4324ce15149c19c84b1c30c2\"",
-"size": 9347
-},
-"skills/llm-wiki/scripts/wiki_lint.py": {
-"etag": "\"0775a1981ba7825dc884c3a5a70569c9\"",
-"size": 14890
-},
-"skills/llm-wiki/scripts/wiki_search.py": {
-"etag": "\"3b8aa31671aa89e596261886f0586c05\"",
-"size": 32921
-},
-"skills/llm-wiki/scripts/wiki_stats.py": {
-"etag": "\"cbbc87777a01e509723b81049230e7aa\"",
-"size": 6011
+"skills/llm-wiki/scripts/llmwiki.sh": {
+"etag": "\"52f0c786fdd37411889ea202de9dcded\"",
+"size": 7553
 },
 "skills/luxalgo-indicator-writeup/SKILL.md": {
 "etag": "\"76d2e5470d2ee8233eda07906604fe71\"",
@@ -312,8 +172,8 @@
 "size": 2019
 },
 "skills/scholar-search/SKILL.md": {
-"etag": "\"f131a8303b7d1ced7a4978a923a5b025\"",
-"size": 6918
+"etag": "\"3be520e19822592d23b12c078d6e02a6\"",
+"size": 7022
 },
 "skills/scholar-search/scripts/scholar_search.py": {
 "etag": "\"2f443ed4c528e60b60b1ee05d7c44a3c\"",
@@ -638,5 +498,9 @@
 "skills/vol-regime-detector/SKILL.md": {
 "etag": "\"2f3cf4d5ec8a41f3f4aa681fcff8f9eb\"",
 "size": 256
+},
+"state/users/default/skills.json": {
+"etag": "\"dce1981473205e1203bc7efd4c4e58f6\"",
+"size": 279
 }
 }

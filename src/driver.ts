@@ -13,6 +13,9 @@ export interface SessionRow {
   /** One-line session title (LLM-refined fallback truncated first user
    *  message); null until the first turn's titler pass. */
   summary?: string | null;
+  /** Deep-research run status when the session has one (research_runs join);
+   *  null for ordinary chat sessions. */
+  research_status?: string | null;
 }
 
 /** One ranked recall hit — retriever-tagged for the hybrid fusion step. */

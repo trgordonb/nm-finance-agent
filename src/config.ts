@@ -39,6 +39,13 @@ export const SKILLS_STATE_DIR =
     ? path.resolve(process.env.SKILLS_STATE_DIR.trim())
     : path.resolve("./state");
 
+// The self-hosted llmwiki service the Wiki tab reads through /api/wiki/*
+// (read-only, allow-listed passthrough — see src/wiki-proxy.ts). The llm-wiki
+// skill's helper resolves the same service from its own .env; this is only the
+// server-side default for the proxy.
+export const WIKI_API_URL =
+  (process.env.WIKI_API_URL ?? "").trim() || "http://127.0.0.1:8010";
+
 // HARD_JAIL=1 refuses all fs writes/executes outside the workspace — the
 // posture for network-exposed deployments (SERVER_HOST=0.0.0.0 etc.).
 export const WORKSPACE_HARD_JAIL = ["1", "true", "yes", "on"].includes(
@@ -68,6 +75,31 @@ export const OPENROUTER_REASONING = (process.env.OPENROUTER_REASONING ?? "1") !=
 export const MAX_COMPLETION_TOKENS = Number(process.env.MAX_COMPLETION_TOKENS ?? "16384");
 export const BUDGET_TOOL_MAX_ITERATIONS = Number(process.env.BUDGET_TOOL_MAX_ITERATIONS ?? "25");
 export const EXECUTE_TIMEOUT_MS = Number(process.env.EXECUTE_TIMEOUT_MS ?? "120000");
+
+// --- Deep research mode (/research) ------------------------------------------
+// Port of thinkdepth-ai's research mode (docs/deep-research-plan.md). All
+// research LLM roles run on the single OPENROUTER_MODEL_MAIN (glm-5.3-flash)
+// through the existing chat() client — no per-role models, no multi-provider
+// fan-out for now. The page-summary LLM fallback uses the existing summarizer
+// model; Exa (EXA_API_KEY) is the first-choice summarizer.
+export const RESEARCH_MODE_ENABLED = (process.env.RESEARCH_MODE_ENABLED ?? "1") !== "0";
+export const RESEARCH_MAX_CONCURRENT = Number(process.env.RESEARCH_MAX_CONCURRENT ?? "3");
+export const RESEARCH_MAX_SUPERVISOR_ITERATIONS = Number(process.env.RESEARCH_MAX_SUPERVISOR_ITERATIONS ?? "15");
+export const RESEARCH_MAX_RESEARCHER_TURNS = Number(process.env.RESEARCH_MAX_RESEARCHER_TURNS ?? "8");
+export const RESEARCH_TOKEN_BUDGET = Number(process.env.RESEARCH_TOKEN_BUDGET ?? "2000000");
+export const RESEARCH_SEARCH_MAX_RESULTS = Number(process.env.RESEARCH_SEARCH_MAX_RESULTS ?? "3");
+export const RESEARCH_PAGE_CONTEXT_CHARS = Number(process.env.RESEARCH_PAGE_CONTEXT_CHARS ?? "60000");
+export const RESEARCH_LLM_MIN_INTERVAL_MS = Number(process.env.RESEARCH_LLM_MIN_INTERVAL_MS ?? "1200");
+export const RESEARCH_DEADLINE_MINUTES = Number(process.env.RESEARCH_DEADLINE_MINUTES ?? "0");
+export const RESEARCH_SAVE_REPORTS = (process.env.RESEARCH_SAVE_REPORTS ?? "1") !== "0";
+// Expose the research engine to the main agent as the `deep_research` tool
+// (default off: a run takes 20-40 minutes and real spend — the /research
+// prefix remains the primary invocation).
+export const RESEARCH_AS_TOOL = ["1", "true", "yes", "on"].includes(
+  (process.env.RESEARCH_AS_TOOL ?? "").trim().toLowerCase(),
+);
+export const EXA_API_KEY = process.env.EXA_API_KEY ?? "";
+export const EXA_SUMMARIZER_ENABLED = (process.env.EXA_SUMMARIZER ?? "on") !== "off";
 
 export const serverHost = process.env.SERVER_HOST || "127.0.0.1";
 export const serverPort = Number(process.env.SERVER_PORT || "3001");

@@ -19,7 +19,7 @@ import type { ChatMessage } from "./types.js";
 import { OPENROUTER_MODEL_SUMMARIZER } from "./config.js";
 import type { SessionHit } from "./driver.js";
 import { log } from "./logger.js";
-import { trace } from "./tracing.js";
+import { trace, llmRunMetadata, llmRunOutputs } from "./tracing.js";
 
 const SPECIAL_TOKEN_RE = /<\|[^|>]*\|>/g;
 const PSEUDO_TOOL_CALL_RE = /\[\s*(summarize|answer|condense|search)\s*\(/i;
@@ -54,6 +54,10 @@ export class SearchSummarizer {
           `[${i + 1}] session=${hit.session_id.slice(0, 8)} role=${hit.retriever} at=${hit.created_at}\n${hit.snippet}`,
       )
       .join("\n\n");
+    const messages: ChatMessage[] = [
+      { role: "system", content: SUMMARIZER_SYSTEM_PROMPT },
+      { role: "user", content: `QUERY: ${query}\n\nEXCERPTS:\n${excerpts}\n\nCondense now.` },
+    ];
     const rootId = trace.create({
       name: "session-search-summarize",
       runType: "chain",
@@ -63,15 +67,12 @@ export class SearchSummarizer {
     const llmId = trace.create({
       name: `condense[${this.label}]`,
       runType: "llm",
-      inputs: { model: OPENROUTER_MODEL_SUMMARIZER, excerpts: hits.length },
+      inputs: { messages },
       parent: rootId,
       tags: ["nm-finance-agent", "search-summarizer"],
+      metadata: llmRunMetadata(OPENROUTER_MODEL_SUMMARIZER),
     });
     const start = Date.now();
-    const messages: ChatMessage[] = [
-      { role: "system", content: SUMMARIZER_SYSTEM_PROMPT },
-      { role: "user", content: `QUERY: ${query}\n\nEXCERPTS:\n${excerpts}\n\nCondense now.` },
-    ];
     const run = chat(messages, undefined, {
       model: OPENROUTER_MODEL_SUMMARIZER,
       noReasoning: true,
@@ -79,7 +80,11 @@ export class SearchSummarizer {
     }).then((response) => {
       const elapsedMs = Date.now() - start;
       trace.update(llmId, {
-        outputs: { model: response.model, usage: response.usage, text: response.content },
+        outputs: llmRunOutputs(response.content, {
+          usage: response.usage,
+          message: { role: "assistant", content: response.content },
+        }),
+        metadata: llmRunMetadata(response.model, response.usage),
       });
       let text = response.content.replace(SPECIAL_TOKEN_RE, "").trim();
       if (PSEUDO_TOOL_CALL_RE.test(text)) {

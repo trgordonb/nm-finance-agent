@@ -62,6 +62,9 @@ function update(id: string, patch?: outputsLayer): void {
   const body: Record<string, unknown> = { end_time: new Date().toISOString() };
   if (patch?.outputs !== undefined) body.outputs = patch.outputs;
   if (patch?.error) body.error = patch.error;
+  // Completion-time metadata (e.g. usage_metadata) — PATCHed under
+  // extra.metadata, same as the SDK's runTree.metadata updates.
+  if (patch?.metadata !== undefined) body.extra = { metadata: patch.metadata };
   fetch(`${BASE_URL}/runs/${id}`, {
     method: "PATCH",
     headers: HEADERS,
@@ -73,6 +76,9 @@ function update(id: string, patch?: outputsLayer): void {
 export interface outputsLayer {
   outputs?: Record<string, unknown>;
   error?: string;
+  /** Completion-time metadata (merged by the server into extra.metadata) —
+   *  e.g. usage_metadata + ls_model_name once the response is known. */
+  metadata?: Record<string, unknown>;
 }
 
 /** No-op tracer preserving the create/update API shape when disabled. */
@@ -111,3 +117,46 @@ export const trace = {
   create: (spec: RunSpec) => impl.create(spec),
   update: (id: string, patch?: outputsLayer) => impl.update(id, patch),
 };
+
+// --- LLM payload conventions (SDK parity) ------------------------------------
+// The LangSmith UI renders LLM runs from full message inputs, a
+// generations-shaped outputs (with the assistant message), and
+// `usage_metadata` (+ ls_provider / ls_model_name) in the run metadata for its
+// token-count and cost panels. These helpers keep every call site on the same
+// shapes — the enrichment verified against the official SDK's captured
+// payloads (docs/deep-research-plan.md, trace-payload investigation).
+
+export interface RunUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+}
+
+/** Provider usage → LangSmith `usage_metadata` (undefined when zero/absent). */
+export function usageMetadata(usage?: RunUsage): Record<string, number> | undefined {
+  const input = usage?.prompt_tokens ?? 0;
+  const output = usage?.completion_tokens ?? 0;
+  if (!input && !output) return undefined;
+  return { input_tokens: input, output_tokens: output, total_tokens: input + output };
+}
+
+/** LLM-run metadata: model identity + usage (drives token/cost panels). */
+export function llmRunMetadata(model: string, usage?: RunUsage): Record<string, unknown> {
+  const metadata: Record<string, unknown> = { ls_provider: "openrouter", ls_model_name: model };
+  const tokens = usageMetadata(usage);
+  if (tokens) metadata.usage_metadata = tokens;
+  return metadata;
+}
+
+/** LLM-run outputs: a generations entry carrying the assistant message, plus
+ *  usage_metadata at the outputs level (the SDK sends it in both places). */
+export function llmRunOutputs(
+  text: string,
+  opts?: { usage?: RunUsage; message?: Record<string, unknown> },
+): Record<string, unknown> {
+  const outputs: Record<string, unknown> = {
+    generations: [{ text, ...(opts?.message ? { message: opts.message } : {}) }],
+  };
+  const tokens = usageMetadata(opts?.usage);
+  if (tokens) outputs.usage_metadata = tokens;
+  return outputs;
+}
