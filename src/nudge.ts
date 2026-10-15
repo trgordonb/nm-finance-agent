@@ -106,6 +106,7 @@ interface NudgeTool {
 /** One internal curation review over a completed turn (no user input).
  *  Tools are maintained by the caller (memory_manage + skill_manage + any
  *  cognitive-memory extras bound). Returns the one-line summary; never throws. */
+import { trace } from "./tracing.js";
 import type { SkillLibrary } from "./skills/library.js";
 
 export async function run_memory_nudge(
@@ -152,11 +153,30 @@ export async function run_memory_nudge(
     },
   ].filter((m): m is ChatMessage => m !== null);
 
+  const rootRun = trace.create({
+    name: "memory-nudge",
+    runType: "chain",
+    inputs: {
+      session: opts.sessionId ?? "",
+      messages: recentMessages.length,
+      tools: nudgeTools.map((t) => t.name),
+    },
+    tags: ["nm-finance-agent", "nudge"],
+  });
   const maxIters = 3; // python run_memory_nudge parity
+  const nudgeMeta = { sessionId: opts.sessionId, skillLibrary: opts.skillLibrary };
   let summary: string | undefined;
   for (let i = 0; i < maxIters; i++) {
+    const llmRun = trace.create({
+      name: `nudge-llm:${i + 1}`,
+      runType: "llm",
+      inputs: { messages: convo, tools: wire },
+      parent: rootRun,
+      tags: ["nm-finance-agent", "nudge"],
+    });
     try {
       const response = await mainModelChat(convo, wire);
+      trace.update(llmRun, { outputs: { model: response.model, usage: response.usage, text: response.content } });
       if (!response.toolCalls?.length) {
         summary = (response.content || "No memory updates.").trim().slice(0, 200) || "No memory updates.";
         break;
@@ -164,6 +184,13 @@ export async function run_memory_nudge(
       convo.push({ role: "assistant", content: response.content, tool_calls: response.toolCalls });
       for (const call of response.toolCalls) {
         const tool = toolMap.get(call.name);
+        const toolRun = trace.create({
+          name: call.name,
+          runType: "tool",
+          inputs: (call.args ?? {}) as Record<string, unknown>,
+          parent: rootRun,
+          tags: ["nm-finance-agent", "nudge"],
+        });
         let result: string;
         if (!tool) {
           result = `Rejected: unknown tool ${call.name} during nudge`;
@@ -174,13 +201,16 @@ export async function run_memory_nudge(
             result = `${call.name} failed: ${String(e).slice(0, 200)}`;
           }
         }
+        trace.update(toolRun, { outputs: { result }, error: result.startsWith("Error:") ? result.slice(0, 200) : undefined });
         convo.push({ role: "tool", content: result, tool_call_id: call.id, name: call.name });
       }
     } catch (e) {
-      // never raises by contract: nudge failures are log-only
-      return `nudge failed: ${String(e).slice(0, 160)}`;
+      const msg = `nudge failed: ${String(e).slice(0, 160)}`;
+      trace.update(rootRun, { outputs: { error: msg }, error: msg });
+      return msg;
     }
   }
   if (summary === undefined) summary = "Nudge reached its tool-call limit.";
+  trace.update(rootRun, { outputs: { summary, iterations: nudgeTools.length ? (run_memory_nudge as unknown as { iters?: number }).iters ?? 0 : 0 } });
   return summary.slice(0, 200);
 }

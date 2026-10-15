@@ -13,6 +13,7 @@
 
 import type { ToolDef } from "./types.js";
 import { log } from "./logger.js";
+import { trace } from "./tracing.js";
 
 export const NUDGE_AGENTDB_TOOLS = (process.env.NUDGE_AGENTDB_TOOLS ?? "reflexion_store,skill_create")
   .split(",")
@@ -53,15 +54,42 @@ export async function episodeRecallContext(
   if (!epTool) return "";
   const k = opts.k ?? AGENTDB_RECALL_K;
   const minSim = opts.minSim ?? AGENTDB_RECALL_MIN_SIMILARITY;
+  // LangSmith: the pre-flight retrieve runs OUTSIDE the agent turn tree, so
+  // without its own run it is invisible (user-visible gap 2026-10-15).
+  const runId = trace.create({
+    name: epTool.name,
+    runType: "tool",
+    inputs: { task: task.slice(0, 300), k },
+    tags: ["nm-finance-agent", "reflexion", "pre-flight"],
+  });
   let raw = "";
   try {
     raw = String(await epTool.execute({ task, k })).trim();
   } catch (e) {
     log.warn(`reflexion_retrieve failed: ${String(e).slice(0, 150)}`);
+    trace.update(runId, { error: String(e).slice(0, 160) });
     return "";
   }
   const sims = parseSimilarities(raw);
-  if (!sims.length || Math.max(...sims) < minSim) return "";
+  if (!sims.length || Math.max(...sims) < minSim) {
+    trace.update(runId, {
+      outputs: {
+        retrieved: sims.length > 0 || raw.includes("Task:"),
+        max_similarity: sims.length ? Math.max(...sims) : null,
+        injected: false,
+        gated: true,
+      },
+    });
+    return "";
+  }
+  trace.update(runId, {
+    outputs: {
+      retrieved: true,
+      max_similarity: Math.max(...sims),
+      injected: true,
+      episodes: sims.length,
+    },
+  });
   log.info(`episode recall: ${sims.length} episode(s), max similarity ${Math.max(...sims).toFixed(2)}`);
   return (
     "<episode_context>\n" +

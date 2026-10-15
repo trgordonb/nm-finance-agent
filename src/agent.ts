@@ -111,15 +111,25 @@ export class AgentLoop {
     let cancelled = false;
     const usage = { prompt_tokens: 0, completion_tokens: 0 };
 
+    const skillsList = getSkillLibrary().listSkills().map((s) => s.name);
+    const promptEpisodeContext = meta?.episodeContext ?? "";
     const turnRun = trace.create({
       name: "agent-turn",
       runType: "chain",
-      inputs: { message: userInput },
+      inputs: {
+        message: userInput,
+        // surrounding context the model actually saw (user-visible gap:
+        // only the query was recorded before)
+        history_messages: history.length,
+        memory_chars: this.memory.totalChars(),
+        skills: skillsList,
+        skills_index_chars: skillsList.length ? getSkillLibrary().renderIndex().length : 0,
+        episode_context_chars: promptEpisodeContext.length,
+        tool_count: this.tools.size,
+      },
       tags: ["nm-finance-agent"],
       metadata: {
         session_id: meta?.sessionId ?? "",
-        memory_chars: this.memory.totalChars(),
-        history_messages: history.length,
       },
     });
 
