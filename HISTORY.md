@@ -230,6 +230,27 @@ excerpts, 440 chars), stored into the archive; Tests: 49.
   parity). NOT stored in tool_call JSON — separate column, nullable.
   Tests: 46.
 
+## 2026-10-15 — Reflexion Gate-1 complete: per-turn auto-store hooks
+
+- User clarification verified against the pilot doc: python had
+  reflexion_store per-turn (model-invoked under the Gate-1 teaching
+  block; traces showed it under-fires — 14 sessions / 0 episodes
+  triggered escalations A+B) and reflexion_retrieve programmatic
+  pre-flight (escalation C). The TS port had B (nudge binding) and C
+  (pre-flight recall) but no deterministic per-turn store.
+- **src/reflexion.ts** — `maybeStoreReflexion`: after EVERY completed
+  turn, ONE cheap model review of the flattened transcript; a
+  lesson-worthy turn calls the bound agentdb_reflexion_store with
+  parsed args (tool-call OR raw-JSON path); no-lesson turns never
+  touch the store; fire-and-forget, never raises,
+  AGENTDB_REFLEXION_AUTOSTORE=0 kill-switch; LangSmith tree
+  (reflexion-autostore chain + review llm child + tool child).
+- **Live**: an agent lesson (dukascopy venv/PEP668 install pitfall)
+  produced episode #2 in workspace/agentdb-mcp.db via the auto-store
+  within one turn; the recall pre-flight then serves it on matching
+  turns. Nudge keeps prompt-memory curation; reflexion is per-turn.
+- Tests: 84
+
 ## 2026-10-10 — streaming fixes, recovery semantics, OpenRouter cutover, hybrid recall
 
 - **Incremental SSE streaming.** The chat endpoint was buffering everything

@@ -46,6 +46,7 @@ import { log } from "./logger.js";
 import { fallbackTitle, refineSessionTitle } from "./titler.js";
 import { NudgePolicy, run_memory_nudge } from "./nudge.js";
 import { NUDGE_AGENTDB_TOOLS, episodeRecallContext, EpisodeRecallCache } from "./agentdb-hooks.js";
+import { maybeStoreReflexion } from "./reflexion.js";
 import { createCompressor, type ConversationCompressor } from "./compression.js";
 import { createSessionSearchSummarizer } from "./summarizer.js";
 import { memory_manage } from "./tools/memory_manage.js";
@@ -468,6 +469,13 @@ app.post("/api/chat", (req, res) => {
         void mirror.recordTurn(sessionId, recordedTurn, persistable).catch(() => undefined);
         maybeTitleSession(sessionId, message, persistable);
         maybeExtractFollowups(sessionId, persistable);
+        // Gate-1 (per-turn): a lesson-worthy turn persists one reflexion
+        // episode via the bound agentdb_reflexion_store (fire-and-forget).
+        void maybeStoreReflexion(
+          sessionId,
+          persistable,
+          [...loop.tools.values()].find((t) => t.name.endsWith("reflexion_store")) ?? null,
+        ).catch(() => undefined);
         try {
           const nudgeSummary = await maybeNudge(sessionId, persistable);
           if (nudgeSummary) write("nudge", { summary: nudgeSummary });

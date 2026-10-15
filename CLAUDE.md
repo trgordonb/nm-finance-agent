@@ -47,6 +47,11 @@ nm-finance-agent/
 │   │                     #   persisted per assistant row; verbatim anchors; lineage)
 │   ├── nudge.ts          # NudgePolicy + prompt + flattenTranscript + run (tool loop)
 │   ├── titler.ts         # sync fallback + async refine (summarizer model, once)
+│   ├── reflexion.ts      # per-turn reflexion auto-store: ONE cheap review
+│   │                     #   of the flattened transcript post-turn; a
+│   │                     #   lesson-worthy turn calls agentdb_reflexion_
+│   │                     #   store (Gate-1, escalation-validated). Separate
+│   │                     #   from the nudge (prompt memory) by design
 │   ├── followups.ts      # regex prefilter → cheap LLM extraction → to-do strip
 │   ├── skills/           # library.ts (SkillLibrary core over skills/ working copy;
 │   │                     #   js-yaml frontmatter; toggles in SKILLS_STATE_DIR) +
