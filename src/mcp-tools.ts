@@ -126,7 +126,8 @@ export async function bindMcpTools(load: McpLoadResult): Promise<BindResult> {
       const matches = keepToolsFilter(keep);
       let bound = 0;
       for (const raw of rawTools) {
-        const namespaced = `${name}_${raw.name}`;
+        // self-prefixed tools (agentdb's own agentdb_* names) never double up
+        const namespaced = raw.name.startsWith(`${name}_`) ? raw.name : `${name}_${raw.name}`;
         if (!matches(namespaced)) continue;
         bound++;
         tools.push(toToolDef(namespaced, name, raw));

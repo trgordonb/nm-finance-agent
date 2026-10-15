@@ -45,6 +45,7 @@ import { enabled as tracingEnabled, TRACE_PROJECT } from "./tracing.js";
 import { log } from "./logger.js";
 import { fallbackTitle, refineSessionTitle } from "./titler.js";
 import { NudgePolicy, run_memory_nudge } from "./nudge.js";
+import { NUDGE_AGENTDB_TOOLS, episodeRecallContext, EpisodeRecallCache } from "./agentdb-hooks.js";
 import { createCompressor, type ConversationCompressor } from "./compression.js";
 import { createSessionSearchSummarizer } from "./summarizer.js";
 import { memory_manage } from "./tools/memory_manage.js";
@@ -103,6 +104,26 @@ if (compressor) log.info("context compression enabled");
 
 // Periodic nudge (learning loop curation; python maybe_nudge parity).
 import { chat } from "./llm.js";
+
+// Gate-1 escalation C: pre-flight episode recall (one-slot cache keyed by the
+// newest user message — mid-turn reuse avoids re-retrieval per agent step).
+// Namespaced MCP names double-prefix (agentdb_reflexion_retrieve) — match by
+// suffix rather than an exact key.
+const episodeRecallCache = new EpisodeRecallCache();
+const reflexionTool = () => [...loop.tools.values()].find((t) => t.name.endsWith("reflexion_retrieve")) ?? null;
+async function maybeEpisodeRecall(userInput: string): Promise<string> {
+  const cached = episodeRecallCache.get(userInput);
+  if (cached !== null) return cached;
+  try {
+    const block = await episodeRecallContext(userInput, reflexionTool());
+    episodeRecallCache.set(userInput, block);
+    if (block) log.info(`episode recall: injected ${block.length} chars`);
+    return block;
+  } catch (e) {
+    log.warn(`Episode recall failed: ${String(e).slice(0, 150)}`);
+    return "";
+  }
+}
 const nudgeInterval = Number(process.env.NUDGE_INTERVAL || "5");
 const nudgePolicy = new NudgePolicy(nudgeInterval);
 
@@ -111,10 +132,16 @@ async function maybeNudge(sessionId: string, newMessages: ChatMessage[]): Promis
   if (!nudgePolicy.shouldNudge(sessionId)) return undefined;
   nudgePolicy.markNudged(sessionId);
   const skillTool = loop.tools.get("skill_manage") ?? skill_manage;
-  const tools: Array<typeof memory_manage> = [memory_manage, skillTool].filter(
+  const cognitive = [...loop.tools.values()].filter((t) =>
+    NUDGE_AGENTDB_TOOLS.some((n) => t.name === n || t.name.endsWith(`_${n}`)),
+  ); // reflexion_store + skill_create (Gate-1 B)
+  const tools: Array<typeof memory_manage> = [memory_manage, skillTool, ...cognitive].filter(
     (t, i, arr) => arr.findIndex((x) => x.name === t.name) === i,
   ) as never;
-  return run_memory_nudge(newMessages, memory, tools as never, chat);
+  return run_memory_nudge(newMessages, memory, tools as never, chat, {
+    sessionId,
+    skillLibrary: getSkillLibrary(),
+  });
 }
 
 async function assembleRuntime(): Promise<McpReport> {
@@ -415,11 +442,13 @@ app.post("/api/chat", (req, res) => {
           });
         }
       }
+      // Gate-1 escalation C: inject similar prior episodes pre-flight
+      const episodeContext = await maybeEpisodeRecall(message);
       const turn = await loop.runTurn(
         history,
         message,
         () => controller.signal.aborted,
-        { sessionId, signal: controller.signal },
+        { sessionId, signal: controller.signal, episodeContext },
         // Stream each message as it lands — the UI sees tool calls/results
         // incrementally, not as one burst at `done` (python astream parity).
         (msg) => write("message", msg),

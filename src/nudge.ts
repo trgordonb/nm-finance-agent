@@ -106,12 +106,16 @@ interface NudgeTool {
 /** One internal curation review over a completed turn (no user input).
  *  Tools are maintained by the caller (memory_manage + skill_manage + any
  *  cognitive-memory extras bound). Returns the one-line summary; never throws. */
+import type { SkillLibrary } from "./skills/library.js";
+
 export async function run_memory_nudge(
   recentMessages: ChatMessage[],
   memory: PromptMemory,
   nudgeTools: NudgeTool[],
   mainModelChat: typeof chat,
+  opts: { sessionId?: string; skillLibrary?: SkillLibrary } = {},
 ): Promise<string> {
+  const hasAgentdb = nudgeTools.some((t) => t.name === "reflexion_store");
   if (!recentMessages.length) return "No memory updates.";
   const toolMap = new Map(nudgeTools.map((t) => [t.name, t]));
   const wire = nudgeTools.map((t) => ({
@@ -129,11 +133,24 @@ export async function run_memory_nudge(
       role: "system",
       content: `Current memory contents:\n${memory.load() || "(empty)"}`,
     },
+    (opts.skillLibrary ? { role: "system", content: `Current skills index:\n${opts.skillLibrary.renderIndex() || "(none)"}` } : null),
+    (hasAgentdb
+      ? {
+          role: "system",
+          content: (
+            "You may also persist a Reflexion episode via agentdb_reflexion_store for turns that " +
+            "involved error recovery, a user correction, or a non-obvious workflow worth " +
+            `recalling: args are session_id (${opts.sessionId || "derive a short stable slug from the task"}), ` +
+            "task, reward in [0,1], success (true/false), critique. skill_manage stays the " +
+            "home of reusable procedures; agentdb_reflexion_store records the episode itself."
+          ),
+        }
+      : null),
     {
       role: "user",
       content: `RECENT CONVERSATION TURN:\n\n${flattenTranscript(recentMessages)}\n\nReview it now and persist anything that clears the bar.`,
     },
-  ];
+  ].filter((m): m is ChatMessage => m !== null);
 
   const maxIters = 3; // python run_memory_nudge parity
   let summary: string | undefined;

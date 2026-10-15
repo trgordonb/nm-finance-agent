@@ -15,6 +15,7 @@ import type { SessionDriver } from "./driver.js";
 import type { AgentDbMirror } from "./agentdb-mirror.js";
 import { trace, llmRunMetadata, llmRunOutputs } from "./tracing.js";
 import { getSkillLibrary } from "./tools/skill_tools.js";
+import { agentdbCognitiveBlock } from "./agentdb-hooks.js";
 import type { SearchSummarizer } from "./summarizer.js";
 
 export function buildSystemPrompt(memoryBlock: string): string {  const base =
@@ -93,11 +94,15 @@ export class AgentLoop {
     history: ChatMessage[],
     userInput: string,
     shouldStop?: () => boolean,
-    meta?: { sessionId?: string; signal?: AbortSignal },
+    meta?: { sessionId?: string; signal?: AbortSignal; episodeContext?: string },
     onMessage?: (msg: ChatMessage) => void,
   ): Promise<TurnResult> {
     const messages: ChatMessage[] = [...history, { role: "user", content: userInput }];
-    const systemPrompt = buildSystemPrompt(this.memory.load());
+    const episodeContext = meta?.episodeContext ?? "";
+    const systemPrompt =
+      buildSystemPrompt(this.memory.load()) +
+      agentdbCognitiveBlock(this.tools.has("reflexion_store")) +
+      (episodeContext ? `\n${episodeContext}` : "");
     const wire = toWire([...this.tools.values()]);
     const toolNames = [...this.tools.keys()];
     const newSlice: ChatMessage[] = [];
