@@ -160,7 +160,9 @@ export async function extractFollowupsDirect(closingText: string): Promise<strin
   return extractFollowups(closingText);
 }
 
-/** Pull a JSON string array out of a model reply; [] on anything else. */
+/** Pull a JSON array out of a model reply; [] on anything else. String items
+ *  pass through; object items ({"action"/"text"/…} — free-model drift,
+ *  2026-10-16) contribute their first usable string value. */
 export function parseFollowups(raw: string, cap: number = MAX_ITEMS): string[] {
   const match = /\[[\s\S]*\]/.exec(raw);
   if (!match) return [];
@@ -172,13 +174,31 @@ export function parseFollowups(raw: string, cap: number = MAX_ITEMS): string[] {
   }
   const out: string[] = [];
   for (const item of Array.isArray(data) ? data : []) {
-    if (typeof item !== "string") continue;
-    const cleaned = item.replace(/\s+/g, " ").trim();
+    const text =
+      typeof item === "string"
+        ? item
+        : item && typeof item === "object"
+          ? firstStringValue(item as Record<string, unknown>)
+          : "";
+    const cleaned = String(text).replace(/\s+/g, " ").trim();
     if (cleaned.length < 4) continue;
     out.push(cleaned.slice(0, MAX_ITEM_CHARS));
     if (out.length >= cap) break;
   }
   return out;
+}
+
+/** First usable string value of an object-format item: known action-ish keys
+ *  first, then any string property in insertion order. */
+function firstStringValue(obj: Record<string, unknown>): string {
+  for (const key of ["action", "text", "step", "suggestion", "task", "item"]) {
+    const value = obj[key];
+    if (typeof value === "string" && value.trim()) return value;
+  }
+  for (const value of Object.values(obj)) {
+    if (typeof value === "string" && value.trim()) return value;
+  }
+  return "";
 }
 
 /** Free pre-filter: substantive closing text with a suggestion-shaped tail.
@@ -205,7 +225,13 @@ async function invokeExtractor(closingText: string, instruction: string, parentR
       })
     : undefined;
   try {
-    const response = await chat(payload, undefined, { model: OPENROUTER_MODEL_SUMMARIZER, noReasoning: true, maxTokens: 512 });
+    // 2048, not the original 512: the free summarizer model now spends
+    // 200-700 output tokens "thinking" before answering, and OpenRouter
+    // counts reasoning against max_tokens — at 512 every reply came back
+    // empty or truncated mid-JSON (measured live 2026-10-16: 512 →
+    // finish_reason=length, content "", reasoning_tokens 512/512;
+    // 2048 → complete answer, 186-629 reasoning tokens).
+    const response = await chat(payload, undefined, { model: OPENROUTER_MODEL_SUMMARIZER, noReasoning: true, maxTokens: 2048 });
     if (llmRun) {
       trace.update(llmRun, {
         outputs: llmRunOutputs(response.content, {

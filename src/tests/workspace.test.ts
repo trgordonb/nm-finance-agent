@@ -68,3 +68,44 @@ test("workspace tools: repo-internal write via absolute path is guarded", async 
   assert.match(sneaky, /^Rejected/);
   assert.ok(!fs.existsSync(abs));
 });
+
+test("fs tools: missing required args are recoverable and never touch 'undefined'", async () => {
+  const { edit_file, write_file, read_file, glob, grep } = await import("../tools/fs.js");
+
+  // The live miss (2026-10-16): edit_file called with only old/new strings —
+  // previously resolved a literal workspace/undefined path as a fatal ENOENT.
+  const edit = String(await edit_file.execute({ old_string: "a", new_string: "b" }));
+  assert.match(edit, /^Rejected: edit_file requires.*file_path/);
+  assert.match(edit, /old_string, new_string/);
+  assert.ok(!edit.startsWith("Error:"), "missing arg must not end the turn");
+
+  // Key-alias hint re-routes a path-vs-file_path mix-up in the same turn.
+  const alias = String(await edit_file.execute({ path: "x.py", old_string: "a", new_string: "b" }));
+  assert.match(alias, /Did you mean 'path' instead of 'file_path'\?/);
+
+  // write_file must never create workspace/undefined for a missing file_path.
+  const w = String(await write_file.execute({ content: "oops" }));
+  assert.match(w, /^Rejected: write_file requires.*file_path/);
+  assert.ok(!fs.existsSync(path.join(WORKSPACE_DIR, "undefined")), "no 'undefined' file may be created");
+  // missing content is rejected; an explicit empty string is allowed
+  assert.match(String(await write_file.execute({ file_path: "empty.txt" })), /^Rejected: write_file requires.*content/);
+  assert.match(String(await write_file.execute({ file_path: "empty.txt", content: "" })), /^Successfully wrote/);
+
+  assert.match(String(await read_file.execute({})), /^Rejected: read_file requires.*file_path/);
+  assert.match(String(await glob.execute({})), /^Rejected: glob requires.*pattern/);
+  assert.match(String(await grep.execute({})), /^Rejected: grep requires.*pattern/);
+});
+
+test("fs tools: missing-file and directory paths are recoverable (not Error:)", async () => {
+  const { edit_file, read_file, grep } = await import("../tools/fs.js");
+  // edit_file on a nonexistent file — was the fatal ENOENT class
+  const edit = String(await edit_file.execute({ file_path: "no/such/file.py", old_string: "x", new_string: "y" }));
+  assert.match(edit, /^Rejected: file does not exist/);
+  assert.ok(!edit.startsWith("Error:"));
+  // read_file pointed at a directory → EISDIR → recoverable
+  const dir = String(await read_file.execute({ file_path: "." }));
+  assert.match(dir, /^Rejected: .*directory/);
+  // grep with a missing path → recoverable
+  const g = String(await grep.execute({ pattern: "z", path: "no/such/dir" }));
+  assert.match(g, /^Rejected: path does not exist/);
+});

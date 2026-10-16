@@ -45,7 +45,7 @@ import { enabled as tracingEnabled, TRACE_PROJECT } from "./tracing.js";
 import { log } from "./logger.js";
 import { fallbackTitle, refineSessionTitle } from "./titler.js";
 import { NudgePolicy, run_memory_nudge } from "./nudge.js";
-import { NUDGE_AGENTDB_TOOLS, episodeRecallContext, EpisodeRecallCache } from "./agentdb-hooks.js";
+import { NUDGE_AGENTDB_TOOLS, episodeRecallContext, EpisodeRecallCache, buildRecallQuery } from "./agentdb-hooks.js";
 import { maybeStoreReflexion } from "./reflexion.js";
 import { createCompressor, type ConversationCompressor } from "./compression.js";
 import { createSessionSearchSummarizer } from "./summarizer.js";
@@ -112,11 +112,14 @@ import { chat } from "./llm.js";
 // suffix rather than an exact key.
 const episodeRecallCache = new EpisodeRecallCache();
 const reflexionTool = () => [...loop.tools.values()].find((t) => t.name.endsWith("reflexion_retrieve")) ?? null;
-async function maybeEpisodeRecall(userInput: string): Promise<string> {
+async function maybeEpisodeRecall(userInput: string, history: ChatMessage[]): Promise<string> {
   const cached = episodeRecallCache.get(userInput);
   if (cached !== null) return cached;
   try {
-    const block = await episodeRecallContext(userInput, reflexionTool());
+    // The bare message is often an anaphoric follow-up — recall against the
+    // enriched query (prev request + assistant tail) instead (2026-10-16 fix:
+    // bare "do the same to paper #5" scored 0.205, gated; enriched ~0.45).
+    const block = await episodeRecallContext(buildRecallQuery(userInput, history), reflexionTool());
     episodeRecallCache.set(userInput, block);
     if (block) log.info(`episode recall: injected ${block.length} chars`);
     return block;
@@ -444,7 +447,7 @@ app.post("/api/chat", (req, res) => {
         }
       }
       // Gate-1 escalation C: inject similar prior episodes pre-flight
-      const episodeContext = await maybeEpisodeRecall(message);
+      const episodeContext = await maybeEpisodeRecall(message, history);
       const turn = await loop.runTurn(
         history,
         message,

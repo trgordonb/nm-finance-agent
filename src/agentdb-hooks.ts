@@ -11,7 +11,7 @@
 // output (agentdb reflexion_retrieve format); below-threshold recall is a
 // silent no-injection. All calls are no-throw — episodes never break turns.
 
-import type { ToolDef } from "./types.js";
+import type { ChatMessage, ToolDef } from "./types.js";
 import { log } from "./logger.js";
 import { trace } from "./tracing.js";
 
@@ -41,6 +41,24 @@ export function parseSimilarities(raw: string): number[] {
     if (Number.isFinite(v)) out.push(v);
   }
   return out;
+}
+
+/** Build the pre-flight recall query. The bare user message is frequently an
+ *  anaphoric follow-up ("Now do the same to paper #5") whose standalone
+ *  similarity sits below the gate even when the right episode exists —
+ *  measured against the live store (OpenAlex session, 2026-10-16): bare
+ *  0.205 vs ~0.45 with context. Prepending the previous user request and a
+ *  tail of the assistant's last message restores enough context. Pure helper;
+ *  the recall cache still keys on the raw user message. */
+export function buildRecallQuery(message: string, history: ChatMessage[]): string {
+  const clean = (s: string | undefined) => String(s ?? "").trim();
+  const prevUser = [...history].reverse().find((m) => m.role === "user" && clean(m.content));
+  const prevAssistant = [...history].reverse().find((m) => m.role === "assistant" && clean(m.content));
+  const parts: string[] = [];
+  if (prevUser) parts.push(`Earlier request: ${clean(prevUser.content).slice(0, 300)}`);
+  if (prevAssistant) parts.push(`What the agent was doing: …${clean(prevAssistant.content).slice(-300)}`);
+  parts.push(clean(message));
+  return parts.join("\n");
 }
 
 /** Gate-1 escalation C: the pre-flight episode-recall block ("" when the

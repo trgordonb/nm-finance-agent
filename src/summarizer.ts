@@ -76,7 +76,10 @@ export class SearchSummarizer {
     const run = chat(messages, undefined, {
       model: OPENROUTER_MODEL_SUMMARIZER,
       noReasoning: true,
-      maxTokens: 1024,
+      // 2048, not 1024: same reasoning-budget drift as followups (2026-10-16)
+      // — this model spends hundreds of output tokens thinking before the
+      // condensation text, and reasoning counts against max_tokens.
+      maxTokens: 2048,
     }).then((response) => {
       const elapsedMs = Date.now() - start;
       trace.update(llmId, {

@@ -144,6 +144,16 @@ test("execute: foreground timeouts are recoverable (Rejected + background hint)"
   assert.ok(!out.includes("Error: Command timed out"), "timeouts must NOT end the turn");
 });
 
+test("execute: signal-killed commands are recoverable (Rejected + pkill self-match hint)", async () => {
+  const { execute } = await import("../tools/shell.js");
+  // `kill -TERM $$` makes the command's own bash die by SIGTERM — exactly the
+  // shape a `pkill -f <pattern>` self-match produces (live miss 2026-10-16).
+  const result = String(await execute.execute({ command: "kill -TERM $$" }));
+  assert.match(result, /^Rejected: the command was killed by SIGTERM/, "signal death is recoverable");
+  assert.match(result, /\[p\]attern/, "teaches the bracket trick");
+  assert.ok(!result.startsWith("Error:"), "signal deaths must NOT end the turn");
+});
+
 test("summarizer: env-gated factory + pseudo-tool guard + header shape", async () => {
   process.env.SEARCH_SUMMARIZER_ENABLED = "";
   const { createSessionSearchSummarizer } = await import("../summarizer.js");

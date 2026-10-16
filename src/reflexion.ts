@@ -30,7 +30,8 @@ const REVIEW_SYSTEM_PROMPT =
   "(short stable slug for the task), task (phrased like a retrievable " +
   "query describing the kind of task), reward (0-1 overall success), " +
   "success (boolean), critique (one terse paragraph on what to do/avoid " +
-  "next time). If the turn has NO lesson, reply exactly: no episode";
+  "next time). Invoke it through the tool interface — never as plain text " +
+  "or XML. If the turn has NO lesson, reply exactly: no episode";
 
 export async function maybeStoreReflexion(
   sessionId: string,
@@ -63,7 +64,14 @@ export async function maybeStoreReflexion(
     tags: ["nm-finance-agent", "reflexion"],
   });
   try {
-    const response = await chatFn(payload, undefined, { noReasoning: true });
+    const response = await chatFn(
+      payload,
+      // Bind the store tool so the model emits a real provider tool call; the
+      // text fallbacks in parseEpisodeArgs cover models that still imitate
+      // one in prose/XML (GLM emitted both formats live, 2026-10-16).
+      [{ name: storeTool.name, description: storeTool.description, parameters: storeTool.parameters }],
+      { noReasoning: true },
+    );
     trace.update(llmRun, { outputs: { model: response.model, usage: response.usage, text: response.content } });
     const text = response.content.trim();
     if (/^no episode\b/i.test(text) || /\bno episode\b/i.test(text.slice(0, 30))) {
@@ -97,7 +105,10 @@ export async function maybeStoreReflexion(
   }
 }
 
-/** Pull episode args from a raw JSON block in the model text, if present. */
+/** Pull episode args from the model text. Two formats observed live (GLM):
+ *  a raw JSON block, and a textual pseudo tool call emitting
+ *  `<arg_key>K</arg_key><arg_value>V</arg_value>` pairs — both parse here.
+ *  (The caller prefers real provider tool calls when present.) */
 export function parseEpisodeArgs(text: string): {
   session_id?: string;
   task?: string;
@@ -105,13 +116,33 @@ export function parseEpisodeArgs(text: string): {
   success?: boolean;
   critique?: string;
 } | null {
+  // 1) JSON block containing "task".
   const m = /\{[\s\S]*"task"[\s\S]*\}/i.exec(text);
-  if (!m) return null;
-  try {
-    const obj = JSON.parse(m[0]) as Record<string, unknown>;
-    if (obj && typeof obj.task === "string") return obj as never;
-    return null;
-  } catch {
-    return null;
+  if (m) {
+    try {
+      const obj = JSON.parse(m[0]) as Record<string, unknown>;
+      if (obj && typeof obj.task === "string") return obj as never;
+    } catch {
+      /* fall through to the textual tool-call format */
+    }
   }
+  // 2) Textual tool call: <arg_key>task</arg_key><arg_value>…</arg_value>.
+  const pairs = [
+    ...text.matchAll(/<arg_key>\s*([A-Za-z_][\w]*)\s*<\/arg_key>\s*<arg_value>([\s\S]*?)<\/arg_value>/g),
+  ];
+  if (!pairs.length) return null;
+  const obj: Record<string, unknown> = {};
+  for (const pair of pairs) {
+    const key = pair[1];
+    const value = (pair[2] ?? "").trim();
+    if (key === "reward") {
+      const n = Number(value);
+      if (Number.isFinite(n)) obj.reward = n;
+    } else if (key === "success") {
+      obj.success = /^true$/i.test(value);
+    } else {
+      obj[key] = value;
+    }
+  }
+  return typeof obj.task === "string" ? (obj as never) : null;
 }

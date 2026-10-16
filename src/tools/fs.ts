@@ -1,12 +1,38 @@
 // Filesystem tools: ls / read_file / write_file / edit_file / glob / grep.
 // Port of langgraph-demo tools.py (minus the subprocess-based ls for speed).
-// Same failure convention: catch and return "Error: ..." strings.
+// Failure convention: recoverable wrong-args/wrong-path → `Rejected:` with
+// guidance; fatal `Error:` stays reserved for system-level failures.
 
 import fs from "node:fs";
 import path from "node:path";
 import type { ToolDef } from "../types.js";
 import { resolveInWorkspace, guardWorkspaceWrite } from "../workspace.js";
 import { SKILLS_DIR } from "../config.js";
+
+/** Recoverable denial for missing/wrong-typed required arguments — the model
+ *  re-routes in the same turn (live miss 2026-10-16: edit_file called with
+ *  only old/new strings resolved a literal "workspace/undefined" path and
+ *  surfaced a fatal ENOENT, aborting the turn). `aliases` names plausible
+ *  alternative keys the model may have used; `allowEmpty` permits "" (e.g.
+ *  new_string for deletions, content for empty files). */
+function requireArgs(
+  tool: string,
+  args: Record<string, unknown>,
+  required: Array<{ key: string; aliases?: string[]; allowEmpty?: boolean }>,
+): string | null {
+  for (const { key, aliases, allowEmpty } of required) {
+    const value = args[key];
+    if (typeof value === "string" && (allowEmpty || value.trim() !== "")) continue;
+    const usedAlias = aliases?.find((a) => typeof args[a] === "string" && String(args[a]).trim() !== "");
+    const hint = usedAlias ? ` Did you mean '${usedAlias}' instead of '${key}'?` : "";
+    const got = Object.keys(args).join(", ") || "(none)";
+    return (
+      `Rejected: ${tool} requires the '${key}' argument (${allowEmpty ? "string" : "non-empty string"}) — ` +
+      `call it again with all required arguments. Keys received: ${got}.${hint}`
+    );
+  }
+  return null;
+}
 
 export const ls: ToolDef = {
   name: "ls",
@@ -72,12 +98,19 @@ export const read_file: ToolDef = {
     required: ["file_path"],
   },
   execute(args) {
+    const bad = requireArgs("read_file", args, [
+      { key: "file_path", aliases: ["path", "filepath", "filePath", "file", "filename"] },
+    ]);
+    if (bad) return bad;
     try {
       return fs.readFileSync(resolveInWorkspace(String(args.file_path)), "utf8");
     } catch (e) {
-      const missing = (e as NodeJS.ErrnoException).code === "ENOENT";
-      if (missing) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
         return `Rejected: file does not exist — verify the path with ls/glob first.`;
+      }
+      if (code === "EISDIR") {
+        return `Rejected: that path is a directory — point file_path at a file (ls it first).`;
       }
       return `Error: ${(e as Error).message}`;
     }
@@ -101,6 +134,11 @@ export const write_file: ToolDef = {
     required: ["file_path", "content"],
   },
   execute(args) {
+    const bad = requireArgs("write_file", args, [
+      { key: "file_path", aliases: ["path", "filepath", "filePath", "file", "filename"] },
+      { key: "content", aliases: ["text", "body", "data"], allowEmpty: true },
+    ]);
+    if (bad) return bad;
     const p = resolveInWorkspace(String(args.file_path));
     const deny = guardWorkspaceWrite(p);
     if (deny && !args.allow_outside) return deny;
@@ -132,27 +170,40 @@ export const edit_file: ToolDef = {
     required: ["file_path", "old_string", "new_string"],
   },
   execute(args) {
+    const bad = requireArgs("edit_file", args, [
+      { key: "file_path", aliases: ["path", "filepath", "filePath", "file", "filename"] },
+      { key: "old_string", aliases: ["oldString", "old", "find", "search", "old_text"] },
+      { key: "new_string", aliases: ["newString", "new", "replace", "replacement", "new_text"], allowEmpty: true },
+    ]);
+    if (bad) return bad;
     const p = resolveInWorkspace(String(args.file_path));
-      const deny = guardWorkspaceWrite(p);
-      if (deny && !args.allow_outside) return deny;
-      try {
-        const content = fs.readFileSync(p, "utf8");
-        const oldString = String(args.old_string ?? "");
-        const newText = String(args.new_string ?? "");
-        const match = findFlex(content, oldString);
-        if (!match) {
-          // Wrong-args class failure: the model can re-read and correct the
-          // edit — recoverable, must NOT end the turn (our "Error:" fatality
-          // is reserved for system-level failures).
-          return `Rejected: old_string not found in file — the file may have changed or the text is not an exact match (whitespace matters); re-read the relevant part of ${p} and retry with corrected text or a smaller unique match.`;
-        }
-        const updated = content.slice(0, match.start) + newText + content.slice(match.end);
-        fs.writeFileSync(p, updated, "utf8");
-        return `Successfully edited ${p}`;
-      } catch (e) {
-        return `Error: ${(e as Error).message}`;
+    const deny = guardWorkspaceWrite(p);
+    if (deny && !args.allow_outside) return deny;
+    try {
+      const content = fs.readFileSync(p, "utf8");
+      const oldString = String(args.old_string ?? "");
+      const newText = String(args.new_string ?? "");
+      const match = findFlex(content, oldString);
+      if (!match) {
+        // Wrong-args class failure: the model can re-read and correct the
+        // edit — recoverable, must NOT end the turn (our "Error:" fatality
+        // is reserved for system-level failures).
+        return `Rejected: old_string not found in file — the file may have changed or the text is not an exact match (whitespace matters); re-read the relevant part of ${p} and retry with corrected text or a smaller unique match.`;
       }
-    },
+      const updated = content.slice(0, match.start) + newText + content.slice(match.end);
+      fs.writeFileSync(p, updated, "utf8");
+      return `Successfully edited ${p}`;
+    } catch (e) {
+      const code = (e as NodeJS.ErrnoException).code;
+      if (code === "ENOENT") {
+        return `Rejected: file does not exist (${p}) — verify the path with ls/glob first, or use write_file to create it.`;
+      }
+      if (code === "EISDIR") {
+        return `Rejected: that path is a directory — point file_path at a file (ls it first).`;
+      }
+      return `Error: ${(e as Error).message}`;
+    }
+  },
 };
 
 export const glob: ToolDef = {
@@ -168,9 +219,11 @@ export const glob: ToolDef = {
     required: ["pattern"],
   },
   execute(args) {
+    const bad = requireArgs("glob", args, [{ key: "pattern", aliases: ["glob", "query"] }]);
+    if (bad) return bad;
     try {
       const base = resolveInWorkspace(String(args.path ?? ""));
-      const pattern = String(args.pattern ?? "*");
+      const pattern = String(args.pattern);
       const re = globToRegex(pattern);
       const out: string[] = [];
       walk(base, 4, (rel, abs) => {
@@ -197,8 +250,10 @@ export const grep: ToolDef = {
     required: ["pattern"],
   },
   execute(args) {
+    const bad = requireArgs("grep", args, [{ key: "pattern", aliases: ["query", "regex", "search", "text"] }]);
+    if (bad) return bad;
     try {
-      const pattern = String(args.pattern ?? "");
+      const pattern = String(args.pattern);
       const base = resolveInWorkspace(String(args.path ?? ""));
       const filePattern = String(args.file_pattern ?? "");
       const reSpec = /.*[*?].*/.test(pattern) ? null : new RegExp(escapeRegex(pattern), "i");
@@ -223,6 +278,9 @@ export const grep: ToolDef = {
       else walk(base, 6, (rel, abs) => searchFile(abs));
       return out.length ? out.slice(0, 200).join("\n") : "No matches found";
     } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") {
+        return `Rejected: path does not exist (${String(args.path ?? "the workspace")}) — list the parent with ls first.`;
+      }
       return `Error: ${(e as Error).message}`;
     }
   },

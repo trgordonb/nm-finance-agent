@@ -80,6 +80,16 @@ test("followups: parseFollowups JSON-array extraction + status: no false positiv
   );
   assert.deepEqual(parseFollowups("no json here"), []);
   assert.deepEqual(parseFollowups("[\"try it\",\"x\"]", 1), ["try it"], "cap respected");
+  // object-format items (free-model drift, 2026-10-16): known key first,
+  // then any first string value; unusable objects are skipped
+  assert.deepEqual(
+    parseFollowups('[{"action": "Run the US out-of-sample demo", "context": "why"}]'),
+    ["Run the US out-of-sample demo"],
+  );
+  assert.deepEqual(parseFollowups('[{"what": "Check the fills"}]'), ["Check the fills"]);
+  assert.deepEqual(parseFollowups('[{"n": 3}, {"ok": "Do the thing"}]'), ["Do the thing"]);
+  // fenced variant (the retry instruction produced this live)
+  assert.deepEqual(parseFollowups('```json\n["Trim the window"]\n```'), ["Trim the window"]);
   // prefilter: needs marker + 80 chars
   assert.equal(looksLikeFollowups("short. next steps only"), false);
   assert.equal(looksLikeFollowups("a".repeat(200)), false, "no marker");

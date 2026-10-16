@@ -12,7 +12,9 @@ export const execute: ToolDef = {
   name: "execute",
   description:
     "Execute a shell command (120s timeout) with CWD = the workspace dir; relative outputs land there. " +
-    "Skill scripts: use the ABSOLUTE paths from SKILL.md (or `cd $SKILLS_DIR`). Source dirs stay protected.",
+    "Skill scripts: use the ABSOLUTE paths from SKILL.md (or `cd $SKILLS_DIR`). Source dirs stay protected. " +
+    "Stopping a background job: use a pidfile or the bracket trick (`pkill -f '[p]attern'`) — " +
+    "a plain `pkill -f pattern` also matches this command's own shell and kills it mid-run.",
   parameters: {
     type: "object",
     properties: {
@@ -49,9 +51,25 @@ export const execute: ToolDef = {
         const parts: string[] = [];
         if (stdout) parts.push(`Output:\n${stdout}`);
         if (stderr) parts.push(`Error output:\n${stderr}`);
+        // Signal death (SIGTERM/SIGKILL/…, no numeric exit): recoverable, the
+        // model re-plans. The classic cause is a `pkill -f <pattern>`
+        // self-match — execute runs the whole command as `bash -c "<cmd>"`,
+        // so the pattern sits in that shell's own argv (live miss 2026-10-16:
+        // the self-match killed its own shell mid-command → signal death →
+        // previously classified fatal `Error:` → the turn aborted).
+        if (err && !numericExit && err.signal) {
+          return resolve(
+            `Rejected: the command was killed by ${err.signal} before finishing. ` +
+              "A common cause: `pkill -f <pattern>` also matches this command's own shell " +
+              "(the pattern is in its argv). Retry with the bracket trick " +
+              "(`pkill -f '[p]attern'`) or track the job via a pidfile " +
+              "(`nohup <cmd> > out.log 2>&1 & echo $! > run.pid`, then `kill $(cat run.pid)`)." +
+              (parts.length ? `\n${parts.join("\n")}` : ""),
+          );
+        }
         // Nonzero exit is information for the model, not a fatal turn-ender
         // (parity with the Python harness: subprocess output window only).
-        // Fatal "Error:" is reserved for timeouts and spawn failures.
+        // Fatal "Error:" is reserved for genuine spawn failures.
         if (err && !numericExit) return resolve(`Error: ${err.message.slice(0, 300)}`);
         if (numericExit) parts.push(`Exit code: ${err.code}`);
         // Skill-script class miss: cwd is the WORKSPACE, but skill SKILL.md

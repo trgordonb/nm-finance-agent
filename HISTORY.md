@@ -251,6 +251,80 @@ excerpts, 440 chars), stored into the archive; Tests: 49.
   turns. Nudge keeps prompt-memory curation; reflexion is per-turn.
 - Tests: 84
 
+## 2026-10-16 — Reflexion recall fix: context-enriched query + autostore parse
+
+- **Diagnosis** (3-turn OpenAlex session): the pre-flight recall DID find the
+  just-stored episode (top-1, reproduced to the digit against the live store)
+  but scored it 0.205 — under the 0.35 gate. Root cause: the recall query was
+  the raw user message, an anaphoric follow-up ("Now do the same to paper
+  #5"); agentdb embeds `task + critique (+ output)` (verbatim self-query
+  maxes at 0.733), so bare short queries sit far below the gate while
+  irrelevant candidates stay ≤0.31. Not a store/retrieve bug.
+- **Fix 1 — enriched recall query** (`buildRecallQuery` in
+  src/agentdb-hooks.ts, wired through index.ts): previous user request
+  (≤300 chars) + assistant-message tail (≤300) + current message; the recall
+  cache still keys on the raw message. Measured live: bare 0.205 → enriched
+  **0.593** (runner-up 0.306).
+- **Fix 2 — autostore parse robustness** (src/reflexion.ts): the review call
+  now binds the store tool (it was tools-less, so the provider tool-call path
+  could never fire — turn 2 stored on a lucky JSON emission while turns 1+3
+  emitted `<tool_call><arg_key>…` XML and were silently dropped);
+  `parseEpisodeArgs` now also parses the textual `<arg_key>/<arg_value>`
+  format; the prompt demands the tool interface.
+- Tests 86 (buildRecallQuery composition/caps; XML parse; provider tool-call
+  routing + store-tool binding assertion).
+
+## 2026-10-16 — Followups extractor revival: reasoning-budget drift
+
+- **Symptom**: every turn's `followups-extract` returned 0 items all day
+  (last stored tips were Oct 13), with `output_tokens=512` on every
+  `extract[llm]` call — content empty or cut mid-JSON.
+- **Root cause** (replayed live against OpenRouter): the free summarizer
+  model (liquid/lfm-2.5-2.6b:free) now spends 200-700 output tokens
+  "thinking" before answering, and reasoning counts against `max_tokens`
+  (512 → finish_reason=length, content "", reasoning_tokens 512/512;
+  `noReasoning: true` only omits the request param — it can't stop the
+  model). Model-side drift: Oct 15 was already marginal (2 of 5 failed).
+- **Fix**: extraction cap 512 → 2048 (content needs ~100-200 tokens);
+  `parseFollowups` also accepts object-format items (`{"action": …}` or
+  first string value — observed 1-in-3 samples at temp 1.0); preventive
+  bump on the search-condenser cap (1024 → 2048, same model/pattern).
+  Live check: today's closing message that yielded 0 items now extracts 2
+  through the real pipeline.
+- Tests 86 (object/fenced-array parse cases).
+
+## 2026-10-16 — execute: signal deaths are recoverable (pkill self-match)
+
+- Live miss (session 121f1589 t3): the agent stopped its backgrounded
+  backtest driver with `pkill -f shr_driver_holdout; sleep 1; cd … && grep …`
+  — `pkill -f` matches full command lines, and execute runs the whole
+  command as `bash -c "<cmd>"`, so the pattern sits in that shell's own
+  argv: the shell was SIGTERM'd mid-command (the inspection tail never ran).
+  Signal deaths carry `err.code = null, err.signal = SIGTERM`, which the
+  old `!numericExit` check classified as fatal `Error:` — the turn aborted
+  (first occurrence ever). The driver itself was stopped correctly.
+- Fix: `err.signal` without a numeric exit → `Rejected:` with the bracket
+  trick + pidfile recipe (+ partial output when present); `Error:` stays
+  reserved for genuine spawn failures. The `execute` description teaches
+  the safe stop recipe up front.
+- Tests 87 (`kill -TERM $$` → Rejected + hint — a real signal death).
+
+## 2026-10-16 — fs tools: required-arg denials + recoverable path errors
+
+- Live miss (session 121f1589 t4): `edit_file` called with only old/new
+  strings (no `file_path`) resolved a literal `workspace/undefined` path →
+  ENOENT → fatal `Error:` → the turn aborted. The model had just tagged the
+  edit into a long backtest thread and dropped one key.
+- Fix (class-wide `requireArgs` guard on read_file / write_file / edit_file /
+  glob / grep): missing/non-string/empty required args → `Rejected:` with the
+  keys received plus a "did you mean 'path' instead of 'file_path'?" alias
+  hint (camelCase variants included). Adjacent hazards closed: write_file can
+  no longer silently create `workspace/undefined`, missing `content` is denied
+  (explicit "" still allowed), edit_file ENOENT/EISDIR, read_file EISDIR and
+  grep-on-missing-path are now `Rejected:` instead of fatal `Error:`.
+- Tests 89 (missing-arg matrix incl. a no-'undefined'-file assertion;
+  missing-file/directory recovery).
+
 ## 2026-10-10 — streaming fixes, recovery semantics, OpenRouter cutover, hybrid recall
 
 - **Incremental SSE streaming.** The chat endpoint was buffering everything
