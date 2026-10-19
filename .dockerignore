@@ -1,0 +1,19 @@
+# Docker build-context hygiene for container/Dockerfile (context = repo root).
+# Everything the image needs (package.json, package-lock.json, container/) is
+# kept; the rest of the working tree is not.
+.git
+.codegraph
+.omni
+node_modules
+frontend
+workspace
+state
+skills
+memories
+dist
+*.db
+*.db-shm
+*.db-wal
+*.bak
+.env
+.env.*

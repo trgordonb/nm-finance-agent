@@ -1,11 +1,13 @@
 // Mirror sidecar — the ONLY process that touches native memory-hogs.
 //
-// Why: both native layers reserve colossal virtual-address mappings —
-// onnxruntime's arena ~40GB and the ruvector HNSW lib ~12GB in guards — and a
-// process carrying such reservations cannot fork() (child candidates die with
-// spawn ENOMEM; verified live 2026-10-10). The Express server must therefore
-// never import either. This child forks early while small, loads ruvector +
-// onnx, serves JSON-lines, and never spawns anything.
+// Why: the natives carry big virtual-address reservations — ruvector HNSW
+// preallocates for its maxElements hint (wrapper default 10M ≈ 35GB VA,
+// measured 2026-10-18; capped here via AGENTDB_MAX_ELEMENTS, default 100k
+// ≈ 1.4GB) and onnxruntime adds ~1GB (MiniLM) — and a process carrying the
+// 10M default fails fork()/spawn ENOMEM (verified live 2026-10-10, reproduced
+// 2026-10-18). The Express server must therefore never import either. This
+// child forks early while small, loads ruvector + onnx, serves JSON-lines,
+// and never spawns anything.
 //
 // Protocol (stdin/stdout, one JSON object per line):
 //   ready1400: {"ready":true}
@@ -50,6 +52,10 @@ async function main(): Promise<void> {
   let records = 0;
   const MODEL = process.env.AGENTDB_EMBED_MODEL || "Xenova/all-MiniLM-L6-v2";
   const DIM = 384;
+  // HNSW preallocation hint (the index auto-grows past it, so this is a
+  // VA/commit trade, not a hard cap). The wrapper's fallback reserves for 10M
+  // vectors (~35GB VA); 100k ≈ 1.4GB.
+  const MAX_ELEMENTS = Math.max(1, Number(process.env.AGENTDB_MAX_ELEMENTS ?? "100000") || 100000);
 
   const write = (obj: unknown) => process.stdout.write(JSON.stringify(obj) + "\n");
 
@@ -69,7 +75,14 @@ async function main(): Promise<void> {
         const ruv = await import("ruvector");
         const VectorDB = ruv.VectorDB;
         if (!VectorDB) throw new Error("no VectorDB export in ruvector");
-        db = new VectorDB({ dimensions: DIM, distanceMetric: "cosine", storagePath: String(req.path ?? "./agent-mirror.db") }) as unknown as RustDb;
+        db = new VectorDB({
+          dimensions: DIM,
+          distanceMetric: "cosine",
+          storagePath: String(req.path ?? "./agent-mirror.db"),
+          // hnswConfig is the wrapper's only capacity knob (options.maxElements
+          // is ignored): documented HNSW defaults + bounded maxElements.
+          hnswConfig: { m: 32, efConstruction: 200, efSearch: 100, maxElements: MAX_ELEMENTS },
+        }) as unknown as RustDb;
         const { EmbeddingService } = await import("agentdb/controllers/EmbeddingService");
         const svc = new EmbeddingService({
           model: MODEL,

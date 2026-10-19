@@ -1,13 +1,16 @@
-// AgentDbMirror: client side of the mirror sidecar (mirror-child.ts).
-// The SQLite archive stays the authoritative store (acknowledged gaps G1/G3
-// of the migration study); the mirror only ADDS what the archive lacks —
-// per-message embeddings for semantic session recall — enabling dual-source
-// hybrid search before any cutover decision.
+// AgentDbMirror: client side of the mirror sidecar (mirror-child.ts) or, when
+// AGENTDB_REMOTE_URL is set, of the container mirror (container/README.md) —
+// two transports, one contract. The SQLite archive stays the authoritative
+// store (acknowledged gaps G1/G3 of the migration study); the mirror only
+// ADDS what the archive lacks — per-message embeddings for semantic session
+// recall — enabling dual-source hybrid search before any cutover decision.
 //
-// Both natives (onnx arena ~40GB VA, ruvector HNSW ~12GB guards) are carried
-// ONLY by the sidecar process: a process with those reservations cannot
-// fork() (spawn ENOMEM — verified live 2026-10-10), so the Express server
-// imports neither. See mirror-child.ts for the JSON-lines protocol.
+// Both natives are carried ONLY by the sidecar process: ruvector HNSW
+// preallocates for its maxElements hint — capped by mirror-child via
+// AGENTDB_MAX_ELEMENTS (default 100k ≈ 1.4GB VA; the wrapper default of 10M
+// ≈ 35GB VA makes fork()/spawn fail ENOMEM, verified live 2026-10-10 and
+// reproduced 2026-10-18) — plus onnxruntime (~1GB for MiniLM). The Express
+// server imports neither. See mirror-child.ts for the JSON-lines protocol.
 //
 // Failure semantics: initialize() degrades (mirror off, reason recorded);
 // recordTurn()/search() are no-throw. The archive never depends on the mirror.
@@ -43,9 +46,22 @@ interface SidecarMsg {
   hits?: MirrorHit[];
 }
 
+type RemoteMsg = SidecarMsg & {
+  ready?: boolean;
+  running?: boolean;
+  stats?: { records?: number; stored?: number | null; ready?: boolean };
+};
+
 const MODEL = "Xenova/all-MiniLM-L6-v2";
 const REQUEST_TIMEOUT_MS = Number(process.env.AGENTDB_REQUEST_TIMEOUT_MS ?? "180000");
 const SIDECAR_READY_TIMEOUT_MS = Number(process.env.AGENTDB_SIDECAR_READY_MS ?? "120000");
+// Remote container mirror (Cloudflare — see container/README.md): when the URL
+// is set the local sidecar is skipped entirely; the same JSON protocol rides
+// HTTPS. The boot probe is cheap and does NOT start the container — the first
+// data call pays the cold start (within REQUEST_TIMEOUT_MS).
+const REMOTE_URL = (process.env.AGENTDB_REMOTE_URL ?? "").trim().replace(/\/+$/, "");
+const REMOTE_TOKEN = (process.env.AGENTDB_REMOTE_TOKEN ?? "").trim();
+const REMOTE_STATUS_TIMEOUT_MS = Number(process.env.AGENTDB_REMOTE_STATUS_MS ?? "10000");
 
 interface Waiter {
   resolve: (m: SidecarMsg) => void;
@@ -64,10 +80,12 @@ export class AgentDbMirror {
   private readyResolve?: () => void;
   private readyFail?: (e: Error) => void;
   private readonly dbPath: string;
+  private readonly remoteUrl: string;
 
   constructor(dbPath?: string) {
     const p = dbPath ?? process.env.AGENTDB_PATH ?? "./agent-mirror.db";
     this.dbPath = path.isAbsolute(p) ? p : path.resolve(process.cwd(), p);
+    this.remoteUrl = REMOTE_URL;
   }
 
   /** Async init — degrades to a disabled no-op when the sidecar can't start.
@@ -83,6 +101,9 @@ export class AgentDbMirror {
       this.initialized = true;
       this.status.reason = "disabled by env";
       return this.status;
+    }
+    if (this.remoteUrl) {
+      return this.initializeRemote();
     }
     try {
       this.startSidecar();
@@ -109,13 +130,39 @@ export class AgentDbMirror {
     }
   }
 
+  /** Remote container mirror: a /status probe only — the container may be
+   *  asleep and must not be woken at boot (first use pays the cold start).
+   *  Same degradation contract as the sidecar path. */
+  private async initializeRemote(): Promise<MirrorStatus> {
+    try {
+      const st = await this.remote("/status", { timeoutMs: REMOTE_STATUS_TIMEOUT_MS });
+      const stored = Number(st.stats?.stored ?? st.stats?.records ?? 0) || 0;
+      this.records = stored;
+      this.status.enabled = true;
+      this.status.reason = undefined;
+      this.status.model = MODEL;
+      this.status.path = this.remoteUrl;
+      this.status.records = stored;
+      log.info(
+        `agentdb mirror ready (remote): ${this.remoteUrl}${st.running ? "" : " — container asleep, cold start on first use"}`
+      );
+      this.initialized = true;
+      return this.status;
+    } catch (e) {
+      this.status.enabled = false;
+      this.status.reason = `engine unavailable (remote): ${errLine(e)}`;
+      this.initialized = true;
+      return this.status;
+    }
+  }
+
   getFastStatus(): MirrorStatus {
     return { ...this.status, records: this.records };
   }
 
   /** Archive-first dual-write: mirror records for one completed turn. */
   async recordTurn(sessionId: string, turnNumber: number, messages: ChatMessage[]): Promise<void> {
-    if (!this.status.enabled || !this.child) return;
+    if (!this.status.enabled || (!this.child && !this.remoteUrl)) return;
     try {
       const recs = messages.map((m, i) => ({
         id: `${sessionId.slice(0, 30)}#:t${turnNumber}#m${i}`,
@@ -128,7 +175,9 @@ export class AgentDbMirror {
         tool_call_id: m.tool_call_id ?? null,
         tool_name: m.name ?? null,
       }));
-      const res = await this.request({ req: "upsert", recs });
+      const res = this.remoteUrl
+        ? await this.remote("/upsert", { body: { recs } })
+        : await this.request({ req: "upsert", recs });
       if (!res.ok) throw new Error(res.error ?? "upsert failed");
       this.records += Number(res.count ?? 0);
       this.status.records = this.records;
@@ -140,9 +189,13 @@ export class AgentDbMirror {
 
   /** Dense semantic recall for the hybrid fusion. [] on any failure. */
   async search(query: string, limit: number = 6): Promise<MirrorHit[]> {
-    if (!this.status.enabled || !this.child) return [];
+    if (!this.status.enabled || (!this.child && !this.remoteUrl)) return [];
     try {
-      const res = await this.request({ req: "query", text: query.slice(0, 2000), k: Math.max(limit * 2, 8) });
+      const text = query.slice(0, 2000);
+      const k = Math.max(limit * 2, 8);
+      const res = this.remoteUrl
+        ? await this.remote("/query", { body: { text, k } })
+        : await this.request({ req: "query", text, k });
       if (!res.ok) throw new Error(res.error ?? "query failed");
       return res.hits ?? [];
     } catch (e) {
@@ -152,6 +205,7 @@ export class AgentDbMirror {
   }
 
   async close(): Promise<void> {
+    if (this.remoteUrl) return; // remote: nothing to tear down locally
     try {
       this.child?.stdin?.write(JSON.stringify({ req: "bye", id: 0 }) + "\n");
       setTimeout(() => {
@@ -275,6 +329,26 @@ export class AgentDbMirror {
         reject(e as Error);
       }
     });
+  }
+
+  /** HTTP transport for the container mirror (see container/README.md).
+   *  Throws on any failure — callers degrade; the archive stays the truth. */
+  private async remote(
+    pathname: string,
+    init?: { body?: unknown; timeoutMs?: number }
+  ): Promise<RemoteMsg> {
+    const res = await fetch(`${this.remoteUrl}${pathname}`, {
+      method: init?.body === undefined ? "GET" : "POST",
+      headers: {
+        ...(init?.body === undefined ? {} : { "content-type": "application/json" }),
+        ...(REMOTE_TOKEN ? { authorization: `Bearer ${REMOTE_TOKEN}` } : {}),
+      },
+      body: init?.body === undefined ? undefined : JSON.stringify(init.body),
+      signal: AbortSignal.timeout(init?.timeoutMs ?? REQUEST_TIMEOUT_MS),
+    });
+    const msg = (await res.json()) as RemoteMsg;
+    if (!res.ok || msg.ok === false) throw new Error(msg.error ?? `HTTP ${res.status}`);
+    return msg;
   }
 }
 

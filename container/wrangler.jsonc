@@ -1,0 +1,39 @@
+// Cloudflare Worker + Container for the AgentDB mirror sidecar.
+// Deploy from this directory:  npx wrangler deploy
+// Full guide: container/README.md
+{
+  "name": "nm-finance-mirror",
+  "main": "worker.ts",
+  "account_id": "6ad71cd1575e20d4b28e8f4f38273d43",
+  "upload_source_maps": true,
+  "compatibility_date": "2026-10-18",
+  "preview_urls": false,
+  "observability": { "enabled": true },
+  "vars": {
+    // HNSW preallocation hint passed into the container (see mirror-child.ts /
+    // server.mjs); the index auto-grows past it.
+    "AGENTDB_MAX_ELEMENTS": "100000"
+  },
+  "containers": [
+    {
+      "class_name": "MirrorContainer",
+      // durable_object policy: the DO starts the image (or a disk snapshot)
+      // at runtime. Public beta; snapshots exist only under this policy.
+      "scheduling_policy": "durable_object",
+      "images": {
+        "base": {
+          "dockerfile": "./Dockerfile",
+          // Build context is the repo root (the Dockerfile needs package.json
+          // + package-lock.json); run container/pack-model.sh first.
+          "build_context": ".."
+        }
+      }
+    }
+  ],
+  "durable_objects": {
+    "bindings": [{ "name": "MIRROR", "class_name": "MirrorContainer" }]
+  },
+  "exports": {
+    "MirrorContainer": { "type": "durable-object", "storage": "sqlite" }
+  }
+}

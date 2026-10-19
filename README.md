@@ -158,6 +158,9 @@ lacks — per-message embeddings for dense semantic `session_search` recall:
   over the FTS5 leg ⊕ mirror's dense leg, retriever-tagged blocks
   (`· fts`, `· semantic(0.83)`, `· fts+semantic`), empty sentinel preserved
 - `AGENTDB_PATH` (default `./agent-mirror.db`), `AGENTDB_REQUEST_TIMEOUT_MS`
+- `AGENTDB_REMOTE_URL` (+`_TOKEN`) — run the same engine as a Cloudflare
+  Container instead of the local sidecar (deploy/ops/persistence in
+  `container/README.md`; unset = local sidecar unchanged)
 
 Verified live: keyword-orthogonal queries reach seeded turns (semantic-only
 tag), `execute` unaffected (the sidecar solves the fork/ENOMEM conflict),

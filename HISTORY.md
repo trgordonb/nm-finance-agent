@@ -44,6 +44,59 @@ nm-memory-layer + nm-skills-registry), plus the detours. Headlines:
 Known deferred: full RVF/AgenticDB substrate sweep (agentdb alpha churn),
 offline HTML vendor step, drift doctor in UI, search condensation polish.
 
+## 2026-10-18 — mirror sidecar: HNSW preallocation bounded (`AGENTDB_MAX_ELEMENTS`)
+
+- **Re-measure of the 2026-10-10 memory note.** The old comment figures
+  (onnx arena ~40GB VA / ruvector ~12GB guards) were mis-attributed: the
+  driver is the ruvector JS wrapper's default `hnswConfig`,
+  `maxElements=10_000_000` → one ~35GB anonymous VA reservation at
+  `new VectorDB` (≈3.6GB per 1M vectors at dims=384); onnx MiniLM adds only
+  ~1GB. VmRSS stays <0.5GB throughout (reservations, not commits). The
+  fork/ENOMEM claim reproduced: with the 10M default, spawn/fork from the
+  loaded process fails ENOMEM; with 100k it succeeds.
+- **Fix**: `mirror-child.ts` passes an explicit `hnswConfig` (m:32 /
+  efConstruction:200 / efSearch:100) with `maxElements` from the new
+  `AGENTDB_MAX_ELEMENTS` (default 100000). The native index auto-grows past
+  the hint (verified 10→40 inserts), so this is a VA/commit trade, not a
+  hard cap. Sidecar after-init VA 54.8GB → 20.8GB (rest: tsx/.ts + node +
+  onnx); the override to 1M scales it to ~23GB.
+- Comment figures corrected across `agentdb-mirror.ts` / `mirror-child.ts` /
+  `CLAUDE.md`; knob recorded in `.env.example`. Tests: 89 pass.
+
+## 2026-10-18 — container mirror scaffold (Cloudflare Containers)
+
+- **`container/` scaffold**: `server.mjs` (HTTP twin of mirror-child.ts — same
+  engine, `/health` `/status` `/stats` `/init` `/upsert` `/query`),
+  `worker.ts` (Worker + Durable Object: on-demand start, 15-min keep-warm
+  window, snapshot debounce into DO SQLite, image-mismatch fallback),
+  `wrangler.jsonc` (durable_object scheduling policy + named image,
+  build_context = repo root), `Dockerfile` (node:24-slim, lockfile deps,
+  CUDA/TensorRT pruned, model baked), `README.md` (deploy/ops/persistence),
+  `rebuild.mjs` (replay sessions.db when a fresh instance comes up empty),
+  `pack-model.sh`, Docker build-context hygiene.
+- **Client**: `AgentDbMirror` gains a remote transport — `AGENTDB_REMOTE_URL`
+  (+`_TOKEN`) switches the same class to HTTPS; the boot probe is `/status`
+  only (never wakes the container), same degrade/no-throw contract, archive
+  stays authoritative. Unset = local sidecar path unchanged.
+- **Deploy hardening after the first live attempt**: image pruning + npm
+  cache cleanup in a SINGLE `npm ci` layer (deletions in a later layer still
+  upload — CUDA .so + all-platform ORT binaries were being shipped; ~1.1GB
+  tree → 139MB install layer; image 443MB incl. the 230MB base; build+smoke
+  verified in a local run), with `sharp` kept after catching agentdb's silent
+  **mock-embedding** fallback — now gated by a semantic sanity probe at boot
+  (server refuses readiness) and the DO fails fast on health errors. SIGTERM
+  closes keep-alive sockets.
+- **Deployed 2026-10-18** (workers.dev route, paid account; image upload
+  2m13s). Live external smoke passed: `/status` answers without waking the
+  container; first cold start 46s (includes the first-ever edge image pull);
+  semantic canary matched the local baseline exactly (0.548); the disk
+  snapshot was stored ~5s after the upsert settled (id in DO storage); warm
+  queries 45ms. Sleep/wake verified live: idle stop confirmed, then a wake
+  from snapshot took **3.1s** (cold start #2 — the 46s first start was the
+  one-time edge image pull) with `stored`=1 restored and the semantic canary
+  identical (0.548). Also confirmed: a `/status` probe counts as DO activity
+  and resets the inactivity timer.
+
 ## 2026-10-14 — deep research (/research) Stage 1: engine + CLI (thinkdepth-ai port)
 
 Plan + decisions: docs/deep-research-plan.md. LangGraph-free explicit port of

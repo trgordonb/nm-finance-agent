@@ -42,7 +42,7 @@ nm-finance-agent/
 │   ├── hybrid + mirror   # driver.ts (SessionDriver seam) + agentdb-mirror.ts
 │   │                     #   (sidecar client) + mirror-child.ts (sidecar: redb/
 │   │                     #   ruvector VectorDB + onnx MiniLM — natives isolated from
-│   │                     #   the server process: fork after model load = ENOMEM)
+│   │                     #   the server process: native VA = fork/ENOMEM class)
 │   ├── compression.ts    # Phase-5 pre-flight compression (provider-reported usage
 │   │                     #   persisted per assistant row; verbatim anchors; lineage)
 │   ├── nudge.ts          # NudgePolicy + prompt + flattenTranscript + run (tool loop)
@@ -136,7 +136,9 @@ Full inventory with defaults in `.env.example`. Highlights:
 - Compression: `COMPRESSION_ENABLED` (default off), `_TOKEN_THRESHOLD=24000`,
   `_KEEP_RECENT_TURNS=2`
 - Nudge: `NUDGE_INTERVAL=5`
-- Mirror: `AGENTDB_MIRROR=0` off, `AGENTDB_PATH`, embed/sidecar timeouts
+- Mirror: `AGENTDB_MIRROR=0` off, `AGENTDB_PATH`, `AGENTDB_MAX_ELEMENTS`
+  (HNSW preallocation hint), `AGENTDB_REMOTE_URL/_TOKEN` (Cloudflare
+  Container mirror — `container/README.md`), embed/sidecar timeouts
 - Skills: `SKILLS_REGISTRY` (`s3://neuralmatrix`), `SKILLS_DIR`,
   `SKILLS_STATE_DIR`, `NM_SKILLS_REGISTRY_HOME`, `SKILLS_CLI_BRIDGE=0`,
   `SKILLS_PUSH_DEBOUNCE_MS`
@@ -148,11 +150,14 @@ Full inventory with defaults in `.env.example`. Highlights:
 
 - **node:sqlite** (Node 24, FTS5 built-in, WAL; zero native deps).
 - **fetch over SDK** for OpenRouter (retry policy is the main.py port).
-- **Sidecar isolation for natives**: onnx arena (~40GB VA) + ruvector HNSW
-  (~12GB guards) break fork()/spawn ENOMEM — both live ONLY in
-  `mirror-child.ts` (JSON-lines stdio; never forks after load). The server
-  forks freely (execute tool) without ENOMEM risk. Same trap killed the
-  mirror in an in-server build (documented at 2026-10-10).
+- **Sidecar isolation for natives**: the natives make a process fork-hostile
+  (re-measured 2026-10-18: the ruvector wrapper's default HNSW preallocation
+  of 10M vectors ≈ 35GB VA + onnx ~1GB; spawn/fork from such a process fails
+  ENOMEM) — both live ONLY in `mirror-child.ts` (JSON-lines stdio; never
+  forks after load), and the HNSW hint is bounded via `AGENTDB_MAX_ELEMENTS`
+  (default 100k ≈ 1.4GB, index auto-grows). The server forks freely (execute
+  tool) without ENOMEM risk. Same trap killed the mirror in an in-server
+  build (documented at 2026-10-10).
 - **agentdb npm alpha wrappers unreliable** (sync/await bugs; RvfBackend not
   exported) — the mirror drives the ruvector core directly; the MCP pilot
   runs agentdb legacy SQLite mode. RVF containers NOT used (see HISTORY).
