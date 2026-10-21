@@ -51,3 +51,64 @@ test("skills sync bridge: notifyChange schedules a debounce then clears (no engi
     delete process.env.SKILLS_PUSH_DEBOUNCE_MS;
   }
 });
+
+test("skills sync bridge: countSkillFiles walks nested skill dirs only", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "nmfa-skills-"));
+  fs.mkdirSync(path.join(dir, "alpha"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "alpha", "SKILL.md"), "---\nname: alpha\n---\n");
+  fs.mkdirSync(path.join(dir, "devops", "beta"), { recursive: true });
+  fs.writeFileSync(path.join(dir, "devops", "beta", "SKILL.md"), "---\nname: beta\n---\n");
+  fs.mkdirSync(path.join(dir, ".git"), { recursive: true });
+  fs.writeFileSync(path.join(dir, ".git", "SKILL.md"), "ignored");
+  fs.writeFileSync(path.join(dir, "README.md"), "not a skill");
+  assert.equal(root.countSkillFiles(dir), 2);
+});
+
+test("skills sync bridge: SKILLS_CLI bypasses uv run --directory", () => {
+  const had = process.env.SKILLS_CLI;
+  try {
+    delete process.env.SKILLS_CLI;
+    const b = new root.SkillsCliBridge("/tmp/nowhere") as unknown as {
+      cliCommand(args: string[]): { bin: string; argv: string[] };
+    };
+    const dev = b.cliCommand(["pull", "/tmp/skills"]);
+    assert.equal(dev.bin, process.env.UV_BIN || "uv");
+    assert.deepEqual(dev.argv.slice(-3), ["nm-skills", "pull", "/tmp/skills"]);
+
+    process.env.SKILLS_CLI = "/usr/local/bin/nm-skills";
+    const installed = b.cliCommand(["pull", "/tmp/skills"]);
+    assert.equal(installed.bin, "/usr/local/bin/nm-skills");
+    assert.deepEqual(installed.argv, ["pull", "/tmp/skills"]);
+  } finally {
+    if (had === undefined) delete process.env.SKILLS_CLI;
+    else process.env.SKILLS_CLI = had;
+  }
+});
+
+test("skills sync bridge: an empty working copy is flagged degraded, not silently healthy", async () => {
+  const hadRegistry = process.env.SKILLS_REGISTRY;
+  const hadCli = process.env.SKILLS_CLI;
+  const fakeDir = fs.mkdtempSync(path.join(os.tmpdir(), "nmfa-cli-"));
+  const fake = path.join(fakeDir, "nm-skills");
+  fs.writeFileSync(
+    fake,
+    '#!/bin/sh\necho "pull from s3://neuralmatrix \'skills/\' -> skills/: 0 pulled, 0 removed, 0 unchanged"\n',
+    { mode: 0o755 },
+  );
+  const emptySkills = fs.mkdtempSync(path.join(os.tmpdir(), "nmfa-empty-"));
+  process.env.SKILLS_REGISTRY = "s3://neuralmatrix";
+  process.env.SKILLS_CLI = fake;
+  try {
+    const b = new root.SkillsCliBridge(emptySkills);
+    await b.syncAtBoot();
+    assert.equal(b.info.skillCount, 0);
+    assert.equal(b.info.degraded, true);
+    assert.equal(b.info.lastSync?.pulled, 0);
+    assert.match(b.info.cli ?? "", /^binary:/);
+  } finally {
+    if (hadRegistry === undefined) delete process.env.SKILLS_REGISTRY;
+    else process.env.SKILLS_REGISTRY = hadRegistry;
+    if (hadCli === undefined) delete process.env.SKILLS_CLI;
+    else process.env.SKILLS_CLI = hadCli;
+  }
+});

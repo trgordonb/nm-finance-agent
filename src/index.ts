@@ -27,7 +27,10 @@ import {
   OPENROUTER_REASONING,
   MEMORY_CHAR_LIMIT,
   WORKSPACE_DIR,
+  SKILLS_REQUIRED,
   WIKI_API_URL,
+  WIKI_API_TOKEN,
+  WIKI_PROXY_TIMEOUT_MS,
   EXA_API_KEY,
   RESEARCH_AS_TOOL,
   RESEARCH_MAX_CONCURRENT,
@@ -55,7 +58,7 @@ import { loadMcpServers, setServerEnabled, type ServerStatus as McpStatus } from
 import { bindMcpTools, closeOpenClients } from "./mcp-tools.js";
 import type { ToolDef, ChatMessage } from "./types.js";
 import { initSkills, getSkillLibrary } from "./tools/skill_tools.js";
-import { SkillsCliBridge } from "./skills/sync.js";
+import { SkillsCliBridge, SkillsRequiredError } from "./skills/sync.js";
 import {
   maybeExtractFollowups,
   getFollowups,
@@ -174,6 +177,12 @@ function getRuntime(): Promise<void> {
       await skillsBridge.syncAtBoot();
       mcpReport = await assembleRuntime();
     })().catch((e) => {
+      // SKILLS_REQUIRED=1: a skill-less boot on a fresh VM is a configuration
+      // failure, not a degraded mode. Exit so systemd/docker surface it.
+      if (e instanceof SkillsRequiredError) {
+        log.error(`FATAL: ${e.message}`);
+        process.exit(1);
+      }
       // keep the server alive, toolless MCP; base tools remain bound
       log.error(`runtime assembly failed (base tools only): ${String(e).slice(0, 200)}`);
     });
@@ -227,6 +236,7 @@ app.get("/api/health", (_req: Request, res: Response) => {
     tools: [...loop.tools.keys()],
     skills: getSkillLibrary().listAll().length,
     skills_backend: skillsBridge.info,
+    skills_required: SKILLS_REQUIRED,
     sessions: store.listSessions().length,
     mirror: mirror.getFastStatus(),
     mcp_connected: mcpReport ? mcpReport.filter((r) => r.connected && r.enabled).length : null,
@@ -339,7 +349,10 @@ app.get("/api/wiki/*", async (req, res) => {
     return;
   }
   try {
-    const upstream = await fetchWiki(WIKI_API_URL, built.path);
+    const upstream = await fetchWiki(WIKI_API_URL, built.path, {
+      timeoutMs: WIKI_PROXY_TIMEOUT_MS,
+      token: WIKI_API_TOKEN,
+    });
     res.status(upstream.status).type(upstream.contentType).send(upstream.body);
   } catch (err) {
     res.status(502).json({

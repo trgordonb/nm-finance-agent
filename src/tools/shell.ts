@@ -22,7 +22,7 @@ export const execute: ToolDef = {
     },
     required: ["command"],
   },
-  execute(args) {
+  execute(args, ctx) {
     return new Promise((resolve) => {
       const command = String(args.command ?? "");
       const opts: ExecOptions = {
@@ -33,7 +33,17 @@ export const execute: ToolDef = {
         // $SKILLS_DIR lets shell commands reach skill scripts regardless of cwd
         env: { ...process.env, SKILLS_DIR },
       };
-      exec(command, opts, (err, stdout, stderr) => {
+      // Cancel responsiveness: Stop aborts the turn signal, so kill the
+      // foreground child instead of waiting for EXECUTE_TIMEOUT_MS.
+      let child: ReturnType<typeof exec>;
+      let onAbort: (() => void) | undefined;
+      let aborted = false;
+      child = exec(command, opts, (err, stdout, stderr) => {
+        if (ctx?.signal && onAbort) ctx.signal.removeEventListener("abort", onAbort);
+        if (err && err.killed && aborted) {
+          resolve("Rejected: cancelled by user; the foreground command was killed.");
+          return;
+        }
         if (err && err.killed) {
           // Recoverable per the loop contract: a foreground timeout is a
           // planning failure the model must route around, not a broken
@@ -50,7 +60,12 @@ export const execute: ToolDef = {
         const numericExit = typeof err?.code === "number";
         const parts: string[] = [];
         if (stdout) parts.push(`Output:\n${stdout}`);
-        if (stderr) parts.push(`Error output:\n${stderr}`);
+        // stderr is not synonymous with failure: progress logs (llmwiki wait),
+        // warnings, and telemetry routinely write there while exiting 0. Only
+        // label it "Error output" when the command actually exited nonzero.
+        if (stderr) {
+          parts.push(`${numericExit ? "Error output" : "Stderr (non-fatal)"}:\n${stderr}`);
+        }
         // Signal death (SIGTERM/SIGKILL/…, no numeric exit): recoverable, the
         // model re-plans. The classic cause is a `pkill -f <pattern>`
         // self-match — execute runs the whole command as `bash -c "<cmd>"`,
@@ -89,6 +104,18 @@ export const execute: ToolDef = {
         }
         resolve(parts.join("\n") || "(no output)");
       });
+      onAbort = () => {
+        aborted = true;
+        try {
+          child.kill("SIGTERM");
+        } catch {
+          /* already exited */
+        }
+      };
+      if (ctx?.signal) {
+        if (ctx.signal.aborted) onAbort();
+        else ctx.signal.addEventListener("abort", onAbort, { once: true });
+      }
     });
   },
 };

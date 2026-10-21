@@ -14,11 +14,16 @@ import {
   OPENROUTER_MODEL_MAIN,
   OPENROUTER_MODEL_SUMMARIZER,
   RESEARCH_DEADLINE_MINUTES,
+  RESEARCH_LLM_MAX_ATTEMPTS,
   RESEARCH_LLM_MIN_INTERVAL_MS,
+  RESEARCH_LLM_TIMEOUT_MS,
   RESEARCH_MAX_CONCURRENT,
+  RESEARCH_MAX_RESEARCHER_SEARCHES,
   RESEARCH_MAX_RESEARCHER_TURNS,
+  RESEARCH_MAX_RESEARCH_ROUNDS,
   RESEARCH_MAX_SUPERVISOR_ITERATIONS,
   RESEARCH_PAGE_CONTEXT_CHARS,
+  RESEARCH_REASONING_EFFORT,
   RESEARCH_SEARCH_MAX_RESULTS,
   RESEARCH_TOKEN_BUDGET,
 } from "../config.js";
@@ -51,13 +56,18 @@ export function buildResearchDeps(overrides: Partial<ResearchDeps> = {}): Resear
     Number.isFinite(value) && value > 0 ? Math.floor(value) : fallback;
   const limits = {
     maxConcurrent: positive(RESEARCH_MAX_CONCURRENT, 3),
-    maxSupervisorIterations: positive(RESEARCH_MAX_SUPERVISOR_ITERATIONS, 15),
-    maxResearcherTurns: positive(RESEARCH_MAX_RESEARCHER_TURNS, 8),
+    maxSupervisorIterations: positive(RESEARCH_MAX_SUPERVISOR_ITERATIONS, 10),
+    maxResearchRounds: positive(RESEARCH_MAX_RESEARCH_ROUNDS, 2),
+    maxResearcherTurns: positive(RESEARCH_MAX_RESEARCHER_TURNS, 5),
+    maxResearcherSearches: positive(RESEARCH_MAX_RESEARCHER_SEARCHES, 6),
     tokenBudget: Number.isFinite(RESEARCH_TOKEN_BUDGET) && RESEARCH_TOKEN_BUDGET > 0 ? RESEARCH_TOKEN_BUDGET : 0,
     searchMaxResults: positive(RESEARCH_SEARCH_MAX_RESULTS, 3),
     pageContextChars: positive(RESEARCH_PAGE_CONTEXT_CHARS, 60_000),
     deadlineMs: Number.isFinite(RESEARCH_DEADLINE_MINUTES) && RESEARCH_DEADLINE_MINUTES > 0 ? RESEARCH_DEADLINE_MINUTES * 60_000 : 0,
     minCallIntervalMs: Number.isFinite(RESEARCH_LLM_MIN_INTERVAL_MS) ? Math.max(0, RESEARCH_LLM_MIN_INTERVAL_MS) : 1200,
+    reasoningEffort: RESEARCH_REASONING_EFFORT,
+    llmTimeoutMs: positive(RESEARCH_LLM_TIMEOUT_MS, 600_000),
+    llmMaxAttempts: positive(RESEARCH_LLM_MAX_ATTEMPTS, 2),
   };
   // Single-model decision: every research role runs on the main model; the
   // summarizer fallback keeps the repo's existing cheap summarizer role.
@@ -122,7 +132,11 @@ function tracedChat(base: ChatFn, parent: string, fallbackModel: string): ChatFn
           usage: response.usage,
           message: { role: "assistant", content: response.content, tool_calls: response.toolCalls },
         }),
-        metadata: llmRunMetadata(response.model || model, response.usage),
+        metadata: {
+          ...llmRunMetadata(response.model || model, response.usage),
+          ...(response.provider ? { provider: response.provider } : {}),
+          ...(response.finishReason ? { finish_reason: response.finishReason } : {}),
+        },
       });
       return response;
     } catch (e) {
@@ -145,8 +159,26 @@ export async function runDeepResearch(opts: RunDeepResearchOptions): Promise<Res
     tags: ["nm-finance-agent", "deep-research"],
     metadata: { model: base.roles.toolLoop },
   });
+  // Wall-clock deadline: combine the caller's abort with a timer so an
+  // in-flight compress/refine call is killed at the deadline, not merely
+  // checked at the next stage boundary.
+  const deadlineAt = base.limits.deadlineMs > 0 ? base.startedAt + base.limits.deadlineMs : 0;
+  const deadlineController = deadlineAt > 0 ? new AbortController() : undefined;
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined;
+  if (deadlineController) {
+    deadlineTimer = setTimeout(
+      () => deadlineController.abort(new Error("research deadline exceeded")),
+      Math.max(0, deadlineAt - Date.now()),
+    );
+    deadlineTimer.unref?.();
+  }
+  const signal =
+    base.signal && deadlineController
+      ? AbortSignal.any([base.signal, deadlineController.signal])
+      : base.signal ?? deadlineController?.signal;
   const deps: ResearchDeps = {
     ...base,
+    ...(signal ? { signal } : {}),
     chat: tracedChat(base.chat, rootId, base.roles.toolLoop),
     traceParent: rootId,
   };
@@ -154,6 +186,10 @@ export async function runDeepResearch(opts: RunDeepResearchOptions): Promise<Res
     model: deps.roles.toolLoop,
     signal: deps.signal,
     minIntervalMs: deps.limits.minCallIntervalMs,
+    reasoningEffort: deps.limits.reasoningEffort,
+    timeoutMs: deps.limits.llmTimeoutMs,
+    maxAttempts: deps.limits.llmMaxAttempts,
+    retryOnTimeout: true,
   };
   const finish = (outcome: ResearchOutcome): ResearchOutcome => {
     trace.update(rootId, {
@@ -206,21 +242,44 @@ export async function runDeepResearch(opts: RunDeepResearchOptions): Promise<Res
 
     // 2) Research brief: a detailed, assumption-free statement of the ask.
     deps.emit({ status: "running", step: "brief", detail: "writing the research brief" });
-    const briefResponse = await deps.chat(
-      [
-        {
-          role: "user",
-          content:
-            fillPrompt(transform_messages_into_research_topic_human_msg_prompt, { messages: transcript, date: getTodayStr() }) +
-            jsonInstruction("research_brief"),
-        },
-      ],
-      undefined,
-      callOpts,
-    );
+    const briefPrompt =
+      fillPrompt(transform_messages_into_research_topic_human_msg_prompt, { messages: transcript, date: getTodayStr() }) +
+      jsonInstruction("research_brief");
+    const briefResponse = await deps.chat([{ role: "user", content: briefPrompt }], undefined, callOpts);
     addUsage(usage, briefResponse.usage);
-    const briefJson = extractJson<{ research_brief?: string }>(briefResponse.content);
-    const brief = briefJson?.research_brief ?? briefResponse.content;
+    let brief = extractJson<{ research_brief?: string }>(briefResponse.content)?.research_brief?.trim() ?? "";
+    if (!brief) {
+      // A provider can return HTTP 200 with prose/garbage (Relace live
+      // 2026-10-19): never feed that into the supervisor. One strict retry,
+      // then fall back to the cleaned question itself.
+      deps.emit({
+        status: "running",
+        step: "brief",
+        detail: "research brief did not parse as JSON — retrying with the strict contract",
+      });
+      const retry = await deps.chat(
+        [
+          {
+            role: "system",
+            content:
+              'You must respond with RAW JSON only. No prose, no markdown fences. Exactly: {"research_brief": "<brief>"}',
+          },
+          { role: "user", content: briefPrompt },
+        ],
+        undefined,
+        callOpts,
+      );
+      addUsage(usage, retry.usage);
+      brief = extractJson<{ research_brief?: string }>(retry.content)?.research_brief?.trim() ?? "";
+    }
+    if (!brief) {
+      brief = opts.question;
+      deps.emit({
+        status: "running",
+        step: "brief",
+        detail: "research brief unavailable — using the cleaned question as the brief",
+      });
+    }
 
     ensureNotStopped(deps);
 
@@ -236,11 +295,27 @@ export async function runDeepResearch(opts: RunDeepResearchOptions): Promise<Res
         },
       ],
       undefined,
-      { ...callOpts, model: deps.roles.writer },
+      {
+        ...callOpts,
+        model: deps.roles.writer,
+        // Python creative_model parity: the pre-research outline is a compact
+        // baseline, not a report; 4k is ample and bounds reasoning spillover.
+        maxTokens: 4000,
+        retryOnTimeout: false,
+      },
     );
     addUsage(usage, draftResponse.usage);
-    const draftJson = extractJson<{ draft_report?: string }>(draftResponse.content);
-    const draftReport = draftJson?.draft_report ?? draftResponse.content;
+    // JSON-only: a prose/garbage outline is worse than no outline, because it
+    // becomes the supervisor's "draft report" context. The findings drive the
+    // final report, so an empty draft is a safe degradation.
+    const draftReport = extractJson<{ draft_report?: string }>(draftResponse.content)?.draft_report?.trim() ?? "";
+    if (!draftReport) {
+      deps.emit({
+        status: "running",
+        step: "outline",
+        detail: "outline did not parse as JSON — proceeding without a pre-research draft",
+      });
+    }
 
     ensureNotStopped(deps);
 
@@ -250,6 +325,14 @@ export async function runDeepResearch(opts: RunDeepResearchOptions): Promise<Res
     addUsage(usage, supervised.usage);
 
     ensureNotStopped(deps);
+
+    // Never write a "report" from zero research: a provider-degenerate
+    // supervisor used to return a completed run with only the pre-research
+    // draft (2026-10-19 META trace). The fallback researcher in runSupervisor
+    // covers this; fail loudly if even that produced nothing.
+    if (!supervised.notes.some((note) => note.trim())) {
+      throw new Error("research produced no findings (supervisor and fallback researcher returned empty)");
+    }
 
     // 5) Final report (writer tier; ≤3,000-word + citation contract in-prompt).
     deps.emit({
@@ -278,28 +361,48 @@ export async function runDeepResearch(opts: RunDeepResearchOptions): Promise<Res
       model: deps.roles.writer,
       maxTokens: 32000,
       reasoningEffort: "low",
+      retryOnTimeout: false,
     });
     addUsage(usage, finalResponse.usage);
     let report = finalResponse.content;
-    if (!report.trim()) {
-      // Documented OpenRouter failure mode: a reasoning model can burn the
+    // The in-prompt contract is ≤3,000 words (~18K chars). Anything past this
+    // is a degenerate repetition loop, not a report (the 2026-10-19 META run
+    // returned 129,533 chars of repeated boilerplate).
+    const REPORT_CHAR_LIMIT = 60_000;
+    if (!report.trim() || report.length > REPORT_CHAR_LIMIT) {
+      // Documented OpenRouter failure modes: a reasoning model can burn the
       // whole max_tokens budget thinking and return empty content
-      // (finish_reason=length). One retry with reasoning off.
+      // (finish_reason=length), or degenerate into repetition. One retry at
+      // low effort with an explicit brevity reminder.
       deps.emit({
         status: "running",
         step: "final_report",
-        detail: "final report came back empty (reasoning-token exhaustion?) — retrying without reasoning",
+        detail: report.trim()
+          ? `final report over the length contract (${report.length} chars) — retrying at low effort`
+          : "final report came back empty (reasoning-token exhaustion?) — retrying at low effort",
       });
-      const retry = await deps.chat(finalMessages, undefined, {
+      const strictMessages: ChatMessage[] = [
+        ...finalMessages,
+        {
+          role: "user",
+          content:
+            "STRICT CONTRACT: Rewrite the answer in at most 3,000 words with inline citations. Do not repeat sections or boilerplate. Return only the report.",
+        },
+      ];
+      const retry = await deps.chat(strictMessages, undefined, {
         ...callOpts,
         model: deps.roles.writer,
         maxTokens: 32000,
-        noReasoning: true,
+        reasoningEffort: "low",
+        retryOnTimeout: false,
       });
       addUsage(usage, retry.usage);
       report = retry.content;
       if (!report.trim()) {
         throw new Error("final report generation returned empty content twice (reasoning-token exhaustion?)");
+      }
+      if (report.length > REPORT_CHAR_LIMIT) {
+        throw new Error(`final report is still ${report.length} chars after a strict retry (contract: ~18K)`);
       }
     }
 
@@ -308,10 +411,12 @@ export async function runDeepResearch(opts: RunDeepResearchOptions): Promise<Res
     deps.onMessage?.(reportMessage);
     return finish({ status: "completed", report, messages, usage });
   } catch (e) {
-    if (e instanceof ResearchCancelled || deps.shouldStop()) {
+    if (e instanceof ResearchCancelled || deps.shouldStop() || signal?.aborted) {
       return finish({ status: "cancelled", messages, usage });
     }
     trace.update(rootId, { error: String((e as Error).message).slice(0, 400) });
     throw e;
+  } finally {
+    if (deadlineTimer) clearTimeout(deadlineTimer);
   }
 }

@@ -157,9 +157,9 @@ test("store: session titles — fallback set/get, refine overwrite, listSessions
   assert.equal(store.listSessions().find((r) => r.session_id === sid)?.summary, "backtest the FVG strategy");
 
   // refine overwrites same row (one title, never regenerated)
-  store.setSessionTitle(sid, "FVG backtest replication on EUR/USD", "openrouter/liquid/lfm-2.5-2.6b:free");
+  store.setSessionTitle(sid, "FVG backtest replication on EUR/USD", "openrouter/poolside/laguna-xs-2.1:free");
   assert.equal(store.getSessionTitle(sid), "FVG backtest replication on EUR/USD");
-  assert.equal(store.getSessionTitleModel(sid), "openrouter/liquid/lfm-2.5-2.6b:free");
+  assert.equal(store.getSessionTitleModel(sid), "openrouter/poolside/laguna-xs-2.1:free");
   assert.equal(store.listSessions().find((r) => r.session_id === sid)?.summary, "FVG backtest replication on EUR/USD");
   store.close();
 });

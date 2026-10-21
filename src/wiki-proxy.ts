@@ -48,13 +48,24 @@ export interface WikiFetchResult {
   body: string;
 }
 
+export interface WikiFetchOptions {
+  /** Hard timeout. Cold starts on a remote host need more than localhost. */
+  timeoutMs?: number;
+  /** Static bearer for the service; empty means "send no Authorization". */
+  token?: string;
+}
+
 /** Fetch one upstream path with a hard timeout; a throw means "service down". */
 export async function fetchWiki(
   baseUrl: string,
   path: string,
-  timeoutMs = 15_000,
+  options: WikiFetchOptions = {},
 ): Promise<WikiFetchResult> {
+  const { timeoutMs = 60_000, token = "" } = options;
+  const headers: Record<string, string> = {};
+  if (token) headers.Authorization = `Bearer ${token}`;
   const resp = await fetch(`${baseUrl.replace(/\/+$/, "")}${path}`, {
+    headers,
     signal: AbortSignal.timeout(timeoutMs),
   });
   return {

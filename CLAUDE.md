@@ -56,8 +56,8 @@ nm-finance-agent/
 │   ├── skills/           # library.ts (SkillLibrary core over skills/ working copy;
 │   │                     #   js-yaml frontmatter; toggles in SKILLS_STATE_DIR) +
 │   │                     #   sync.ts (R2 lifecycle: uv→nm-skills CLI boot pull+push,
-│   │                     #   debounced curation push; NOTE: CLI `sync` subcmd broken,
-│   │                     #   pull/push run as two invocations)
+│   │                     #   debounced curation push; CLI `sync` bug fixed in
+│   │                     #   registry v0.1.7 — boot still runs pull+push)
 │   ├── mcp-config.ts     # mcp_servers.json loader: ${VAR} fail-closed interpolation,
 │   │                     #   atomic toggles, keep_tools exact/suffix
 │   ├── mcp-tools.ts      # per-server binding via @modelcontextprotocol/sdk
@@ -140,8 +140,12 @@ Full inventory with defaults in `.env.example`. Highlights:
   (HNSW preallocation hint), `AGENTDB_REMOTE_URL/_TOKEN` (Cloudflare
   Container mirror — `container/README.md`), embed/sidecar timeouts
 - Skills: `SKILLS_REGISTRY` (`s3://neuralmatrix`), `SKILLS_DIR`,
-  `SKILLS_STATE_DIR`, `NM_SKILLS_REGISTRY_HOME`, `SKILLS_CLI_BRIDGE=0`,
-  `SKILLS_PUSH_DEBOUNCE_MS`
+  `SKILLS_STATE_DIR`, `SKILLS_USER_ID` (toggle profile),
+  `NM_SKILLS_REGISTRY_HOME`, `SKILLS_CLI` (installed binary; skips
+  `uv run --directory`), `SKILLS_CLI_BRIDGE=0`,
+  `SKILLS_REQUIRED=1` (fail boot on a failed/empty pull),
+  `SKILLS_PUSH_DEBOUNCE_MS` — deploy recipe in
+  `docs/skills-registry-deploy.md`
 - MCP: `MCP_SERVERS_FILE`, connect/call timeouts
 - Workspace: `WORKSPACE_DIR`, `WORKSPACE_HARD_JAIL` (server exposure posture)
 - Server: `SERVER_HOST/PORT` (127.0.0.1:3001)

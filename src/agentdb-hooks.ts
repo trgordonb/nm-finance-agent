@@ -77,7 +77,10 @@ export async function episodeRecallContext(
   const runId = trace.create({
     name: epTool.name,
     runType: "tool",
-    inputs: { task: task.slice(0, 300), k },
+    // Trace the exact query passed to the tool. The old 300-char slice made
+    // the pre-flight run look truncated (the actual recall used the full
+    // task, including the current user message at the end).
+    inputs: { task, k },
     tags: ["nm-finance-agent", "reflexion", "pre-flight"],
   });
   let raw = "";

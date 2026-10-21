@@ -50,10 +50,14 @@ export interface ResearchUsage {
 export interface ResearchLimits {
   /** Max parallel researcher sub-loops per fan-out chunk. */
   maxConcurrent: number;
-  /** Supervisor rounds before a forced stop (prompt's max_researcher_iterations). */
+  /** Supervisor tool-call iterations before a forced stop (prompt's max_researcher_iterations). */
   maxSupervisorIterations: number;
+  /** ConductResearch batches before the supervisor is forced to wrap up. */
+  maxResearchRounds: number;
   /** Hard per-researcher tool turns before compress (upstream had no cap). */
   maxResearcherTurns: number;
+  /** Hard per-researcher Tavily searches before compression is forced. */
+  maxResearcherSearches: number;
   /** Per-researcher input+output token budget (0 = unlimited). */
   tokenBudget: number;
   /** Tavily results per search call. */
@@ -64,6 +68,12 @@ export interface ResearchLimits {
   deadlineMs: number;
   /** Min spacing between research LLM calls (relaxes the 4s global guard). */
   minCallIntervalMs: number;
+  /** Reasoning effort for every research role (GLM "thinks" even at low). */
+  reasoningEffort: "low" | "medium" | "high";
+  /** Per-request HTTP timeout for research LLM calls. */
+  llmTimeoutMs: number;
+  /** Retry attempts for research LLM calls (1 = no retry). */
+  llmMaxAttempts: number;
 }
 
 /** Model roles. Single-model for now (user decision: one glm-5.3-flash for

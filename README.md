@@ -144,6 +144,17 @@ agent's scratch area, via mechanism rather than convention:
   `WORKSPACE_HARD_JAIL=1` to confine writes to the workspace entirely when the
   server is network-exposed.
 
+## Skills registry (R2)
+
+`skills/` is a gitignored working copy; the R2 bucket (`SKILLS_REGISTRY`) is
+authoritative. The agent reads and writes locally (`load_skill` / `skill_manage`);
+the `nm-skills` CLI is invoked only by `src/skills/sync.ts` — pull+push at boot,
+debounced `push --prune` after curation. Reads never touch R2.
+
+`SKILLS_REQUIRED=1` turns a failed or empty boot pull into a fatal exit (the
+fresh-VM trap), and `/api/health` reports `skills_backend.degraded`. Fresh-VM
+recipe, version pinning and failure semantics: `docs/skills-registry-deploy.md`.
+
 ## AgentDB mirror (phase-in, additive)
 
 The SQLite archive stays authoritative; a **mirror sidecar** adds what it

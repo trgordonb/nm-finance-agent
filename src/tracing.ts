@@ -129,14 +129,24 @@ export const trace = {
 export interface RunUsage {
   prompt_tokens?: number;
   completion_tokens?: number;
+  /** OpenRouter/OpenAI usage detail; reasoning is the hidden thinking spend. */
+  completion_tokens_details?: { reasoning_tokens?: number };
 }
 
-/** Provider usage → LangSmith `usage_metadata` (undefined when zero/absent). */
-export function usageMetadata(usage?: RunUsage): Record<string, number> | undefined {
+/** Provider usage → LangSmith `usage_metadata` (undefined when zero/absent).
+ *  Reasoning tokens follow the SDK convention (`output_token_details.reasoning`). */
+export function usageMetadata(usage?: RunUsage): Record<string, unknown> | undefined {
   const input = usage?.prompt_tokens ?? 0;
   const output = usage?.completion_tokens ?? 0;
   if (!input && !output) return undefined;
-  return { input_tokens: input, output_tokens: output, total_tokens: input + output };
+  const metadata: Record<string, unknown> = {
+    input_tokens: input,
+    output_tokens: output,
+    total_tokens: input + output,
+  };
+  const reasoning = usage?.completion_tokens_details?.reasoning_tokens ?? 0;
+  if (reasoning > 0) metadata.output_token_details = { reasoning };
+  return metadata;
 }
 
 /** LLM-run metadata: model identity + usage (drives token/cost panels). */

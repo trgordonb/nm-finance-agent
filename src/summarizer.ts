@@ -16,7 +16,11 @@
 
 import { chat } from "./llm.js";
 import type { ChatMessage } from "./types.js";
-import { OPENROUTER_MODEL_SUMMARIZER } from "./config.js";
+import {
+  OPENROUTER_MODEL_SUMMARIZER,
+  SEARCH_SUMMARIZER_MAX_ATTEMPTS,
+  SEARCH_SUMMARIZER_TIMEOUT_MS,
+} from "./config.js";
 import type { SessionHit } from "./driver.js";
 import { log } from "./logger.js";
 import { trace, llmRunMetadata, llmRunOutputs } from "./tracing.js";
@@ -47,7 +51,7 @@ export class SearchSummarizer {
     this.label = `openrouter/${OPENROUTER_MODEL_SUMMARIZER}`;
   }
 
-  summarize(query: string, hits: SessionHit[]): Promise<SummarizedSearch> {
+  summarize(query: string, hits: SessionHit[], signal?: AbortSignal): Promise<SummarizedSearch> {
     const excerpts = hits
       .map(
         (hit, i) =>
@@ -80,6 +84,13 @@ export class SearchSummarizer {
       // — this model spends hundreds of output tokens thinking before the
       // condensation text, and reasoning counts against max_tokens.
       maxTokens: 2048,
+      // Enrichment only: bound the free model hard and let session_search
+      // fall back to raw excerpts. A 300s x5 default held a live turn for
+      // 20+ minutes (2026-10-20).
+      timeoutMs: SEARCH_SUMMARIZER_TIMEOUT_MS,
+      maxAttempts: SEARCH_SUMMARIZER_MAX_ATTEMPTS,
+      retryOnTimeout: false,
+      ...(signal ? { signal } : {}),
     }).then((response) => {
       const elapsedMs = Date.now() - start;
       trace.update(llmId, {

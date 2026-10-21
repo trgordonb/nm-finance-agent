@@ -84,15 +84,27 @@ export async function refineDraftReport(
     draft_report: input.draftReport,
     date: getTodayStr(),
   });
-  const response = await deps.chat([{ role: "user", content: prompt }], undefined, {
+  const opts = {
     model: deps.roles.writer,
     signal: deps.signal,
     minIntervalMs: deps.limits.minCallIntervalMs,
+    reasoningEffort: deps.limits.reasoningEffort,
+    timeoutMs: deps.limits.llmTimeoutMs,
+    maxAttempts: deps.limits.llmMaxAttempts,
+    retryOnTimeout: false,
     // Refined draft ≤4,000 words; 12k cap parity with the Python refine tier.
     maxTokens: 12000,
-  });
+  };
+  const response = await deps.chat([{ role: "user", content: prompt }], undefined, opts);
   addUsage(usage, response.usage);
-  return response.content;
+  if (response.content.trim()) return response.content;
+
+  // Reasoning-token exhaustion (finish_reason=length) can return empty
+  // content. Retry once at low effort; if it still fails, keep the previous
+  // draft rather than overwriting it with "".
+  const retry = await deps.chat([{ role: "user", content: prompt }], undefined, opts);
+  addUsage(usage, retry.usage);
+  return retry.content.trim() ? retry.content : input.draftReport;
 }
 
 export async function runSupervisor(
@@ -114,16 +126,41 @@ export async function runSupervisor(
   let draftReport = input.draftReport;
   const rawNotes: string[] = [];
   let iterations = 0;
+  let researchRounds = 0;
+  let softNoticeSent = false;
+  let fallbackResearchTried = false;
+
+  // Soft deadline: at 70% of the wall-clock budget, stop launching new
+  // research and let the supervisor wrap up. The hard deadline (AbortSignal
+  // in the orchestrator) remains the backstop.
+  const softDeadlineHit = (): boolean =>
+    deps.limits.deadlineMs > 0 &&
+    Date.now() - deps.startedAt >= deps.limits.deadlineMs * 0.7;
 
   for (;;) {
     ensureNotStopped(deps);
     iterations++;
-    deps.emit({
-      status: "running",
-      step: "supervisor",
-      detail: `research round ${iterations}: planning next steps`,
-      iteration: iterations,
-    });
+    if (softDeadlineHit() && !softNoticeSent) {
+      softNoticeSent = true;
+      messages.push({
+        role: "user",
+        content:
+          "TIME BUDGET: at least 70% of the research deadline has elapsed. Do not launch another research round; call ResearchComplete now so the final report can be written.",
+      });
+      deps.emit({
+        status: "running",
+        step: "supervisor",
+        detail: "soft deadline reached — asking the supervisor to wrap up",
+        iteration: iterations,
+      });
+    } else {
+      deps.emit({
+        status: "running",
+        step: "supervisor",
+        detail: `supervisor call ${iterations} (${researchRounds}/${deps.limits.maxResearchRounds} research rounds): planning next steps`,
+        iteration: iterations,
+      });
+    }
 
     const response = await deps.chat(
       [{ role: "system", content: systemPrompt }, ...messages],
@@ -132,6 +169,10 @@ export async function runSupervisor(
         model: deps.roles.toolLoop,
         signal: deps.signal,
         minIntervalMs: deps.limits.minCallIntervalMs,
+        reasoningEffort: deps.limits.reasoningEffort,
+        timeoutMs: deps.limits.llmTimeoutMs,
+        maxAttempts: deps.limits.llmMaxAttempts,
+        retryOnTimeout: true,
       },
     );
     addUsage(usage, response.usage);
@@ -145,7 +186,31 @@ export async function runSupervisor(
 
     const researchComplete = calls.some((call) => call.name === "ResearchComplete");
     const exceeded = iterations >= deps.limits.maxSupervisorIterations;
-    if (researchComplete || !calls.length || exceeded) break;
+    if (researchComplete || !calls.length || exceeded) {
+      // Safety net: never end the supervisor with zero research. A malformed
+      // provider response (HTTP 200 + no tool calls) used to produce a
+      // "completed" run that researched nothing (2026-10-19 META trace).
+      if (!messages.some((m) => m.role === "tool") && !fallbackResearchTried) {
+        fallbackResearchTried = true;
+        deps.emit({
+          status: "running",
+          step: "researchers",
+          detail: "supervisor returned no research calls — launching a fallback researcher from the brief",
+          iteration: iterations,
+        });
+        const fallbackTopic = input.brief.length > 4_000 ? input.brief.slice(0, 4_000) : input.brief;
+        const result = await deps.runResearcher(fallbackTopic, deps);
+        addUsage(usage, result.usage);
+        rawNotes.push(result.rawNotes);
+        messages.push({
+          role: "tool",
+          content: result.compressed || "Error synthesizing research report",
+          tool_call_id: "fallback-researcher",
+          name: "ConductResearch",
+        });
+      }
+      break;
+    }
 
     // Dispatch. ConductResearch calls run as parallel researcher sub-loops
     // (chunked to RESEARCH_MAX_CONCURRENT even if the model over-asks);
@@ -153,34 +218,47 @@ export async function runSupervisor(
     const conduct = calls
       .map((call, index) => ({ call, index }))
       .filter(({ call }) => call.name === "ConductResearch");
-    if (conduct.length) {
+    const results = new Array<string>(calls.length).fill("");
+    const skipNewResearch = conduct.length > 0 && softDeadlineHit();
+    if (skipNewResearch) {
+      for (const { index } of conduct) {
+        results[index] =
+          "Skipped: research time budget exhausted. Use the findings already collected.";
+      }
+      deps.emit({
+        status: "running",
+        step: "supervisor",
+        detail: "soft deadline reached — skipping new research and wrapping up",
+        iteration: iterations,
+      });
+    } else if (conduct.length) {
+      researchRounds++;
       const topics = conduct.map(({ call }) => String(call.args?.research_topic ?? ""));
       deps.emit({
         status: "running",
         step: "researchers",
-        detail: `launching ${topics.length} researcher(s): ${truncate(topics.join(" · "), 180)}`,
+        detail: `research round ${researchRounds}/${deps.limits.maxResearchRounds}: launching ${topics.length} researcher(s): ${truncate(topics.join(" · "), 180)}`,
         iteration: iterations,
       });
-    }
-
-    const results = new Array<string>(calls.length).fill("");
-    for (let start = 0; start < conduct.length; start += deps.limits.maxConcurrent) {
-      const chunk = conduct.slice(start, start + deps.limits.maxConcurrent);
-      await Promise.all(
-        chunk.map(async ({ call, index }) => {
-          const topic = String(call.args?.research_topic ?? "");
-          const result = await deps.runResearcher(topic, deps);
-          results[index] = result.compressed || "Error synthesizing research report";
-          rawNotes.push(result.rawNotes);
-          deps.emit({
-            status: "running",
-            step: "researchers",
-            detail: `researcher finished: ${truncate(topic)}`,
-            iteration: iterations,
-            topic,
-          });
-        }),
-      );
+      for (let start = 0; start < conduct.length; start += deps.limits.maxConcurrent) {
+        const chunk = conduct.slice(start, start + deps.limits.maxConcurrent);
+        await Promise.all(
+          chunk.map(async ({ call, index }) => {
+            const topic = String(call.args?.research_topic ?? "");
+            const result = await deps.runResearcher(topic, deps);
+            addUsage(usage, result.usage);
+            results[index] = result.compressed || "Error synthesizing research report";
+            rawNotes.push(result.rawNotes);
+            deps.emit({
+              status: "running",
+              step: "researchers",
+              detail: `researcher finished: ${truncate(topic)}`,
+              iteration: iterations,
+              topic,
+            });
+          }),
+        );
+      }
     }
 
     for (let i = 0; i < calls.length; i++) {
@@ -188,6 +266,10 @@ export async function runSupervisor(
       if (call.name === "think_tool") {
         results[i] = `Reflection recorded: ${String(call.args?.reflection ?? "")}`;
       } else if (call.name === "refine_draft_report") {
+        if (softDeadlineHit()) {
+          results[i] = "Skipped: research time budget exhausted. Keep the current draft.";
+          continue;
+        }
         // Findings = prior tool messages (python get_notes_from_tool_calls
         // runs before this batch's tool messages are appended — parity).
         const findings = messages
@@ -213,6 +295,17 @@ export async function runSupervisor(
         name: call.name,
       });
     });
+
+    if (skipNewResearch) break;
+    if (researchRounds >= deps.limits.maxResearchRounds) {
+      deps.emit({
+        status: "running",
+        step: "supervisor",
+        detail: `research round cap (${deps.limits.maxResearchRounds}) reached — wrapping up`,
+        iteration: iterations,
+      });
+      break;
+    }
   }
 
   const notes = messages.filter((m) => m.role === "tool").map((m) => m.content);

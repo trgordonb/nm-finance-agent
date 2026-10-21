@@ -71,10 +71,21 @@ export class AgentLoop {
   tools: Map<string, ToolDef>;
   private memory: PromptMemory;
   private maxIterations: number;
+  /** Injectable for contract tests; production uses the shared chat client. */
+  private chatFn: typeof chat;
 
-  constructor(opts: { memory: PromptMemory; store: SessionDriver; tools?: ToolDef[]; mirror?: AgentDbMirror | null; summarizer?: SearchSummarizer | null; maxIterations?: number }) {
+  constructor(opts: {
+    memory: PromptMemory;
+    store: SessionDriver;
+    tools?: ToolDef[];
+    mirror?: AgentDbMirror | null;
+    summarizer?: SearchSummarizer | null;
+    maxIterations?: number;
+    chatFn?: typeof chat;
+  }) {
     this.memory = opts.memory;
     this.maxIterations = opts.maxIterations ?? Number(process.env.BUDGET_TOOL_MAX_ITERATIONS ?? "25");
+    this.chatFn = opts.chatFn ?? chat;
     const base = opts.tools ?? buildToolRegistry(opts.store, opts.mirror, opts.summarizer);
     this.tools = new Map<string, ToolDef>(base.map((t) => [t.name, t]));
   }
@@ -149,18 +160,96 @@ export class AgentLoop {
         tags: ["nm-finance-agent"],
         metadata: llmRunMetadata(OPENROUTER_MODEL_MAIN),
       });
-      const response = await chat([{ role: "system", content: systemPrompt }, ...messages], wire);
+      const isAbort = (e: unknown): boolean =>
+        Boolean(meta?.signal?.aborted) || (e as Error)?.name === "AbortError";
+      let response: Awaited<ReturnType<typeof chat>>;
+      try {
+        response = await this.chatFn(
+          [{ role: "system", content: systemPrompt }, ...messages],
+          wire,
+          meta?.signal ? { signal: meta.signal } : undefined,
+        );
+      } catch (e) {
+        if (isAbort(e)) {
+          cancelled = true;
+          break;
+        }
+        throw e;
+      }
       if (response.usage) {
         usage.prompt_tokens += response.usage.prompt_tokens ?? 0;
         usage.completion_tokens += response.usage.completion_tokens ?? 0;
       }
+      const completionMeta = (resp: typeof response): Record<string, unknown> => ({
+        ...llmRunMetadata(resp.model, resp.usage),
+        ...(resp.provider ? { provider: resp.provider } : {}),
+        ...(resp.finishReason ? { finish_reason: resp.finishReason } : {}),
+      });
       trace.update(llmRun, {
         outputs: llmRunOutputs(response.content, {
           usage: response.usage,
           message: { role: "assistant", content: response.content, tool_calls: response.toolCalls },
         }),
-        metadata: llmRunMetadata(response.model, response.usage),
+        metadata: completionMeta(response),
       });
+
+      // A provider can return an empty assistant message after spending its
+      // output budget on reasoning (GLM live 2026-10-20: 737 reasoning tokens,
+      // no content, no tool calls). Without this guard the turn silently ends
+      // with an empty assistant row. Retry once at low effort, then fail loudly.
+      if (!response.toolCalls.length && !response.content.trim()) {
+        if (shouldStop?.()) {
+          cancelled = true;
+          break;
+        }
+        const retryNudge: ChatMessage = {
+          role: "user",
+          content:
+            "Your previous response was empty. If the task requires a tool, call it now; otherwise give a concise answer.",
+        };
+        const retryRun = trace.create({
+          name: `llm:${i + 1}:empty-retry`,
+          runType: "llm",
+          inputs: {
+            messages: [{ role: "system", content: systemPrompt }, ...messages, retryNudge],
+            tools: toolNames,
+          },
+          parent: turnRun,
+          tags: ["nm-finance-agent"],
+          metadata: llmRunMetadata(OPENROUTER_MODEL_MAIN),
+        });
+        let retry: Awaited<ReturnType<typeof chat>>;
+        try {
+          retry = await this.chatFn(
+            [{ role: "system", content: systemPrompt }, ...messages, retryNudge],
+            wire,
+            { reasoningEffort: "low", ...(meta?.signal ? { signal: meta.signal } : {}) },
+          );
+        } catch (e) {
+          if (isAbort(e)) {
+            cancelled = true;
+            break;
+          }
+          throw e;
+        }
+        if (retry.usage) {
+          usage.prompt_tokens += retry.usage.prompt_tokens ?? 0;
+          usage.completion_tokens += retry.usage.completion_tokens ?? 0;
+        }
+        trace.update(retryRun, {
+          outputs: llmRunOutputs(retry.content, {
+            usage: retry.usage,
+            message: { role: "assistant", content: retry.content, tool_calls: retry.toolCalls },
+          }),
+          metadata: completionMeta(retry),
+        });
+        if (!retry.toolCalls.length && !retry.content.trim()) {
+          fatal = "model returned an empty response twice (reasoning-token exhaustion?)";
+          result = { messages: newSlice, iterations, cancelled, fatal, usage };
+          break;
+        }
+        response = retry;
+      }
 
       if (!response.toolCalls.length) {
         if (shouldStop?.()) {

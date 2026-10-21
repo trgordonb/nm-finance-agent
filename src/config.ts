@@ -39,12 +39,38 @@ export const SKILLS_STATE_DIR =
     ? path.resolve(process.env.SKILLS_STATE_DIR.trim())
     : path.resolve("./state");
 
+// Per-user skill toggle profile (state/users/<id>/skills.json). The registry
+// CLI reads the same variable. Sanitised to one path segment: the value will
+// come from OAuth before long, and it must never traverse directories.
+const RAW_SKILLS_USER_ID = (process.env.SKILLS_USER_ID ?? "").trim() || "default";
+export const SKILLS_USER_ID = /^[a-zA-Z0-9._-]{1,64}$/.test(RAW_SKILLS_USER_ID)
+  ? RAW_SKILLS_USER_ID
+  : "default";
+
+// SKILLS_REQUIRED=1 makes the boot pull a hard dependency: a failed pull or an
+// empty working copy refuses to serve. On a fresh VM an unseeded bucket and a
+// missing CLI both look like "healthy but skill-less" without this.
+export const SKILLS_REQUIRED = ["1", "true", "yes", "on"].includes(
+  (process.env.SKILLS_REQUIRED ?? "").toLowerCase(),
+);
+
 // The self-hosted llmwiki service the Wiki tab reads through /api/wiki/*
 // (read-only, allow-listed passthrough — see src/wiki-proxy.ts). The llm-wiki
 // skill's helper resolves the same service from its own .env; this is only the
 // server-side default for the proxy.
 export const WIKI_API_URL =
   (process.env.WIKI_API_URL ?? "").trim() || "http://127.0.0.1:8010";
+
+// Bearer for the llmwiki service. Empty is right for the local Docker
+// deployment, whose read routes are open; the Cloudflare Containers Worker
+// gates reads too, so a remote service needs the same INGEST_API_TOKEN here.
+export const WIKI_API_TOKEN = (process.env.WIKI_API_TOKEN ?? "").trim();
+
+// The Wiki tab read is synchronous. 15 s was enough for localhost; a cold
+// start behind Cloudflare Containers (boot + uvicorn) can take longer, so the
+// proxy budget matches the skill's `wait` loop instead.
+export const WIKI_PROXY_TIMEOUT_MS =
+  Number(process.env.WIKI_PROXY_TIMEOUT_MS ?? 60_000) || 60_000;
 
 // HARD_JAIL=1 refuses all fs writes/executes outside the workspace — the
 // posture for network-exposed deployments (SERVER_HOST=0.0.0.0 etc.).
@@ -59,10 +85,17 @@ export const OPENROUTER_MODEL_MAIN =
   process.env.OPENROUTER_MODEL_MAIN || process.env.OPENROUTER_MODEL || process.env.OPENAI_MODEL_ID || "z-ai/glm-5.3-flash";
 // Secondary/cheap model for future summarizer/nudge/compression increments.
 export const OPENROUTER_MODEL_SUMMARIZER =
-  process.env.OPENROUTER_MODEL_SUMMARIZER || "liquid/lfm-2.5-2.6b:free";
+  process.env.OPENROUTER_MODEL_SUMMARIZER || "poolside/laguna-xs-2.1:free";
 // Preferred provider order for the main model ("a,b,c"), passed as
 // provider:{order, allow_fallbacks} per OpenRouter API. Unknown/absent → undefined.
 export const OPENROUTER_PROVIDER_ORDER = (process.env.OPENROUTER_MAIN_MODEL_PROVIDER ?? "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+// Provider slugs to exclude entirely (OpenRouter provider.ignore). This is a
+// content-quality guard: a provider can return HTTP 200 with degenerate text,
+// which fallbacks cannot detect. Relace has done this live (2026-10-19).
+export const OPENROUTER_PROVIDER_IGNORE = (process.env.OPENROUTER_PROVIDER_IGNORE ?? "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
@@ -76,6 +109,16 @@ export const MAX_COMPLETION_TOKENS = Number(process.env.MAX_COMPLETION_TOKENS ??
 export const BUDGET_TOOL_MAX_ITERATIONS = Number(process.env.BUDGET_TOOL_MAX_ITERATIONS ?? "25");
 export const EXECUTE_TIMEOUT_MS = Number(process.env.EXECUTE_TIMEOUT_MS ?? "120000");
 
+// Optional session-search condensation (Hermes-style). It is enrichment only:
+// a slow free model must never hold a turn for the full LLM timeout. On
+// timeout/abort the tool falls back to raw excerpts.
+export const SEARCH_SUMMARIZER_TIMEOUT_MS = Number(
+  process.env.SEARCH_SUMMARIZER_TIMEOUT_MS ?? "20000",
+);
+export const SEARCH_SUMMARIZER_MAX_ATTEMPTS = Number(
+  process.env.SEARCH_SUMMARIZER_MAX_ATTEMPTS ?? "2",
+);
+
 // --- Deep research mode (/research) ------------------------------------------
 // Port of thinkdepth-ai's research mode (docs/deep-research-plan.md). All
 // research LLM roles run on the single OPENROUTER_MODEL_MAIN (glm-5.3-flash)
@@ -84,13 +127,35 @@ export const EXECUTE_TIMEOUT_MS = Number(process.env.EXECUTE_TIMEOUT_MS ?? "1200
 // model; Exa (EXA_API_KEY) is the first-choice summarizer.
 export const RESEARCH_MODE_ENABLED = (process.env.RESEARCH_MODE_ENABLED ?? "1") !== "0";
 export const RESEARCH_MAX_CONCURRENT = Number(process.env.RESEARCH_MAX_CONCURRENT ?? "3");
-export const RESEARCH_MAX_SUPERVISOR_ITERATIONS = Number(process.env.RESEARCH_MAX_SUPERVISOR_ITERATIONS ?? "15");
-export const RESEARCH_MAX_RESEARCHER_TURNS = Number(process.env.RESEARCH_MAX_RESEARCHER_TURNS ?? "8");
-export const RESEARCH_TOKEN_BUDGET = Number(process.env.RESEARCH_TOKEN_BUDGET ?? "2000000");
+export const RESEARCH_MAX_SUPERVISOR_ITERATIONS = Number(process.env.RESEARCH_MAX_SUPERVISOR_ITERATIONS ?? "10");
+// ConductResearch batches, not supervisor tool calls. Each round is minutes of
+// parallel work; two rounds cover the brief without the 4-6 round tail the
+// 2026-10-19 MSFT trace showed.
+export const RESEARCH_MAX_RESEARCH_ROUNDS = Number(process.env.RESEARCH_MAX_RESEARCH_ROUNDS ?? "2");
+export const RESEARCH_MAX_RESEARCHER_TURNS = Number(process.env.RESEARCH_MAX_RESEARCHER_TURNS ?? "5");
+// Per-researcher search budget. The researcher prompt says "5 searches max";
+// this is the enforceable ceiling (turns can issue several searches each).
+export const RESEARCH_MAX_RESEARCHER_SEARCHES = Number(
+  process.env.RESEARCH_MAX_RESEARCHER_SEARCHES ?? "6",
+);
+export const RESEARCH_TOKEN_BUDGET = Number(process.env.RESEARCH_TOKEN_BUDGET ?? "300000");
 export const RESEARCH_SEARCH_MAX_RESULTS = Number(process.env.RESEARCH_SEARCH_MAX_RESULTS ?? "3");
 export const RESEARCH_PAGE_CONTEXT_CHARS = Number(process.env.RESEARCH_PAGE_CONTEXT_CHARS ?? "60000");
 export const RESEARCH_LLM_MIN_INTERVAL_MS = Number(process.env.RESEARCH_LLM_MIN_INTERVAL_MS ?? "1200");
-export const RESEARCH_DEADLINE_MINUTES = Number(process.env.RESEARCH_DEADLINE_MINUTES ?? "0");
+export const RESEARCH_DEADLINE_MINUTES = Number(process.env.RESEARCH_DEADLINE_MINUTES ?? "15");
+// GLM "always thinks"; low effort is the Python original's thinking="off"
+// mapping. Provider-default reasoning produced 14-22K-token calls here.
+const RESEARCH_REASONING_RAW = (process.env.RESEARCH_REASONING_EFFORT ?? "low").trim().toLowerCase();
+export const RESEARCH_REASONING_EFFORT: "low" | "medium" | "high" =
+  RESEARCH_REASONING_RAW === "medium" || RESEARCH_REASONING_RAW === "high"
+    ? RESEARCH_REASONING_RAW
+    : "low";
+export const RESEARCH_LLM_TIMEOUT_MS = Number(
+  process.env.RESEARCH_LLM_TIMEOUT_MS ?? "600000",
+);
+export const RESEARCH_LLM_MAX_ATTEMPTS = Number(
+  process.env.RESEARCH_LLM_MAX_ATTEMPTS ?? "2",
+);
 export const RESEARCH_SAVE_REPORTS = (process.env.RESEARCH_SAVE_REPORTS ?? "1") !== "0";
 // Expose the research engine to the main agent as the `deep_research` tool
 // (default off: a run takes 20-40 minutes and real spend — the /research

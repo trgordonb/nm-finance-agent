@@ -25,6 +25,25 @@ test("usageMetadata maps provider usage to the LangSmith convention", () => {
     output_tokens: 5,
     total_tokens: 5,
   });
+  // Reasoning tokens follow the SDK convention (output_token_details).
+  assert.deepEqual(
+    usageMetadata({
+      prompt_tokens: 100,
+      completion_tokens: 40,
+      completion_tokens_details: { reasoning_tokens: 30 },
+    }),
+    {
+      input_tokens: 100,
+      output_tokens: 40,
+      total_tokens: 140,
+      output_token_details: { reasoning: 30 },
+    },
+  );
+  // Zero reasoning stays out of the payload.
+  assert.deepEqual(
+    usageMetadata({ prompt_tokens: 1, completion_tokens: 1, completion_tokens_details: { reasoning_tokens: 0 } }),
+    { input_tokens: 1, output_tokens: 1, total_tokens: 2 },
+  );
 });
 
 test("llmRunMetadata carries ls_provider/ls_model_name and usage_metadata", () => {

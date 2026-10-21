@@ -65,3 +65,47 @@ test("wiki-proxy: fetchWiki forwards status, content type and body", async () =>
     await new Promise<void>((resolve) => server.close(() => resolve()));
   }
 });
+
+test("wiki-proxy: fetchWiki sends the bearer for a remote service", async () => {
+  const server = http.createServer((req, res) => {
+    if (req.url === "/auth" && req.headers.authorization === "Bearer test-token") {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(JSON.stringify({ ok: true }));
+      return;
+    }
+    res.writeHead(401, { "content-type": "application/json" });
+    res.end(JSON.stringify({ detail: "invalid or missing bearer token" }));
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const base = `http://127.0.0.1:${address.port}`;
+  try {
+    const authed = await fetchWiki(base, "/auth", { token: "test-token" });
+    assert.equal(authed.status, 200);
+
+    const anonymous = await fetchWiki(base, "/auth");
+    assert.equal(anonymous.status, 401, "no token means no Authorization header");
+  } finally {
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});
+
+test("wiki-proxy: fetchWiki honors a custom timeout", async () => {
+  const server = http.createServer((_req, res) => {
+    setTimeout(() => {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end("{}");
+    }, 300);
+  });
+  await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  const base = `http://127.0.0.1:${address.port}`;
+  try {
+    await assert.rejects(fetchWiki(base, "/slow", { timeoutMs: 50 }));
+  } finally {
+    server.closeAllConnections?.();
+    await new Promise<void>((resolve) => server.close(() => resolve()));
+  }
+});

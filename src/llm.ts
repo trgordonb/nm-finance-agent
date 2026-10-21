@@ -7,6 +7,7 @@ import {
   OPENROUTER_BASE_URL,
   OPENROUTER_MODEL_MAIN,
   OPENROUTER_PROVIDER_ORDER,
+  OPENROUTER_PROVIDER_IGNORE,
   OPENROUTER_PROVIDER_FALLBACKS,
   OPENROUTER_REASONING,
   MAX_COMPLETION_TOKENS,
@@ -61,12 +62,23 @@ interface ChatPart {
   name?: string;
 }
 
+export interface ChatUsage {
+  prompt_tokens?: number;
+  completion_tokens?: number;
+  /** OpenRouter/OpenAI usage detail; reasoning is the hidden thinking spend. */
+  completion_tokens_details?: { reasoning_tokens?: number };
+}
+
 export interface ChatResponse {
   content: string;
   toolCalls: Array<{ id: string; name: string; args: Record<string, unknown> }>;
   raw: ChatPart;
-  usage?: { prompt_tokens?: number; completion_tokens?: number };
+  usage?: ChatUsage;
   model: string;
+  /** Provider that served the request (OpenRouter `provider` field). */
+  provider?: string;
+  /** Provider finish reason — "length" flags a truncated/degenerate output. */
+  finishReason?: string;
 }
 
 export interface ChatOpts {
@@ -89,6 +101,15 @@ export interface ChatOpts {
    *  accepted by z-ai/glm-5.3-flash. Applies only when the reasoning block
    *  is sent (ignored under noReasoning). */
   reasoningEffort?: "low" | "medium" | "high";
+  /** Per-request HTTP timeout. Research writer calls use a longer budget than
+   *  the 4s-spacing chat loop; a 20K-token GLM generation can exceed 300s. */
+  timeoutMs?: number;
+  /** Per-call retry cap (defaults to LLM_MAX_ATTEMPTS / 5). */
+  maxAttempts?: number;
+  /** When false, a request that hit its own timeout is not retried: the
+   *  generation almost certainly completed server-side, so retrying repeats
+   *  the whole spend. Defaults to true (transient-network behavior). */
+  retryOnTimeout?: boolean;
 }
 
 export async function chat(
@@ -98,6 +119,9 @@ export async function chat(
 ): Promise<ChatResponse> {
   if (!OPENROUTER_API_KEY) throw new Error("OPENROUTER_API_KEY is not set");
   const model = opts.model || OPENROUTER_MODEL_MAIN;
+  // Provider steering is for the MAIN model only: the summarizer/cheap roles
+  // use a different model that may not be served by those providers.
+  const isMainModel = model === OPENROUTER_MODEL_MAIN;
   const reasoning = OPENROUTER_REASONING && !opts.noReasoning;
   // Rate limit: enforce minimum interval between calls (shared across turns).
   // Deep-research runs override with a tighter interval via opts.minIntervalMs.
@@ -138,8 +162,12 @@ export async function chat(
   }
   // OpenRouter specifics (user example): preferred provider order + fallbacks,
   // optional reasoning block for reasoning-capable models.
-  if (OPENROUTER_PROVIDER_ORDER.length) {
-    body.provider = { order: OPENROUTER_PROVIDER_ORDER, allow_fallbacks: OPENROUTER_PROVIDER_FALLBACKS };
+  if (isMainModel && (OPENROUTER_PROVIDER_ORDER.length || OPENROUTER_PROVIDER_IGNORE.length)) {
+    body.provider = {
+      ...(OPENROUTER_PROVIDER_ORDER.length ? { order: OPENROUTER_PROVIDER_ORDER } : {}),
+      allow_fallbacks: OPENROUTER_PROVIDER_FALLBACKS,
+      ...(OPENROUTER_PROVIDER_IGNORE.length ? { ignore: OPENROUTER_PROVIDER_IGNORE } : {}),
+    };
   }
   if (reasoning) {
     body.reasoning = opts.reasoningEffort
@@ -147,14 +175,24 @@ export async function chat(
       : { enabled: true };
   }
 
+  const rawAttempts = opts.maxAttempts ?? MAX_ATTEMPTS;
+  const maxAttempts = Number.isFinite(rawAttempts) ? Math.max(1, Math.floor(rawAttempts)) : MAX_ATTEMPTS;
+  const rawTimeout = opts.timeoutMs ?? Number(process.env.LLM_TIMEOUT_MS ?? "300000");
+  const timeoutMs = Number.isFinite(rawTimeout) ? Math.max(1_000, Math.floor(rawTimeout)) : 300_000;
   let lastErr: Error | null = null;
-  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
+      const providerLabel = isMainModel
+        ? OPENROUTER_PROVIDER_ORDER.join(",") || "auto"
+        : "auto";
+      const ignoreLabel = isMainModel
+        ? OPENROUTER_PROVIDER_IGNORE.join(",") || "-"
+        : "-";
       console.error(
-        `[llm] POST ${OPENROUTER_BASE_URL}/chat/completions model=${model} attempt=${attempt}/${MAX_ATTEMPTS}`,
+        `[llm] POST ${OPENROUTER_BASE_URL}/chat/completions model=${model} attempt=${attempt}/${maxAttempts} timeout=${timeoutMs}ms provider=${providerLabel} ignore=${ignoreLabel}`,
       );
       lastCallAt = Date.now();
-      const timeoutSignal = AbortSignal.timeout(Number(process.env.LLM_TIMEOUT_MS ?? "300000"));
+      const timeoutSignal = AbortSignal.timeout(timeoutMs);
       // A caller-supplied abort (deep-research cancel) kills the in-flight
       // request immediately, not just at the next loop boundary.
       const requestSignal = opts.signal ? AbortSignal.any([timeoutSignal, opts.signal]) : timeoutSignal;
@@ -175,10 +213,12 @@ export async function chat(
       }
       const data = (await res.json()) as {
         model: string;
-        usage?: { prompt_tokens?: number; completion_tokens?: number };
-        choices: Array<{ message: ChatPart }>;
+        provider?: string;
+        usage?: ChatUsage;
+        choices: Array<{ message: ChatPart; finish_reason?: string }>;
       };
-      const msg = data.choices?.[0]?.message;
+      const choice = data.choices?.[0];
+      const msg = choice?.message;
       if (!msg) throw new Error("Response has no message");
       return {
         content: msg.content || "",
@@ -190,15 +230,22 @@ export async function chat(
         raw: msg,
         usage: data.usage,
         model: data.model || model,
+        provider: data.provider,
+        finishReason: choice?.finish_reason,
       };
     } catch (e) {
       const err = e as Error & { fatal?: boolean };
       lastErr = err;
       if (opts.signal?.aborted) break; // caller cancelled — no retries
       if (err.fatal) break;
+      const isTimeout = err.name === "TimeoutError" || /timed? ?out|timeout/i.test(err.message || "");
+      if (isTimeout && opts.retryOnTimeout === false) {
+        console.error(`[llm] timeout after ${timeoutMs}ms — not retrying (retryOnTimeout=false)`);
+        break;
+      }
       if (!retryable(err.message || String(e))) break;
       const wait = 2000 * Math.pow(2, attempt - 1);
-      console.error(`[llm] retry ${attempt}/${MAX_ATTEMPTS} after ${wait / 1000}s: ${err.message.slice(0, 120)}`);
+      console.error(`[llm] retry ${attempt}/${maxAttempts} after ${wait / 1000}s: ${err.message.slice(0, 120)}`);
       await sleep(wait);
     }
   }

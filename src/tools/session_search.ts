@@ -85,7 +85,7 @@ export function createSessionSearchTool(
       },
       required: ["query"],
     },
-    async execute(args) {
+    async execute(args, ctx) {
       try {
         const limit = Math.max(1, Math.min(Number(args.limit ?? 5) || 5, 20));
         const query = String(args.query ?? "");
@@ -111,7 +111,7 @@ export function createSessionSearchTool(
               snippet: h.snippet,
               retriever: "fts" as const,
               rank: 0,
-            })));
+            })), ctx?.signal);
             if (s.text && !/^none relevant/i.test(s.text.trim())) {
               return (
                 `[session_search: condensed by ${s.modelLabel} in ${s.elapsedMs}ms from ${fused.length} raw excerpts]\n\n` +

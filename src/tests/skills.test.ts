@@ -132,14 +132,27 @@ test("skills: trailing space on the closing fence tolerated (tradedesk-dukascopy
 
 test("execute: foreground timeouts are recoverable (Rejected + background hint)", async () => {
   const { execFile } = await import("node:child_process");
+  // Self-contained fixture: the old absolute /tmp path was a stale local
+  // artifact that broke the suite on every other machine.
+  const fixtureDir = fs.mkdtempSync(path.join(os.tmpdir(), "nmfa-exec-"));
+  const fixture = path.join(fixtureDir, "exec-timeout.mts");
+  const shellPath = new URL("../tools/shell.ts", import.meta.url).pathname;
+  fs.writeFileSync(
+    fixture,
+    `import { execute } from ${JSON.stringify(shellPath)};\n` +
+      `const out = await execute.execute({ command: "sleep 5" });\n` +
+      `console.log("RESULT:", out);\n`,
+    "utf8",
+  );
   const out = await new Promise<string>((resolve) => {
     execFile(
       process.execPath,
-      ["node_modules/.bin/tsx", "/tmp/opencode/exec-timeout.mts"],
+      ["node_modules/.bin/tsx", fixture],
       { env: { ...process.env, EXECUTE_TIMEOUT_MS: "300" }, timeout: 30000 },
       (err, stdout) => resolve(stdout || String(err)),
     );
   });
+  fs.rmSync(fixtureDir, { recursive: true, force: true });
   assert.match(out, /RESULT: Rejected: command timed out after 1s/);
   assert.ok(!out.includes("Error: Command timed out"), "timeouts must NOT end the turn");
 });
@@ -154,6 +167,27 @@ test("execute: signal-killed commands are recoverable (Rejected + pkill self-mat
   assert.ok(!result.startsWith("Error:"), "signal deaths must NOT end the turn");
 });
 
+test("execute: stderr on a zero exit is non-fatal, not 'Error output'", async () => {
+  const { execute } = await import("../tools/shell.js");
+  const ok = String(await execute.execute({ command: "echo hello; echo progress >&2" }));
+  assert.match(ok, /Output:\nhello/);
+  assert.match(ok, /Stderr \(non-fatal\):\nprogress/);
+  assert.doesNotMatch(ok, /Error output:/);
+
+  const bad = String(await execute.execute({ command: "echo bad >&2; exit 3" }));
+  assert.match(bad, /Error output:\nbad/);
+  assert.match(bad, /Exit code: 3/);
+});
+
+test("execute: turn abort signal kills the foreground child", async () => {
+  const { execute } = await import("../tools/shell.js");
+  const ctrl = new AbortController();
+  const running = execute.execute({ command: "sleep 10" }, { signal: ctrl.signal });
+  setTimeout(() => ctrl.abort(), 100);
+  const out = String(await running);
+  assert.match(out, /Rejected: cancelled by user/, "cancel kills the child promptly");
+});
+
 test("summarizer: env-gated factory + pseudo-tool guard + header shape", async () => {
   process.env.SEARCH_SUMMARIZER_ENABLED = "";
   const { createSessionSearchSummarizer } = await import("../summarizer.js");
@@ -163,7 +197,7 @@ test("summarizer: env-gated factory + pseudo-tool guard + header shape", async (
     const s = createSessionSearchSummarizer();
     assert.ok(s, "enabled with the key present");
     // condensed header shape: this is the python parity exact format
-    const header = `[session_search: condensed by ${"openrouter/liquid/lfm-2.5-2.6b:free"} in 42ms from 8 raw excerpts]`;
+    const header = `[session_search: condensed by ${"openrouter/poolside/laguna-xs-2.1:free"} in 42ms from 8 raw excerpts]`;
     assert.match(header, /^\[session_search: condensed by openrouter\/[^\]]+ in \d+ms from \d+ raw excerpts\]$/);
   } finally {
     process.env.SEARCH_SUMMARIZER_ENABLED = "";
@@ -181,9 +215,15 @@ test("summarizer: session_search condenses with header, silent-fallback unaffect
     { role: "assistant", content: "the deep read summary with 15 liquid commodity futures, monthly returns, Jan 2016 OOS window, Newey-West SEs" },
   ]);
   class FakeSummarizer {
-    label = "openrouter/liquid/lfm-2.5-2.6b:free";
-    async summarize(_query: string, hits: unknown[]): Promise<{ text: string; modelLabel: string; elapsedMs: number; excerptCount: number }> {
+    label = "openrouter/poolside/laguna-xs-2.1:free";
+    capturedSignal?: AbortSignal;
+    async summarize(
+      _query: string,
+      hits: unknown[],
+      signal?: AbortSignal,
+    ): Promise<{ text: string; modelLabel: string; elapsedMs: number; excerptCount: number }> {
       void hits;
+      this.capturedSignal = signal;
       return {
         text: "Summary: the seasonal-futures run used monthly returns with a fixed pre-OOS screen.",
         modelLabel: this.label,
@@ -192,13 +232,16 @@ test("summarizer: session_search condenses with header, silent-fallback unaffect
       };
     }
   }
-  const tool = createSessionSearchTool(store, null, new FakeSummarizer() as never);
-  const res = await tool.execute({ query: "seasonal futures", limit: 5 });
-  assert.match(res, /^\[session_search: condensed by openrouter\/liquid\/lfm-2\.5-2\.6b:free in \d+ms from \d+ raw excerpts\]/);
+  const fake = new FakeSummarizer();
+  const tool = createSessionSearchTool(store, null, fake as never);
+  const ctrl = new AbortController();
+  const res = await tool.execute({ query: "seasonal futures", limit: 5 }, { signal: ctrl.signal });
+  assert.equal(fake.capturedSignal, ctrl.signal, "session_search forwards the turn abort signal");
+  assert.match(res, /^\[session_search: condensed by openrouter\/[^\]]+ in \d+ms from \d+ raw excerpts\]/);
   assert.match(res, /seasonal-futures run/);
   // "none relevant" → decay to raw list
   class EmptySummarizer {
-    label = "openrouter/liquid/lfm-2.5-2.6b:free";
+    label = "openrouter/poolside/laguna-xs-2.1:free";
     async summarize() { return { text: "none relevant", modelLabel: this.label, elapsedMs: 9, excerptCount: 3 }; }
   }
   // "none relevant" merges back into raw fused hits for an actually-matching query

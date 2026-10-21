@@ -502,3 +502,158 @@ substrate.
   trustworthy: combined budget enforcement + `Rejected:` convention, tool-call
   round-trip fidelity, search fallback chain, `Error:` fatality matrix,
   workspace resolution/guards.
+
+## 2026-10-19 — Deep research latency: reasoning-effort + retry amplification
+
+Trace comparison (MSFT 2026-10-19, 108.4 min / 2.42M tokens vs the Python
+thinkdepth-ai DAL run, 5.9 min / 188K tokens) showed the TS port had left GLM
+at provider-default reasoning on every research role. 17 calls emitted >10K
+output tokens; five compress calls hit the 300 s HTTP timeout and were retried
+2-5 times (1,501 s = 5 x 300 s), and four `refine_draft_report` calls burned
+~14K reasoning tokens and returned empty content, overwriting the draft.
+
+- **P0**: all research roles now send `reasoning.effort=low`; outline capped at
+  4K output; refine/compress retry once on empty and preserve the prior draft;
+  `ChatOpts` gained per-call `timeoutMs`/`maxAttempts`/`retryOnTimeout`
+  (research: 600 s, 2 attempts; writer-tier calls do not retry a timeout).
+- **P1**: 15-min default wall-clock deadline wired as an `AbortSignal` (cancels
+  in-flight calls, maps to `cancelled`); 2 ConductResearch rounds; 6 searches
+  per researcher; 5 turns; 300K token budget; supervisor wrap-up notice at 70%
+  of the deadline.
+- **Provider hotfix (same day)**: the next META run researched nothing — the
+  pinned Relace provider was returning HTTP 200 with degenerate text, so the
+  brief/supervisor calls produced garbage with zero tool calls. Reproduced
+  per-provider (Relace garbage at every reasoning effort; OpenInference/Novita
+  valid). Order is now `open-inference/fp4,novita/fp8` plus
+  `OPENROUTER_PROVIDER_IGNORE=relace`; added brief/outline JSON guards, a
+  supervisor fallback researcher, a no-findings failure, an overlong-report
+  retry, and provider/finish_reason trace metadata.
+- **Live verification** (trace `eca45e89…`): 11.1 min / 160K tokens / 20 LLM
+  calls / 17 searches / 3 researchers, all on OpenInference, no retries or
+  empty content, 2,221-word report with 24 cited sources — versus 108.4 min /
+  2.42M tokens before. Python reference: 5.9 min / 188K tokens.
+- **P2 closed**: `runSupervisor` aggregates fallback/regular researcher usage
+  into the run total (root used to report ~4x below the child sum); trace
+  metadata records reasoning tokens (`output_token_details.reasoning`).
+  Verified in the AMD trace `d39a0923…`: 9.3 min / 230K tokens / 1 round /
+  16 searches, root usage exactly matching the 180,751 + 49,108 child sum.
+- Plan + evidence: `docs/deep-research-latency-plan.md`. Offline tests 102/102.
+
+## 2026-10-20 — Agent loop: empty assistant responses are retried, not dropped
+
+Trace `e52383b1…` (session `ab90cb26…`, turn 2 "Please ingest #6 into wiki")
+showed one LLM call with 43,261 prompt tokens, 752 output tokens (737
+reasoning), **empty content and zero tool calls**. The loop treated "no tool
+calls" as a final answer and persisted an empty assistant row, so the turn
+silently disappeared.
+
+- **Guard**: an empty assistant response now retries once at low effort with a
+  "call a tool or answer" nudge; if the retry is also empty the turn ends with
+  a visible `fatal` error instead of an empty message. Traced as
+  `llm:N:empty-retry`.
+- **Observability**: normal agent-turn LLM traces now record `provider` and
+  `finish_reason` (plus reasoning tokens via `output_token_details`), so a
+  future empty response is attributable to a provider.
+- **Replay**: the exact 69-tool / 43K-token prompt returned
+  `load_skill`/`execute` calls on replay, confirming the drop was a transient
+  model response rather than a prompt/tool-overload failure.
+- **Tests**: new `agent-loop.test.ts` (retry + fatal paths) and a
+  self-contained execute-timeout fixture; suite 104/104.
+
+## 2026-10-20 — Session-search summarizer hang + cancel propagation
+
+Trace `967e52ae…` (session `ab90cb26…`, "Please ingest #6 into wiki") got as
+far as an `execute` (9 ms) and then hung in `session_search` for 20+ minutes.
+The `session-search-summarize` child was an open LLM run on
+`liquid/lfm-2.5-2.6b:free`: the summarizer inherited the 300 s × 5 LLM
+defaults, had no per-request timeout, and `session_search` dropped the turn
+abort signal, so Stop could not cancel it.
+
+- **Summarizer bound**: 20 s timeout, 2 attempts, `retryOnTimeout: false`;
+  failures fall back to raw fused excerpts (enrichment must never hold a turn).
+  New knobs `SEARCH_SUMMARIZER_TIMEOUT_MS` / `SEARCH_SUMMARIZER_MAX_ATTEMPTS`.
+- **Cancel propagation**: `session_search.execute(args, ctx)` forwards
+  `ctx.signal` to `SearchSummarizer.summarize(...)`; `execute` kills the
+  foreground child on abort and returns `Rejected: cancelled by user`; an
+  aborted in-flight agent LLM call now returns `cancelled` (not an error).
+- **Tests**: signal forwarding + child-kill coverage; suite 105/105.
+- **Action**: the stuck process predates this fix; restart the server to load
+  it. The stuck turn ends with the restart.
+
+## 2026-10-20 — Model config refresh
+
+- **Summarizer**: `OPENROUTER_MODEL_SUMMARIZER` default is now
+  `poolside/laguna-xs-2.1:free` (was `liquid/lfm-2.5-2.6b:free`, briefly
+  `google/gemma-4-26b-a4b-it:free`). The free Gemma variant is served only by
+  Google AI Studio, which rejects HK-located requests; Poolside is not
+  location-blocked.
+- **Main provider order**: `open-inference/fp4,deepinfra/fp4,novita/fp8`
+  (plus `OPENROUTER_PROVIDER_IGNORE=relace`). Provider steering is now scoped
+  to the main model only — the summarizer/cheap roles use default OpenRouter
+  routing, since those providers do not necessarily serve the summarizer model.
+- **Live checks**: main model served by OpenInference. The free Poolside
+  variant is currently rate-limited upstream (429) in bursts, but the 20 s /
+  2-attempt summarizer bound falls back to raw excerpts. The paid
+  `poolside/laguna-xs-2.1` variant works reliably (1,359 reasoning + 23
+  content tokens, ~$0.00017/call) if the free tier becomes noisy.
+- Tests updated to the new model label; suite 106/106.
+
+## 2026-10-20 — Live verification: LiveMACE wiki ingest
+
+Trace `7956eed3…` (session `ab90cb26…`, "Please ingest #6 into wiki"):
+3m11s, 7 LLM calls / 6 `execute` tools, all served by OpenInference. The agent
+followed the `llm-wiki` skill exactly — health → domains → `ingest-url` →
+`wait` → status retry → `wait` → search/concepts — and ingested LiveMACE
+(`arxiv.org/abs/2610.09872`) as source
+`53e3f761f6a0e8c3-livemace-process-aware-evaluation-of-llm` into the `llm`
+domain: 7 chunks, 2 pages (`LiveMACEBench`, `Outcome-Capability Gap`), search
+verification at 0.99. The first `wait` hit a transient worker 500
+(`error code: 1101`); the agent retried `status` after 10 s and finished
+normally. No empty responses, no hangs, no cancel needed. Post-turn followups
+used the new summarizer and returned 2 items in 3.1 s.
+
+- **Trace fidelity (2026-10-20)**: the pre-flight
+  `agentdb_reflexion_retrieve` run recorded only `task.slice(0, 300)`, so
+  LangSmith showed a mid-sentence cut even though the tool received the full
+  recall query. The trace input now carries the exact `{task, k}` passed to the
+  tool.
+
+## 2026-10-20 — Wiki ingest turn: successful capture, failed verification
+
+Trace `02b1a4be…` (session `c53c78b5…`, "Ingest #1 into wiki", BDH-CQ
+arXiv:2608.09888): 6m30s, 19 LLM calls, 18 `execute` calls. The ingest itself
+succeeded — source `16e54acc89ffba9e-bdh-cq-in-context-learning-with-recurren`
+reached `state=done`, 8 chunks, page `bdh-cq` in domain `llm`. Verification then
+went sideways:
+
+- `llmwiki.sh page bdh-cq` 404'd because `/page` defaults to `general`; the
+  page lives in `llm` and the domain argument was omitted.
+- At 05:44 the remote Cloudflare service became unreachable (`curl` 000,
+  `/healthz` 000). The agent ran `docker ps`, saw nothing, and concluded "no
+  llmwiki container running" — but the service is on Cloudflare Containers,
+  not local Docker. It ended with an incomplete "Testing again:" message.
+
+Fixes: `skills/llm-wiki/SKILL.md` now states the Cloudflare/local split, says
+not to inspect local Docker when `LLMWIKI_URL` is set, documents
+`page <slug> <domain>`, and prescribes reporting the last known `status=done`
+instead of chasing a remote outage. `WIKI_API_TOKEN` in `.env` was corrected to
+the service's `INGEST_API_TOKEN` (the old 13-char value returned 401 from the
+Worker). Verified live against the Worker: source `done`, `page/bdh-cq?domain=llm`
+HTTP 200, search hit at 0.978. The local compose instance started during
+diagnosis was stopped.
+
+## 2026-10-20 — execute: non-fatal stderr no longer renders as a failed tool
+
+Trace `af386450…` (session `2de29d4a…`, "Ingest #8 into wiki", Metis
+arXiv:2607.26760) completed cleanly: 3m25s, 6 LLM calls, 5 `execute` + 1
+`session_search`, source `8c71b7a…-metis-memory-foundation-model` reached
+`state=done` with 7 chunks and 2 pages. But the UI marked the successful
+`llmwiki wait` call as **failed** because the command writes compile progress
+to stderr, and `execute` labelled every stderr block `Error output:` even on
+exit 0.
+
+`execute` now labels stderr as `Stderr (non-fatal):` when the exit code is 0,
+and keeps `Error output:` for nonzero exits. The Feed heuristic
+(`Feed.tsx`) stays keyed on `Error output:`/`Rejected:`/`Error:`/nonzero
+`Exit code`, so successful progress logs render as success. Added a contract
+test for both branches; suite 107/107.

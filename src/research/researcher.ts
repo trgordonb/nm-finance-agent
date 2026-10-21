@@ -23,6 +23,7 @@ export async function runResearcher(topic: string, deps: ResearchDeps): Promise<
   const messages: ChatMessage[] = [{ role: "user", content: topic }];
   const systemPrompt = fillPrompt(research_agent_prompt, { date: getTodayStr() });
   let tokens = 0;
+  let searches = 0;
 
   for (let turn = 0; turn < deps.limits.maxResearcherTurns; turn++) {
     ensureNotStopped(deps);
@@ -30,6 +31,10 @@ export async function runResearcher(topic: string, deps: ResearchDeps): Promise<
       model: deps.roles.toolLoop,
       signal: deps.signal,
       minIntervalMs: deps.limits.minCallIntervalMs,
+      reasoningEffort: deps.limits.reasoningEffort,
+      timeoutMs: deps.limits.llmTimeoutMs,
+      maxAttempts: deps.limits.llmMaxAttempts,
+      retryOnTimeout: true,
     });
     addUsage(usage, response.usage);
     tokens += totalTokens(response.usage);
@@ -50,6 +55,14 @@ export async function runResearcher(topic: string, deps: ResearchDeps): Promise<
     const observations = await Promise.all(
       response.toolCalls.map(async (call) => {
         ensureNotStopped(deps);
+        if (call.name === "tavily_search") {
+          searches++;
+          if (searches > deps.limits.maxResearcherSearches) {
+            // Recoverable denial: the loop breaks after this turn and the
+            // researcher compresses from the findings it already has.
+            return `Rejected: search budget exhausted (${deps.limits.maxResearcherSearches} searches). Synthesize from the findings already collected.`;
+          }
+        }
         const tool = toolMap.get(call.name);
         if (!tool) {
           // Recoverable denial (harness convention): the model re-routes.
@@ -84,6 +97,9 @@ export async function runResearcher(topic: string, deps: ResearchDeps): Promise<
       });
     });
 
+    // Search budget is the hard stop: the prompt says 5 searches; the code
+    // enforces a ceiling so turns with parallel searches cannot run away.
+    if (searches >= deps.limits.maxResearcherSearches) break;
     // Token budget is the hard stop: over budget → compress immediately
     // (RESEARCH_TOKEN_BUDGET parity) instead of draining the shared quota.
     if (deps.limits.tokenBudget > 0 && tokens >= deps.limits.tokenBudget) break;
@@ -91,22 +107,31 @@ export async function runResearcher(topic: string, deps: ResearchDeps): Promise<
 
   // compress_research: writer-tier cleanup that must lose zero facts/sources.
   ensureNotStopped(deps);
-  const compressResponse = await deps.chat(
-    [
-      { role: "system", content: fillPrompt(compress_research_system_prompt, { date: getTodayStr() }) },
-      ...messages,
-      { role: "user", content: fillPrompt(compress_research_human_message, { research_topic: topic }) },
-    ],
-    undefined,
-    {
-      model: deps.roles.writer,
-      signal: deps.signal,
-      minIntervalMs: deps.limits.minCallIntervalMs,
-      // ≤1,500-word contract; 32k cap parity with the Python compress tier.
-      maxTokens: 32000,
-    },
-  );
+  const compressMessages: ChatMessage[] = [
+    { role: "system", content: fillPrompt(compress_research_system_prompt, { date: getTodayStr() }) },
+    ...messages,
+    { role: "user", content: fillPrompt(compress_research_human_message, { research_topic: topic }) },
+  ];
+  const compressOpts = {
+    model: deps.roles.writer,
+    signal: deps.signal,
+    minIntervalMs: deps.limits.minCallIntervalMs,
+    reasoningEffort: deps.limits.reasoningEffort,
+    timeoutMs: deps.limits.llmTimeoutMs,
+    maxAttempts: deps.limits.llmMaxAttempts,
+    retryOnTimeout: false,
+    // ≤1,500-word contract; 32k cap parity with the Python compress tier.
+    maxTokens: 32000,
+  };
+  const compressResponse = await deps.chat(compressMessages, undefined, compressOpts);
   addUsage(usage, compressResponse.usage);
+  let compressed = compressResponse.content;
+  if (!compressed.trim()) {
+    // Same reasoning-exhaustion failure mode as refine; one low-effort retry.
+    const retry = await deps.chat(compressMessages, undefined, compressOpts);
+    addUsage(usage, retry.usage);
+    compressed = retry.content;
+  }
 
   // Raw notes: assistant + tool contents (python filter_messages tool+ai).
   const rawNotes = messages
@@ -114,5 +139,5 @@ export async function runResearcher(topic: string, deps: ResearchDeps): Promise<
     .map((m) => m.content)
     .join("\n");
 
-  return { topic, compressed: compressResponse.content, rawNotes, usage };
+  return { topic, compressed, rawNotes, usage };
 }

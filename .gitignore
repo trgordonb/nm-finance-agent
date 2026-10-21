@@ -3,8 +3,8 @@ node_modules/
 sessions.db
 sessions.db-*
 sessions.db*.bak
-dist/
-workspace/
+/dist/
+/workspace/
 memories/MEMORY.md
 memories/USER.md
 *.log
@@ -15,11 +15,13 @@ memories/USER.md
 .kiro/
 .agents/
 .env.omni
-sandbox/
+/sandbox/
 # agentdb mirror (ruvector engine sidecar)
 agent-mirror.db
-skills/
-state/
+# Root-only data dirs. The leading slash is load-bearing: bare `skills/`
+# also ignores src/skills/ — the skill module itself.
+/skills/
+/state/
 
 # probe artifacts + agentdb MCP vector default (lands in cwd)
 ruvector.db

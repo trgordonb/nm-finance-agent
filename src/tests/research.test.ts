@@ -13,6 +13,11 @@ import path from "node:path";
 // so the engine's per-run traces don't pollute the real tracing project.
 process.env.EXA_SUMMARIZER = "off";
 process.env.LANGSMITH_TRACING = "0";
+// Pin the P0/P1 research defaults so the contract tests do not depend on the
+// developer's shell (dotenv only overrides keys present in .env).
+process.env.RESEARCH_REASONING_EFFORT = "low";
+process.env.RESEARCH_LLM_TIMEOUT_MS = "600000";
+process.env.RESEARCH_LLM_MAX_ATTEMPTS = "2";
 // Sandbox file writes (reports) — config reads WORKSPACE_DIR at import time.
 process.env.WORKSPACE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "nmfa-ws-"));
 
@@ -178,6 +183,54 @@ test("researcher: unknown tool is a recoverable 'Rejected:' message", async () =
   assert.equal(result.compressed, "C");
 });
 
+test("researcher: search cap rejects excess searches and forces compression", async () => {
+  const executed: string[] = [];
+  const tools = [
+    stubTool("tavily_search", (args) => {
+      executed.push(String(args.query));
+      return `SEARCH(${args.query})`;
+    }),
+  ];
+  const { fn, calls } = stubChat([
+    {
+      content: "",
+      toolCalls: [
+        { id: "c1", name: "tavily_search", args: { query: "q1" } },
+        { id: "c2", name: "tavily_search", args: { query: "q2" } },
+        { id: "c3", name: "tavily_search", args: { query: "q3" } },
+        { id: "c4", name: "tavily_search", args: { query: "q4" } },
+      ],
+    },
+    { content: "COMPRESSED" },
+  ]);
+  const base = buildResearchDeps({ chat: fn as any, researchTools: tools });
+  const deps = { ...base, limits: { ...base.limits, maxResearcherSearches: 2 } };
+  const result = await runResearcher("topic", deps);
+
+  assert.deepEqual(executed, ["q1", "q2"]);
+  assert.equal(calls.length, 2); // no second tool-loop turn; straight to compress
+  assert.equal(result.compressed, "COMPRESSED");
+  const toolMessages = calls[1].messages.filter((m: any) => m.role === "tool");
+  assert.match(String(toolMessages[2].content), /search budget exhausted/);
+  assert.match(String(toolMessages[3].content), /search budget exhausted/);
+});
+
+test("researcher: P0/P1 request options use low effort + the research timeout", async () => {
+  const tools = [stubTool("tavily_search", () => "S")];
+  const { fn, calls } = stubChat([
+    { content: "done" },
+    { content: "C" },
+  ]);
+  const deps = buildResearchDeps({ chat: fn as any, researchTools: tools });
+  await runResearcher("t", deps);
+
+  assert.equal(calls[0].opts.reasoningEffort, "low");
+  assert.equal(calls[0].opts.timeoutMs, 600000);
+  assert.equal(calls[0].opts.maxAttempts, 2);
+  assert.equal(calls[1].opts.reasoningEffort, "low");
+  assert.equal(calls[1].opts.retryOnTimeout, false);
+});
+
 // --- supervisor ---------------------------------------------------------------
 
 test("supervisor: ConductResearch fans out; ResearchComplete ends with tool-message notes", async () => {
@@ -248,6 +301,124 @@ test("supervisor: refine_draft_report runs an inline writer call with the prior 
   assert.match(refinePrompt, /BRIEF/);
 });
 
+test("supervisor: empty refine retries once, then preserves the previous draft", async () => {
+  const { fn, calls } = stubChat([
+    { content: "", toolCalls: [{ id: "c1", name: "refine_draft_report", args: {} }] },
+    { content: "" }, // first refine: reasoning-token exhaustion
+    { content: "" }, // retry: still empty
+    { content: "", toolCalls: [{ id: "c2", name: "ResearchComplete", args: {} }] },
+  ]);
+  const deps = buildResearchDeps({ chat: fn as any });
+  const result = await runSupervisor({ brief: "BRIEF", draftReport: "DRAFT-0" }, deps);
+
+  assert.equal(result.draftReport, "DRAFT-0"); // never overwritten with ""
+  assert.equal(result.notes[0], "DRAFT-0");
+  assert.equal(calls.length, 4); // supervisor, refine, refine retry, complete
+  assert.equal(calls[1].opts.reasoningEffort, "low");
+  assert.equal(calls[1].opts.retryOnTimeout, false);
+});
+
+test("supervisor: research-round cap stops after the configured batches", async () => {
+  const topics: string[] = [];
+  const { fn, calls } = stubChat([
+    { content: "", toolCalls: [{ id: "c1", name: "ConductResearch", args: { research_topic: "topic A" } }] },
+    { content: "", toolCalls: [{ id: "c2", name: "ConductResearch", args: { research_topic: "topic B" } }] },
+    { content: "", toolCalls: [{ id: "c3", name: "ConductResearch", args: { research_topic: "topic C" } }] },
+  ]);
+  const base = buildResearchDeps({
+    chat: fn as any,
+    runResearcher: async (topic) => {
+      topics.push(topic);
+      return {
+        topic,
+        compressed: `FINDINGS(${topic})`,
+        rawNotes: "",
+        usage: { prompt_tokens: 0, completion_tokens: 0 },
+      };
+    },
+  });
+  const deps = { ...base, limits: { ...base.limits, maxResearchRounds: 2 } };
+  const result = await runSupervisor({ brief: "B", draftReport: "D" }, deps);
+
+  assert.deepEqual(topics, ["topic A", "topic B"]);
+  assert.equal(calls.length, 2); // no third supervisor call after the cap
+  assert.equal(result.notes.length, 2);
+});
+
+test("supervisor: soft deadline skips new research and wraps up", async () => {
+  let researchersRun = 0;
+  const { fn, calls } = stubChat([
+    { content: "", toolCalls: [{ id: "c1", name: "ConductResearch", args: { research_topic: "topic A" } }] },
+  ]);
+  const base = buildResearchDeps({
+    chat: fn as any,
+    runResearcher: async (topic) => {
+      researchersRun++;
+      return {
+        topic,
+        compressed: `FINDINGS(${topic})`,
+        rawNotes: "",
+        usage: { prompt_tokens: 0, completion_tokens: 0 },
+      };
+    },
+  });
+  const deps = {
+    ...base,
+    limits: { ...base.limits, deadlineMs: 1000 },
+    startedAt: Date.now() - 800, // past the 70% soft deadline
+  };
+  const result = await runSupervisor({ brief: "B", draftReport: "D" }, deps);
+
+  assert.equal(researchersRun, 0);
+  assert.equal(calls.length, 1);
+  assert.match(result.notes[0], /^Skipped: research time budget/);
+  assert.ok(calls[0].messages.some((m: any) => /TIME BUDGET/.test(String(m.content))));
+});
+
+test("supervisor: researcher usage is aggregated into the run total", async () => {
+  const { fn } = stubChat([
+    { content: "", toolCalls: [{ id: "c1", name: "ConductResearch", args: { research_topic: "topic A" } }] },
+    { content: "", toolCalls: [{ id: "c2", name: "ResearchComplete", args: {} }] },
+  ]);
+  const deps = buildResearchDeps({
+    chat: fn as any,
+    runResearcher: async (topic) => ({
+      topic,
+      compressed: `FINDINGS(${topic})`,
+      rawNotes: "",
+      usage: { prompt_tokens: 120, completion_tokens: 45 },
+    }),
+  });
+  const result = await runSupervisor({ brief: "B", draftReport: "D" }, deps);
+
+  // The supervisor's own stub calls report no usage; the researcher's 120/45
+  // must still land in the returned total (root-run accounting).
+  assert.equal(result.usage.prompt_tokens, 120);
+  assert.equal(result.usage.completion_tokens, 45);
+});
+
+test("supervisor: zero-tool-call response triggers a fallback researcher", async () => {
+  const topics: string[] = [];
+  const { fn, calls } = stubChat([{ content: "prose instead of tool calls" }]);
+  const deps = buildResearchDeps({
+    chat: fn as any,
+    runResearcher: async (topic) => {
+      topics.push(topic);
+      return {
+        topic,
+        compressed: `FALLBACK FINDINGS(${topic})`,
+        rawNotes: "",
+        usage: { prompt_tokens: 0, completion_tokens: 0 },
+      };
+    },
+  });
+  const result = await runSupervisor({ brief: "BRIEF", draftReport: "D" }, deps);
+
+  assert.deepEqual(topics, ["BRIEF"]);
+  assert.equal(calls.length, 1);
+  assert.match(result.notes[0], /FALLBACK FINDINGS/);
+});
+
 // --- orchestrator -------------------------------------------------------------
 
 test("orchestrator: happy path emits steps in order and returns the report", async () => {
@@ -284,6 +455,14 @@ test("orchestrator: happy path emits steps in order and returns the report", asy
   const finalPrompt = String(calls[3].messages[0].content);
   assert.match(finalPrompt, /N1/);
   assert.match(finalPrompt, /3,000 words/);
+
+  // P0/P1 request contract: low effort everywhere, 4k outline cap, and a
+  // timeout/retry budget that does not restart 20K-token generations.
+  assert.equal(calls[0].opts.reasoningEffort, "low");
+  assert.equal(calls[0].opts.timeoutMs, 600000);
+  assert.equal(calls[0].opts.maxAttempts, 2);
+  assert.equal(calls[2].opts.maxTokens, 4000);
+  assert.equal(calls[2].opts.retryOnTimeout, false);
 });
 
 test("orchestrator: clarification pauses before any research", async () => {
@@ -317,7 +496,7 @@ test("orchestrator: unparseable clarify output proceeds (python fallback)", asyn
   const deps = buildResearchDeps({
     chat: fn as any,
     runSupervisor: async () => ({
-      notes: [],
+      notes: ["N1"],
       draftReport: "D",
       rawNotes: [],
       usage: { prompt_tokens: 0, completion_tokens: 0 },
@@ -344,6 +523,103 @@ test("orchestrator: stop flag cancels between stages and keeps the prefix", asyn
   assert.equal(outcome.status, "cancelled");
   assert.equal(calls, 1);
   assert.equal(outcome.messages.length, 1); // the verification produced before the stop
+});
+
+test("orchestrator: wall-clock deadline aborts an in-flight call as cancelled", async () => {
+  const hang = (async (_messages: any, _tools: any, opts: any) => {
+    await new Promise((_resolve, reject) => {
+      if (!opts.signal) throw new Error("deadline signal missing");
+      const onAbort = () => reject(Object.assign(new Error("aborted"), { name: "AbortError" }));
+      if (opts.signal.aborted) onAbort();
+      else opts.signal.addEventListener("abort", onAbort, { once: true });
+    });
+    return { content: "", toolCalls: [], usage: {}, model: "stub", raw: {} };
+  }) as any;
+  const base = buildResearchDeps({ chat: hang });
+  const deps = {
+    ...base,
+    limits: { ...base.limits, deadlineMs: 40 },
+    startedAt: Date.now() - 10,
+  };
+  const outcome = await runDeepResearch({ question: "q", deps });
+
+  assert.equal(outcome.status, "cancelled");
+  assert.equal(outcome.messages.length, 0);
+});
+
+test("orchestrator: unparseable brief retries, then falls back to the cleaned question", async () => {
+  let capturedBrief = "";
+  const { fn } = stubChat([
+    { content: JSON.stringify({ need_clarification: false, question: "", verification: "v" }) },
+    { content: "prose instead of JSON" }, // brief: provider-degenerate
+    { content: "still prose" }, // brief retry
+    { content: JSON.stringify({ draft_report: "OUTLINE" }) },
+    { content: "REPORT" },
+  ]);
+  const deps = buildResearchDeps({
+    chat: fn as any,
+    runSupervisor: async (input) => {
+      capturedBrief = input.brief;
+      return {
+        notes: ["N1"],
+        draftReport: "D",
+        rawNotes: [],
+        usage: { prompt_tokens: 0, completion_tokens: 0 },
+      };
+    },
+  });
+  const outcome = await runDeepResearch({ question: "cleaned question", deps });
+
+  assert.equal(outcome.status, "completed");
+  assert.equal(capturedBrief, "cleaned question");
+});
+
+test("orchestrator: no findings fails loudly instead of reporting the draft", async () => {
+  const { fn } = stubChat([
+    { content: JSON.stringify({ need_clarification: false, question: "", verification: "v" }) },
+    { content: JSON.stringify({ research_brief: "BRIEF" }) },
+    { content: JSON.stringify({ draft_report: "OUTLINE" }) },
+  ]);
+  const deps = buildResearchDeps({
+    chat: fn as any,
+    runSupervisor: async () => ({
+      notes: [],
+      draftReport: "OUTLINE",
+      rawNotes: [],
+      usage: { prompt_tokens: 0, completion_tokens: 0 },
+    }),
+  });
+
+  await assert.rejects(
+    runDeepResearch({ question: "q", deps }),
+    /research produced no findings/,
+  );
+});
+
+test("orchestrator: overlong final report retries once with the strict contract", async () => {
+  const { fn, calls } = stubChat([
+    { content: JSON.stringify({ need_clarification: false, question: "", verification: "v" }) },
+    { content: JSON.stringify({ research_brief: "BRIEF" }) },
+    { content: JSON.stringify({ draft_report: "OUTLINE" }) },
+    { content: "X".repeat(70_000) }, // degenerate repetition
+    { content: "SHORT REPORT" }, // strict retry
+  ]);
+  const deps = buildResearchDeps({
+    chat: fn as any,
+    runSupervisor: async () => ({
+      notes: ["N1"],
+      draftReport: "D",
+      rawNotes: [],
+      usage: { prompt_tokens: 0, completion_tokens: 0 },
+    }),
+  });
+  const outcome = await runDeepResearch({ question: "q", deps });
+
+  assert.equal(outcome.status, "completed");
+  assert.equal(outcome.report, "SHORT REPORT");
+  assert.equal(calls.length, 5);
+  const strict = calls[4].messages[calls[4].messages.length - 1];
+  assert.match(String(strict.content), /STRICT CONTRACT/);
 });
 
 // --- search output ------------------------------------------------------------
