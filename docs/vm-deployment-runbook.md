@@ -1,7 +1,10 @@
-# Cloud VM deployment runbook
+# Cloud VM deployment runbook (AWS EC2 · Amazon Linux 2023)
 
-**Audience:** an OpenCode agent running **on the target VM**, inside a clone of
-`https://github.com/trgordonb/nm-finance-agent` (commit `67f1c82` or later).
+**Audience:** an OpenCode agent running **on the target EC2 instance**, inside a
+clone of `https://github.com/trgordonb/nm-finance-agent` (`main`; this runbook
+was added in `bced3ed`).
+**Target OS:** Amazon Linux 2023 (AL2023, `dnf`). AL2 differences are called out
+in §4; do not mix the two package managers.
 **Goal:** a single-user, internet-reachable deployment with HTTPS/auth, the R2
 skills registry live, the AgentDB mirror remote, and backups.
 
@@ -77,12 +80,17 @@ Ask the user for these; write the answers into the handover report.
 | Input | Default / notes |
 |---|---|
 | Repo URL | `https://github.com/trgordonb/nm-finance-agent.git` |
-| Ref to deploy | `main` @ `67f1c82` or later |
+| Ref to deploy | `main` (latest; this runbook was added in `bced3ed`) |
+| AMI / OS | Amazon Linux 2023 (x86_64); record the AMI ID |
+| Instance type | `t3.medium` minimum (2 vCPU / 4 GiB); `t3.large` (2 / 8) recommended |
+| Root + data EBS | root ≥ 30 GB gp3; `/var/lib` on a separate ≥ 60 GB volume if possible |
+| Region / AZ | record it (backups and latency) |
+| Security Group | inbound 22 from your IP; 80/443 only for public Caddy; **never** 3001/8080 |
 | `APP_DIR` | `/opt/nm-finance-agent` — **not** a home directory |
 | `DATA_DIR` | `/var/lib/nm-finance-agent` |
 | Domain | e.g. `agent.example.com` (or "LAN only") |
 | Auth | Cloudflare Access (recommended) / Caddy basic auth / none (LAN only) |
-| Tunnel vs public IP | Tunnel if a domain is on Cloudflare; otherwise Caddy + TLS |
+| Tunnel vs public IP | Tunnel if a domain is on Cloudflare; otherwise Caddy + TLS + Elastic IP |
 | Secrets | the user's existing `.env` (never recreate from memory) |
 | Skills bucket seeded? | must be **yes** before first boot (T4 + §8 preflight) |
 | Data migration? | yes/no; if yes, user must provide the files |
@@ -115,40 +123,58 @@ If migrating data, the user should stop the local server first, then copy
 
 ---
 
-## 4. T1 — VM baseline
+## 4. T1 — VM baseline (Amazon Linux 2023)
 
 ```bash
 # OS + time
-cat /etc/os-release
+cat /etc/os-release          # expect Amazon Linux 2023
 sudo timedatectl set-timezone UTC
-sudo apt-get update && sudo apt-get upgrade -y
-sudo apt-get install -y git curl jq unzip ripgrep build-essential \
-  python3 python3-venv python3-pip sqlite3 ca-certificates ufw \
-  unattended-upgrades
+sudo dnf upgrade --refresh -y
+# if the kernel/glibc updated, reboot before continuing (ask the user)
 
-# Node 24 (required by package.json engines)
-curl -fsSL https://deb.nodesource.com/setup_24.x | sudo -E bash -
-sudo apt-get install -y nodejs
+# core tools (AL2023 ships curl-minimal; do NOT `dnf install curl` — it conflicts)
+sudo dnf install -y git jq unzip tar xz rsync bzip2 \
+  gcc gcc-c++ make python3.11 python3.11-pip ca-certificates \
+  dnf-automatic
+sudo dnf install -y sqlite || sudo dnf install -y sqlite3 \
+  || echo "sqlite CLI unavailable — install it before T10"
+sudo dnf install -y ripgrep || echo "ripgrep unavailable — optional (harness grep is JS-based)"
+
+# Node 24 — official tarball into /usr/local (no NodeSource/apt repo on AL2023)
+NODE_VERSION=24.13.0         # check https://nodejs.org/dist/latest-v24.x/
+curl -fsSLO "https://nodejs.org/dist/v${NODE_VERSION}/node-v${NODE_VERSION}-linux-x64.tar.xz"
+sudo tar -xJf "node-v${NODE_VERSION}-linux-x64.tar.xz" -C /usr/local --strip-components=1
+rm "node-v${NODE_VERSION}-linux-x64.tar.xz"
 
 # uv (skills CLI)
 curl -LsSf https://astral.sh/uv/install.sh | sudo env UV_INSTALL_DIR=/usr/local/bin sh
 
-# firewall
-sudo ufw default deny incoming
-sudo ufw allow OpenSSH
-# only for the public-Caddy variant:
-# sudo ufw allow 80,443/tcp
-sudo ufw --force enable
-sudo systemctl enable --now unattended-upgrades
+# automatic security updates (AL2023 equivalent of unattended-upgrades)
+sudo sed -i 's/^apply_updates = no/apply_updates = yes/' /etc/dnf/automatic.conf
+sudo systemctl enable --now dnf-automatic.timer
 
-node -v    # v24.x
-npm -v
+node -v && command -v node   # /usr/local/bin/node, v24.x
+npm -v  && command -v npm    # /usr/local/bin/npm
 uv --version
-python3 --version
+python3.11 --version
+sqlite3 --version
 ```
 
-**Acceptance:** `node -v` starts with `v24.`; `uv`, `jq`, `sqlite3`, `git` are
-present. **STOP** if Node is older; do not continue with Node 22.
+**Acceptance:** `node -v` starts with `v24.` and `command -v node` is
+`/usr/local/bin/node`; `npm` resolves to `/usr/local/bin/npm`; `uv`, `jq`,
+`sqlite3`, `git` are present. **STOP** if Node is older; do not continue with
+Node 20/22.
+
+If `python3.11` is not in the AL2023 repo you have, let `uv` provision it:
+`uv python install 3.11` (and use `uv run` for Python skills). Do not replace
+the system `python3` — dnf depends on it.
+
+**AL2 (Amazon Linux 2) differences:** replace `dnf` with `yum`; the Node
+tarball, `/usr/local` PATH, uv and systemd steps are identical; `dnf-automatic`
+becomes `yum-cron` or a cron entry. Do not mix AL2 instructions into AL2023.
+
+**Graviton/arm64:** substitute `linux-arm64` for the Node tarball, Caddy and
+restic assets, and `cloudflared-linux-arm64` for the tunnel binary.
 
 If RAM ≤ 4 GiB, add 2 GiB swap:
 
@@ -158,17 +184,39 @@ sudo mkswap /swapfile && sudo swapon /swapfile
 echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
 ```
 
+### T1b (optional) — EBS data volume for `/var/lib`
+
+AL2023 AMIs often start with a small root volume. If you attached a separate
+EBS volume for the data dir, mount it **before** T2 (the service user's home is
+`/var/lib/nm-finance-agent`). **Confirm the device first** — never format the
+root device.
+
+```bash
+lsblk
+sudo file -s /dev/nvme1n1          # "data" = unformatted and safe to mkfs
+sudo mkfs.ext4 /dev/nvme1n1
+sudo mkdir -p /var/lib/nm-finance-agent
+echo "UUID=$(sudo blkid -s UUID -o value /dev/nvme1n1) /var/lib/nm-finance-agent ext4 defaults,nofail 0 2" \
+  | sudo tee -a /etc/fstab
+sudo mount -a
+df -h /var/lib/nm-finance-agent
+```
+
+If T2 already created the service user, run
+`sudo chown nmagent:nmagent /var/lib/nm-finance-agent` after mounting. Skip
+this section if the root volume is already ≥ 60 GB.
+
 ---
 
 ## 5. T2 — Users and directories
 
 ```bash
 # service user (owns data, runs the app and execute)
-sudo useradd --create-home --home-dir /var/lib/nm-finance-agent \
-  --shell /bin/bash nmagent
+sudo useradd -m -d /var/lib/nm-finance-agent -s /bin/bash nmagent
+sudo chown nmagent:nmagent /var/lib/nm-finance-agent
 
 # deploy user (owns code; runs git/npm; no sudo)
-sudo useradd --create-home --shell /bin/bash deploy
+sudo useradd -m -s /bin/bash deploy
 
 # code + data
 sudo install -d -o deploy  -g nmagent -m 750 /opt/nm-finance-agent
@@ -182,7 +230,7 @@ df -h /opt /var/lib
 **Acceptance:** both users exist; `/var/lib/nm-finance-agent` is owned by
 `nmagent`; `/opt/nm-finance-agent` is `deploy:nmagent`.
 
-**Note:** the code is root/deploy-owned but readable by `nmagent`, so the agent
+**Note:** the code is deploy-owned but readable by `nmagent`, so the agent
 cannot rewrite its own source through `execute`. Updates go through `deploy`.
 
 ---
@@ -203,6 +251,11 @@ sudo -u deploy npm test                  # expect 111 passing
 
 **Why `npm ci` without `--omit=dev`:** `npm start` is `tsx src/index.ts`, and
 `src/agentdb-mirror.ts` spawns `node_modules/.bin/tsx src/mirror-child.ts`.
+
+If OpenCode already cloned the repo somewhere else (e.g. the login user's home),
+do **not** run a second divergent copy: either `sudo mv` that clone to
+`/opt/nm-finance-agent` or clone fresh there, then
+`sudo chown -R deploy:nmagent /opt/nm-finance-agent` before `npm ci`.
 
 **Acceptance:** `frontend/dist/index.html` exists; `npm run check` exits 0;
 `npm test` reports 111 pass. **STOP** on a TypeScript error.
@@ -339,7 +392,7 @@ sudo -u nmagent bash -lc '
   set -a; . /etc/nm-finance-agent.env; set +a
   "$SKILLS_CLI" doctor
   "$SKILLS_CLI" pull "$SKILLS_DIR"
-  ls "$SKILLS_DIR"/*/SKILL.md | wc -l
+  find "$SKILLS_DIR" -name SKILL.md | wc -l
 '
 ```
 
@@ -404,7 +457,8 @@ Group=nmagent
 WorkingDirectory=/opt/nm-finance-agent
 EnvironmentFile=/etc/nm-finance-agent.env
 Environment=HOME=/var/lib/nm-finance-agent
-ExecStart=/usr/bin/npm run start
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/local/bin/npm run start
 Restart=always
 RestartSec=3
 TimeoutStopSec=20
@@ -449,16 +503,44 @@ listening line on `127.0.0.1:3001`.
 ### Option A (recommended): Caddy + Cloudflare Tunnel + Access
 
 ```bash
-# Caddy
-sudo apt-get install -y debian-keyring debian-archive-keyring apt-transport-https
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' \
-  | sudo gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' \
-  | sudo tee /etc/apt/sources.list.d/caddy-stable.list >/dev/null
-sudo apt-get update && sudo apt-get install -y caddy
+# Caddy is not in the AL2023 repos — use the official static binary.
+CADDY_VERSION=2.10.0        # check https://github.com/caddyserver/caddy/releases
+curl -fsSL "https://github.com/caddyserver/caddy/releases/download/v${CADDY_VERSION}/caddy_${CADDY_VERSION}_linux_amd64.tar.gz" \
+  -o /tmp/caddy.tgz
+tar -xzf /tmp/caddy.tgz -C /tmp caddy
+sudo install -m 755 /tmp/caddy /usr/local/bin/caddy
+
+sudo useradd --system --home-dir /var/lib/caddy --shell /usr/sbin/nologin caddy 2>/dev/null || true
+sudo install -d -o caddy -g caddy -m 750 /var/lib/caddy /etc/caddy
 ```
 
-`/etc/caddy/Caddyfile` (loopback only; the tunnel is the public edge):
+Create `/etc/systemd/system/caddy.service`:
+
+```ini
+[Unit]
+Description=Caddy
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=caddy
+Group=caddy
+Environment=HOME=/var/lib/caddy
+ExecStart=/usr/local/bin/caddy run --environ --config /etc/caddy/Caddyfile
+ExecReload=/usr/local/bin/caddy reload --config /etc/caddy/Caddyfile --force
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/caddy
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Then create the Caddyfile and start it:
 
 ```caddyfile
 http://127.0.0.1:8080 {
@@ -480,6 +562,8 @@ http://127.0.0.1:8080 {
 ```
 
 ```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now caddy
 sudo usermod -aG nmagent caddy      # read frontend/dist
 sudo systemctl restart caddy
 curl -sI http://127.0.0.1:8080/ | head -3
@@ -493,19 +577,43 @@ no interactive login):
 3. Access → Applications → add `agent.example.com`, policy = the user's email.
 
 ```bash
-curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg \
-  | sudo tee /usr/share/keyrings/cloudflare-main.gpg >/dev/null
-echo "deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg] https://pkg.cloudflare.com/cloudflared any main" \
-  | sudo tee /etc/apt/sources.list.d/cloudflared.list >/dev/null
-sudo apt-get update && sudo apt-get install -y cloudflared
-sudo cloudflared service install <TOKEN>
+# AL2023: use the static binary (no Debian/apt repo)
+curl -L https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-linux-amd64 \
+  -o /tmp/cloudflared
+sudo install -m 755 /tmp/cloudflared /usr/local/bin/cloudflared
+sudo cloudflared service install "<TOKEN>"
 sudo systemctl enable --now cloudflared
+systemctl status cloudflared --no-pager
 ```
 
 **STOP** and ask the user to complete the dashboard steps (tunnel, DNS,
 Access policy) if you don't have the token. Do not open 80/443.
 
+**EC2 Security Group — the real boundary** (AL2023 has no `ufw`; do not install
+one Debian-style):
+
+| Direction | Rule |
+|---|---|
+| Inbound | `22/tcp` from the user's IP (never `0.0.0.0/0` if avoidable) |
+| Inbound | `80/tcp`, `443/tcp` **only** for Option B (public Caddy) |
+| Inbound | nothing else — no `3001`, no `8080` |
+| Outbound | all (LLM/search/R2 and the tunnel); or `443/tcp` + `7844` TCP/UDP to Cloudflare |
+
+A host firewall is optional; if the user wants one, mirror the SG:
+
+```bash
+sudo dnf install -y firewalld
+sudo systemctl enable --now firewalld
+sudo firewall-cmd --permanent --add-service=ssh
+# Option B only:
+sudo firewall-cmd --permanent --add-service=http --add-service=https
+sudo firewall-cmd --reload
+```
+
 ### Option B: public IP + Caddy TLS + basic auth
+
+Attach an **Elastic IP** and point an `A` record at it, so the address (and the
+Let's Encrypt certificate) survives instance stop/start.
 
 ```caddyfile
 agent.example.com {
@@ -529,9 +637,9 @@ agent.example.com {
 ```
 
 ```bash
-caddy hash-password --plaintext '<user-chosen>'   # run, paste into Caddyfile
-sudo ufw allow 80,443/tcp
-sudo systemctl reload caddy
+/usr/local/bin/caddy hash-password --plaintext '<user-chosen>'   # paste into Caddyfile
+# Security Group: allow inbound 80/443 (from the user's IPs, or 0.0.0.0/0)
+sudo systemctl restart caddy
 ```
 
 **Never** put `encode` on the `/api` handler: compression buffers SSE.
@@ -576,7 +684,13 @@ Nightly, to `/var/backups` + R2 via restic. Create a **separate** R2 bucket or
 prefix for backups; do not mix with the skills bucket.
 
 ```bash
-sudo apt-get install -y restic
+# AL2023 may not carry restic in its repos — fall back to the static binary.
+sudo dnf install -y restic || {
+  RESTIC_VERSION=0.18.0     # check https://github.com/restic/restic/releases
+  curl -L "https://github.com/restic/restic/releases/download/v${RESTIC_VERSION}/restic_${RESTIC_VERSION}_linux_amd64.bz2" \
+    | bunzip2 | sudo tee /usr/local/bin/restic >/dev/null
+  sudo chmod 755 /usr/local/bin/restic
+}
 
 sudo tee /usr/local/bin/nm-backup.sh >/dev/null <<'EOF'
 #!/usr/bin/env bash
@@ -584,26 +698,34 @@ set -euo pipefail
 DATA=/var/lib/nm-finance-agent
 STAGE=/var/backups/nm-finance-agent
 install -d -m 700 "$STAGE"
-# online-safe SQLite copy
+
+# consistent SQLite copy; the live db files are excluded from the backup
 sqlite3 "$DATA/sessions.db" ".backup '$STAGE/sessions.db'"
-# workspace without rebuildable caches
-rsync -a --delete \
-  --exclude '__pycache__' --exclude '.venv' --exclude 'node_modules' \
-  --exclude '.cache' --exclude '*.log' \
-  "$DATA/workspace/" "$STAGE/workspace/"
-rsync -a --delete "$DATA/memories/" "$STAGE/memories/"
-rsync -a --delete "$DATA/state/" "$STAGE/state/"
 
 export AWS_ACCESS_KEY_ID="<backup-key>"
 export AWS_SECRET_ACCESS_KEY="<backup-secret>"
 export AWS_DEFAULT_REGION=auto
 export RESTIC_REPOSITORY="s3:https://<account>.r2.cloudflarestorage.com/<backup-bucket>"
 export RESTIC_PASSWORD="<restic-password>"
-restic backup "$STAGE" --tag nm-agent --host "$(hostname)"
+
+restic backup "$DATA" "$STAGE" \
+  --exclude "$DATA/sessions.db" \
+  --exclude "$DATA/sessions.db-wal" \
+  --exclude "$DATA/sessions.db-shm" \
+  --exclude '**/__pycache__' \
+  --exclude '**/.venv' \
+  --exclude '**/node_modules' \
+  --exclude '**/.cache' \
+  --exclude '**/*.log' \
+  --tag nm-agent --host "$(hostname)"
+
 restic forget --keep-daily 7 --keep-weekly 4 --prune
 EOF
 sudo chmod 700 /usr/local/bin/nm-backup.sh
 ```
+
+The workspace is backed up in place (no 1.3 GB staging copy); only the SQLite
+snapshot is staged. Restic deduplicates across runs.
 
 Timer:
 
@@ -641,6 +763,7 @@ variables the script uses):
 restic snapshots
 restic restore latest --target /tmp/nm-restore
 ls -l /tmp/nm-restore/var/backups/nm-finance-agent/sessions.db
+ls -l /tmp/nm-restore/var/lib/nm-finance-agent/workspace
 ```
 
 **STOP** if the restore fails.
@@ -686,13 +809,20 @@ sudo systemctl restart nm-finance-agent
 | `execute` fails | `nmagent` shell/permissions; `ls -ld /var/lib/nm-finance-agent/workspace` |
 | MCP server fails at boot | `journalctl` names it; disable it in `/var/lib/nm-finance-agent/mcp_servers.json` |
 | deep research slow | expected 10–40 min; check the LangSmith trace, not the process |
+| `dnf: package not found` | AL2023 package names differ; `ripgrep` is optional, `curl` is `curl-minimal` (never install `curl` over it) |
+| `node: command not found` / old Node | tarball must win: `command -v node` → `/usr/local/bin/node`; check `echo $PATH` |
+| unit cannot find `npm` | tarball install is `/usr/local/bin/npm`; RPM install is `/usr/bin/npm` — match `ExecStart` |
+| SELinux denial | `sudo ausearch -m avc -ts recent`; fix labels/booleans — **never** `setenforce 0` |
+| Security Group blocks access | inbound 22 (+80/443 for Option B); outbound all, or 443 + 7844 TCP/UDP for the tunnel |
+| EBS volume not mounted after reboot | `/etc/fstab` entry needs `nofail`; `findmnt /var/lib/nm-finance-agent` |
 
 ---
 
 ## 16. Security checklist
 
-- [ ] SSH keys only; password auth disabled (`/etc/ssh/sshd_config.d/`) — **confirm key access first, then `sshd -t && systemctl reload ssh`**
-- [ ] `ufw` enabled; only 22 (+ 80/443 in the public-Caddy variant)
+- [ ] SSH keys only; password auth disabled (`/etc/ssh/sshd_config.d/`, or `sshd_config` if the Include is absent) — **confirm key access first, then `sshd -t && systemctl reload sshd`**
+- [ ] EC2 Security Group: 22 from your IP; 80/443 only for public Caddy; no 3001/8080
+- [ ] optional `firewalld` mirrors the Security Group
 - [ ] app on `127.0.0.1:3001`; never exposed
 - [ ] Cloudflare Access or Caddy basic auth in front
 - [ ] `/etc/nm-finance-agent.env` mode `640 root:nmagent`; no repo `.env`
@@ -700,7 +830,9 @@ sudo systemctl restart nm-finance-agent
 - [ ] `SKILLS_REQUIRED=1`
 - [ ] `agent_browser` disabled (or Chromium explicitly installed)
 - [ ] `git status` in `/opt/nm-finance-agent` shows no secret files
-- [ ] `unattended-upgrades` enabled
+- [ ] `dnf-automatic.timer` enabled
+- [ ] SELinux left enabled (`getenforce`) — no `setenforce 0`
+- [ ] EBS data volume mounted with `nofail` (if used)
 - [ ] backup restore tested
 - [ ] `journalctl` has no unhandled rejections after a full turn
 
@@ -793,3 +925,8 @@ Reports land under `$WORKSPACE_DIR/research/`.
   into `/opt` under the systemd sandbox.
 - **Remote mirror**: no ONNX model download, no native sidecar, lower RAM and
   boot time; the existing CF Container already serves it.
+- **Amazon Linux 2023**: `dnf` (not apt), Node from the official tarball into
+  `/usr/local`, Security Groups as the firewall, SELinux left enabled, Caddy
+  and cloudflared as static binaries.
+- **AL2**: replace `dnf` with `yum`; `uv` provisions Python 3.11+; everything
+  else (paths, systemd, Caddy/Tunnel) is identical.
