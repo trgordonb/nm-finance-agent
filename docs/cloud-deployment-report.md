@@ -1,0 +1,430 @@
+# Cloud Deployment Report — NM Finance Agent
+
+**Status:** deployed and operational  
+**Deployment completed:** 2026-10-22 (UTC)  
+**Report date:** 2026-10-22 14:04 UTC  
+**Public URL:** <https://agent.neuralmatrix.site>  
+**Deployed commit:** `f997b75` (`docs: adapt VM runbook to Amazon Linux 2023 on EC2`)  
+**Deployment runbook:** [`docs/vm-deployment-runbook.md`](./vm-deployment-runbook.md)
+
+> This report contains no secret values. The live secret file is
+> `/etc/nm-finance-agent.env` (mode `640`, `root:nmagent`). Do not print it,
+> copy it into `/opt`, or commit it. The Cloudflare tunnel token is in
+> `/etc/cloudflared/token` (mode `600`, `root:root`) and must not be printed.
+
+## 1. Summary
+
+The app is deployed on a single AWS EC2 instance and is reachable through
+Cloudflare Tunnel + Cloudflare Access at the public URL above. Caddy serves the
+built SPA and proxies `/api/*` to the Express/SSE app on loopback. All three
+systemd units are active and enabled.
+
+This was a fresh deployment: no data migration was performed. The three
+sessions visible in the sidebar are validation artifacts from deployment
+testing (including a `vol-regime-detector` skill test and a workspace listing).
+
+The deployment is **working**; the owner confirmed that
+`https://agent.neuralmatrix.site/` loads after the final fix. The last issue
+found was a Caddy `Host`-matching bug that produced a blank white page through
+the tunnel. It is fixed and the runbook has been updated.
+
+## 2. Architecture
+
+```text
+Browser
+  │  HTTPS + Cloudflare Access
+  ▼
+Cloudflare edge (zone: neuralmatrix.site)
+  │  Cloudflare Tunnel
+  ▼
+cloudflared on EC2 (outbound; no inbound app ports)
+  │  Host: agent.neuralmatrix.site
+  ▼
+Caddy 127.0.0.1:8080
+  ├─ /            → /opt/nm-finance-agent/frontend/dist (SPA fallback)
+  └─ /api/*       → 127.0.0.1:3001 (Express + SSE; flush_interval -1)
+                          │
+                          ▼
+                    nm-finance-agent.service (user: nmagent)
+                          ├─ code: /opt/nm-finance-agent
+                          ├─ data: /var/lib/nm-finance-agent
+                          └─ skills registry: s3://neuralmatrix
+```
+
+- Public hostname: `agent.neuralmatrix.site`
+- Tunnel ingress: `agent.neuralmatrix.site` → `http://127.0.0.1:8080`
+- Cloudflare Access team domain: `long-truth-2746.cloudflareaccess.com`
+- Access policy: single-user email policy configured by the owner
+- TLS terminates at Cloudflare; the origin is HTTP on loopback only
+- Cloudflare account/tunnel IDs are intentionally omitted from this report;
+  retrieve them from the dashboard or `cloudflared` logs if needed
+
+## 3. Host and runtime inventory
+
+| Item | Value |
+|---|---|
+| Instance type | `t4g.small` (2 vCPU, arm64) |
+| Availability zone | `us-east-1f` |
+| OS | Amazon Linux 2023.12.20261021 |
+| Kernel | `6.18.51-120.163.amzn2023.aarch64` |
+| RAM | 1.8 GiB total |
+| Swap | 2.0 GiB (`/swapfile`) |
+| Disk | 50 GB, 9.5 GB used, 41 GB free |
+| Node.js | v24.22.1 (`/usr/local/bin/node`) |
+| npm | 11.19.1 |
+| uv | 0.13.5 |
+| Caddy | 2.10.0 |
+| cloudflared | 2026.10.3 |
+| nm-skills-registry | v0.1.7 (installed under `/var/lib/nm-finance-agent/.local/bin`) |
+| SELinux | Permissive |
+| Automatic updates | `dnf-automatic` enabled |
+
+**Memory note:** this instance is below the runbook's 4 GiB minimum. The owner
+accepted `t4g.small` with 2 GiB swap. At the time of this report:
+
+- RAM: ~994 MiB used, ~649 MiB available
+- Swap: ~212 MiB used
+
+Watch for OOM conditions under concurrent research/chart workloads. If memory
+pressure becomes a problem, resize to `t4g.medium` (4 GiB) rather than removing
+swap.
+
+## 4. Services and listeners
+
+| Unit | User | Listener / role | State | Enabled |
+|---|---|---|---|---|
+| `nm-finance-agent.service` | `nmagent` | `127.0.0.1:3001` Express + SSE | active | yes |
+| `caddy.service` | `caddy` | `127.0.0.1:8080` SPA + API proxy | active | yes |
+| `cloudflared.service` | root | outbound tunnel only | active | yes |
+
+Verified listeners:
+
+```text
+LISTEN 127.0.0.1:3001
+LISTEN 127.0.0.1:8080
+```
+
+Ports `3001` and `8080` are **not** exposed on the public interface. The tunnel
+is outbound; no inbound web ports are required on the instance. SSH password
+authentication is disabled (`PasswordAuthentication no`); use key-based SSH.
+
+`cloudflared` currently runs as root because it reads a root-only token file.
+This is functional but can be hardened later (dedicated user + group-readable
+token) after the token is rotated.
+
+## 5. Filesystem layout and permissions
+
+| Path | Owner / mode | Purpose |
+|---|---|---|
+| `/opt/nm-finance-agent` | `deploy:nmagent 750` | deployed code, `node_modules`, built frontend |
+| `/opt/nm-finance-agent/frontend/dist` | `deploy:deploy 755` | Vite production build served by Caddy |
+| `/var/lib/nm-finance-agent` | `nmagent:nmagent 700` | data root / `HOME` |
+| `/var/lib/nm-finance-agent/{workspace,skills,state,memories,logs,backups,wiki}` | `nmagent` | runtime data and skill mirror |
+| `/var/lib/nm-finance-agent/mcp_servers.json` | `nmagent:nmagent 640` | MCP server config |
+| `/etc/nm-finance-agent.env` | `root:nmagent 640` | live environment/secrets |
+| `/etc/cloudflared/token` | `root:root 600` | tunnel token |
+| `/etc/caddy/Caddyfile` | `root:root 644` | reverse proxy / SPA config |
+| `/etc/systemd/system/nm-finance-agent.service` | `root:root 644` | app unit |
+| `/etc/systemd/system/caddy.service` | `root:root 644` | Caddy unit |
+| `/etc/systemd/system/cloudflared.service` | `root:root 644` | tunnel unit |
+
+The app unit sets:
+
+```ini
+User=nmagent
+Group=nmagent
+WorkingDirectory=/opt/nm-finance-agent
+EnvironmentFile=/etc/nm-finance-agent.env
+Environment=HOME=/var/lib/nm-finance-agent
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/local/bin/npm run start
+```
+
+## 6. Configuration and VM-specific changes
+
+These differ from a literal first pass through the runbook and are intentional:
+
+1. **Caddy site address fixed.** `/etc/caddy/Caddyfile` uses:
+
+   ```caddyfile
+   :8080 {
+       bind 127.0.0.1
+       ...
+   }
+   ```
+
+   It must **not** be changed back to `http://127.0.0.1:8080`. See
+   [Troubleshooting](#9-troubleshooting-history) for why.
+
+2. **App unit has an `[Install]` section.** The original runbook unit omitted
+   it, so `systemctl enable nm-finance-agent` would fail. The live unit has:
+
+   ```ini
+   [Install]
+   WantedBy=multi-user.target
+   ```
+
+   The runbook snippet has been updated to match.
+
+3. **Environment overrides.** `/etc/nm-finance-agent.env` was generated from
+   the repository's `.env` with VM path overrides, including:
+   - `HOME`-style data paths under `/var/lib/nm-finance-agent`
+   - `WIKI_DIR=/var/lib/nm-finance-agent/wiki`
+   - `AGENTDB_PATH=/var/lib/nm-finance-agent/workspace/agentdb-mcp.db`
+
+   No `.env` was copied into `/opt`.
+
+4. **MCP config.** `/var/lib/nm-finance-agent/mcp_servers.json` is a copy of
+   the repo MCP config with `agent_browser` disabled. The app currently reports
+   two connected MCP servers and 36 MCP tools.
+
+5. **Caddy bound to loopback.** `bind 127.0.0.1` prevents Caddy from listening
+   on the public interface. This was added after an earlier `*:8080` bind was
+   found.
+
+6. **Caddy backup.** The pre-fix Caddyfile is preserved at
+   `/etc/caddy/Caddyfile.bak.20261022-135532`.
+
+7. **Docs changes are currently uncommitted.** The deployed commit is
+   `f997b75`; the Caddy/unit fixes in `docs/vm-deployment-runbook.md` and this
+   report are working-tree changes in the home clone
+   (`/home/ec2-user/nm-finance-agent`). Review and commit/push them separately.
+
+## 7. Verification performed
+
+### Build and tests (on the VM, before service start)
+
+- `npm ci` completed.
+- Frontend `npm ci` completed.
+- Frontend `npm run build` completed (typecheck + Vite build).
+- `npm run check` passed.
+- Test suite: **111/111 passed** when `OPENROUTER_API_KEY` was present (a dummy
+  presence-only value was used). Plain `npm test` without any
+  `OPENROUTER_API_KEY` fails one env-gated test by design.
+
+Current production build assets:
+
+```text
+/assets/index-Dwewj561.js   (432,611 bytes)
+/assets/index-C8BwKzBb.css  ( 21,302 bytes)
+```
+
+### Health endpoint
+
+`GET /api/health` through Caddy with the public Host header:
+
+```text
+status=ok
+model=z-ai/glm-5.3-flash
+skills=18
+skills_required=true
+skills_backend.mode=s3
+skills_backend.registry=s3://neuralmatrix
+skills_backend.degraded=false
+skills_backend.skillCount=18
+mirror.enabled=true
+mirror.records=3
+mcp_connected=2
+mcp_tools=36
+sessions=3
+memory_chars=0
+memory_budget=3575
+```
+
+### Functional checks
+
+- SSE streams incrementally through Caddy (not buffered).
+- `execute` tool works and runs in `/var/lib/nm-finance-agent/workspace`.
+- `load_skill vol-regime-detector` returns the real `SKILL.md`.
+- Wiki tab loads domains/concepts and the link graph renders in headless
+  Chromium (graph is slow, ~10 s, with 7 WebGL canvases).
+- Chat UI renders in headless Chromium: sidebar, sessions, composer, no fatal
+  console errors.
+
+### Public edge
+
+Unauthenticated requests are redirected to Access, as expected:
+
+| Path | Unauthenticated result |
+|---|---|
+| `/` | `302` → Access login |
+| `/api/health` | `302` → Access login |
+| `/assets/index-Dwewj561.js` | `302` → Access login |
+
+The Access login page itself returns `200` with title
+`Sign in ・ Cloudflare Access`.
+
+### Caddy / tunnel Host check
+
+```bash
+curl -sI -H 'Host: agent.neuralmatrix.site' http://127.0.0.1:8080/
+```
+
+must return `200`, `Content-Type: text/html`, and a non-zero
+`Content-Length`. Before the fix it returned `200`, `Content-Length: 0`, and no
+`Content-Type`.
+
+## 8. Cloudflare configuration
+
+- DNS: `agent.neuralmatrix.site` is proxied through Cloudflare.
+- Tunnel public hostname: `agent.neuralmatrix.site` → `http://127.0.0.1:8080`.
+- Access application covers the hostname and all paths (including `/assets/*`).
+  Logged-in requests reach Caddy; unauthenticated requests get a `302` to the
+  Access login.
+- Rocket Loader is **off**.
+- Auto Minify is no longer available in the Cloudflare dashboard (removed by
+  Cloudflare); do not spend time looking for it.
+- Cloudflare cache purge, if ever needed: use the dashboard search box and
+  search for **Purge Cache**, or go to the zone's **Caching → Configuration →
+  Purge Cache → Purge Everything**.
+
+## 9. Troubleshooting history
+
+### Blank white page through the tunnel (fixed)
+
+**Symptom:** `https://agent.neuralmatrix.site/` showed a completely white page.
+In Firefox the document rendered as plain text:
+
+```text
+title=""
+bodyText=""
+css="resource://content-accessible/plaintext.css"
+resources=[]
+```
+
+**Root cause:** Caddy's site block was `http://127.0.0.1:8080`. In Caddy, that
+is a site address with a **host matcher**, not a bind directive. The tunnel
+forwards `Host: agent.neuralmatrix.site`, so Caddy did not match the site block
+and returned an empty `200` response with no `Content-Type`. Firefox rendered
+the empty untyped body as plain text — the white page.
+
+This was masked by testing `curl http://127.0.0.1:8080/` directly, which sent
+the matching `Host: 127.0.0.1` and returned the correct HTML.
+
+**Fix:** use `:8080` (matches any Host) plus `bind 127.0.0.1` (keeps the
+listener on loopback). The runbook now contains the corrected snippet and a
+Host-header verification command. The pre-fix Caddyfile is backed up at
+`/etc/caddy/Caddyfile.bak.20261022-135532`.
+
+### `MaxListenersExceededWarning` (benign)
+
+The warning:
+
+```text
+MaxListenersExceededWarning: Possible EventEmitter memory leak detected.
+11 close listeners added.
+```
+
+comes from the `events` polyfill bundled with `graphology`/`sigma`, which are
+loaded only for the Wiki link graph. It is a warning, not a crash, and is not
+the cause of the blank page. The graph renders (slowly) in headless Chromium.
+It can be silenced later by raising the event-emitter limit or reducing
+listener churn, but that is cosmetic.
+
+### `cloudflared tunnel info` unavailable
+
+The tunnel is token-managed. `cloudflared tunnel info` requires an origin
+certificate (`cert.pem`) and fails without one. This is expected; use the
+Cloudflare dashboard or `journalctl -u cloudflared` for tunnel status.
+
+## 10. Known issues and open items
+
+1. **Rotate the Cloudflare Tunnel token.** The token was pasted into chat
+   during setup. Rotate it in Zero Trust → Networks → Tunnels, then update
+   `/etc/cloudflared/token` (mode `600`, `root:root`) and restart `cloudflared`.
+2. **Reboot test not performed.** All units are enabled, but a reboot has not
+   been used to confirm that app, Caddy, and cloudflared return automatically.
+   Schedule a brief maintenance window for this.
+3. **Backups/T10 skipped.** No automated backup or restore test has been done.
+   The data directory is `/var/lib/nm-finance-agent`; the skills registry is
+   remote (`s3://neuralmatrix`), but local state/memories/sessions are not
+   backed up.
+4. **Memory headroom.** `t4g.small` + 2 GiB swap is below the runbook's 4 GiB
+   minimum. Monitor `free -h`, swap use, and OOM messages. Resize to
+   `t4g.medium` if needed.
+5. **SELinux is Permissive**, not Enforcing. This was the deployment state; do
+   not change it without testing the app, Caddy, and cloudflared under
+   Enforcing.
+6. **Wiki tab cold load / graph latency.** The Wiki tab loads domains and
+   concepts from the remote `llmwiki` service; a cold start can take longer
+   than the initial UI wait, and the graph takes ~10 s to settle. Not a
+   deployment blocker.
+7. **Three validation sessions exist.** They are safe to delete if a clean
+   sidebar is desired.
+8. **Docs changes are uncommitted.** See section 6.7.
+
+## 11. Operations cheat sheet
+
+### Status
+
+```bash
+systemctl status nm-finance-agent caddy cloudflared --no-pager
+sudo journalctl -u nm-finance-agent -n 100 --no-pager
+sudo journalctl -u caddy -n 100 --no-pager
+sudo journalctl -u cloudflared -n 100 --no-pager
+```
+
+### Health
+
+```bash
+curl -sS -H 'Host: agent.neuralmatrix.site' \
+  http://127.0.0.1:8080/api/health
+```
+
+### Restart / reload
+
+```bash
+sudo systemctl restart nm-finance-agent
+sudo systemctl reload caddy
+sudo systemctl restart cloudflared
+```
+
+### Validate a Caddyfile change before reloading
+
+```bash
+sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
+sudo systemctl reload caddy
+curl -sI -H 'Host: agent.neuralmatrix.site' http://127.0.0.1:8080/
+```
+
+### Redeploy application code
+
+Run as `deploy`, then restart the app:
+
+```bash
+sudo -u deploy git -C /opt/nm-finance-agent pull --ff-only
+sudo -u deploy bash -lc '
+  cd /opt/nm-finance-agent &&
+  npm ci &&
+  cd frontend &&
+  npm ci &&
+  npm run build
+'
+sudo systemctl restart nm-finance-agent
+```
+
+After a frontend rebuild, hard-refresh the browser; the asset hashes change.
+Do not copy the repository `.env` into `/opt`; the live environment file is
+`/etc/nm-finance-agent.env`.
+
+## 12. Do not
+
+- Do not expose `3001` or `8080` on `0.0.0.0`; both must stay loopback-only.
+- Do not run the app as root; it runs as `nmagent`.
+- Do not disable Cloudflare Access or put the app on a public port to “make it
+  work.”
+- Do not commit `.env`, databases, session data, or the `skills/` mirror.
+- Do not change the Caddy site address back to `http://127.0.0.1:8080`; use
+  `:8080` with `bind 127.0.0.1`.
+- Do not print `/etc/nm-finance-agent.env` or `/etc/cloudflared/token`.
+
+## 13. Handoff checklist for the laptop agent
+
+- [ ] Review the uncommitted docs changes and this report; commit/push when
+      appropriate.
+- [ ] Confirm `https://agent.neuralmatrix.site` loads after Access login.
+- [ ] Rotate the tunnel token that was pasted into chat.
+- [ ] Schedule and perform a reboot test.
+- [ ] Decide on backups and restore testing (T10).
+- [ ] Monitor memory/swap on `t4g.small`.
+- [ ] Optionally silence the Wiki graph `MaxListenersExceededWarning`.

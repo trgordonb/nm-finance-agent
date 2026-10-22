@@ -476,6 +476,9 @@ RestrictSUIDSGID=true
 LockPersonality=true
 TasksMax=4096
 # MemoryMax=6G   # uncomment on an 8 GiB VM; omit on 4 GiB
+
+[Install]
+WantedBy=multi-user.target
 ```
 
 ```bash
@@ -543,7 +546,8 @@ WantedBy=multi-user.target
 Then create the Caddyfile and start it:
 
 ```caddyfile
-http://127.0.0.1:8080 {
+:8080 {
+	bind 127.0.0.1
 	root * /opt/nm-finance-agent/frontend/dist
 
 	@api path /api/*
@@ -561,12 +565,21 @@ http://127.0.0.1:8080 {
 }
 ```
 
+> **Why `:8080`, not `http://127.0.0.1:8080`:** the latter is a Caddy *site
+> address with a host matcher*, not a bind. It only answers requests whose
+> `Host` header is `127.0.0.1`, while cloudflared forwards
+> `Host: agent.example.com`; Caddy then returns an empty `200` with no
+> `Content-Type`, which browsers render as a blank page. `:8080` matches any
+> host. `bind 127.0.0.1` is what keeps the listener off the public interface.
+
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now caddy
 sudo usermod -aG nmagent caddy      # read frontend/dist
 sudo systemctl restart caddy
 curl -sI http://127.0.0.1:8080/ | head -3
+# Must return text/html with a non-zero Content-Length:
+curl -sI -H 'Host: agent.example.com' http://127.0.0.1:8080/ | head -5
 ```
 
 Install the tunnel **with a token from the Zero Trust dashboard** (headless;
