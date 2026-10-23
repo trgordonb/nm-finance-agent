@@ -8,9 +8,10 @@ in §4; do not mix the two package managers.
 **Goal:** a single-user, internet-reachable deployment with HTTPS/auth, the R2
 skills registry live, the AgentDB mirror remote, and backups.
 
-**Status:** 2026-10-22. The app is single-user until OAuth2 lands; the interim
-auth is Cloudflare Access (or Caddy basic auth). Per-user containers are
-deliberately out of scope — see `docs/per-user-workspace-and-r2.md`.
+**Status:** 2026-10-23. The app is single-user; app SSO (`AUTH_MODE=sso`) is
+deployed. Cloudflare Access or Caddy basic auth can be layered in front but are
+optional. Per-user containers are deliberately out of scope — see
+`docs/per-user-workspace-and-r2.md`.
 
 ---
 
@@ -51,13 +52,14 @@ Companion docs (read, don't duplicate):
 
 ```
 Internet
-  │  HTTPS + Cloudflare Access (or Caddy basic auth)
+  │  HTTPS (Cloudflare Tunnel; Access optional)
   ▼
 cloudflared tunnel  ──▶  Caddy 127.0.0.1:8080
                            ├─ /            frontend/dist (SPA fallback)
                            └─ /api/*       reverse_proxy 127.0.0.1:3001 (SSE flush)
                                                   │
                                           nm-finance-agent (nmagent)
+                                                  ├─ app SSO          AUTH_MODE=sso + application.nmfinance
                                                   ├─ /opt/nm-finance-agent        code + node_modules + dist
                                                   ├─ /var/lib/nm-finance-agent    db, workspace, skills, state, memories
                                                   ├─ $SKILLS_CLI                  nm-skills (uv tool, v0.1.7)
@@ -68,8 +70,8 @@ cloudflared tunnel  ──▶  Caddy 127.0.0.1:8080
 server is dev-only. Caddy serves `frontend/dist` and proxies `/api/*`, so the
 browser's relative `/api/...` URLs keep working same-origin.
 
-**Why the app is not the TLS terminator:** it binds `127.0.0.1:3001` and has no
-auth yet. The proxy is the only public surface.
+**Why the app is not the TLS terminator:** it binds `127.0.0.1:3001`; Caddy is
+the only public surface. The app enforces SSO on application `/api/*` routes.
 
 ---
 
@@ -89,7 +91,7 @@ Ask the user for these; write the answers into the handover report.
 | `APP_DIR` | `/opt/nm-finance-agent` — **not** a home directory |
 | `DATA_DIR` | `/var/lib/nm-finance-agent` |
 | Domain | e.g. `agent.example.com` (or "LAN only") |
-| Auth | Cloudflare Access (recommended) / Caddy basic auth / none (LAN only) |
+| Auth | App SSO (`AUTH_MODE=sso`); optional Cloudflare Access or Caddy basic auth in front |
 | Tunnel vs public IP | Tunnel if a domain is on Cloudflare; otherwise Caddy + TLS + Elastic IP |
 | Secrets | the user's existing `.env` (never recreate from memory) |
 | Skills bucket seeded? | must be **yes** before first boot (T4 + §8 preflight) |
@@ -503,7 +505,7 @@ listening line on `127.0.0.1:3001`.
 
 ## 11. T8 — Reverse proxy, TLS, auth
 
-### Option A (recommended): Caddy + Cloudflare Tunnel + Access
+### Option A (recommended): Caddy + Cloudflare Tunnel (Access optional)
 
 ```bash
 # Caddy is not in the AL2023 repos — use the official static binary.
@@ -587,7 +589,8 @@ no interactive login):
 
 1. Zero Trust → Networks → Tunnels → Create → copy the token.
 2. Public hostname: `agent.example.com` → `http://127.0.0.1:8080`.
-3. Access → Applications → add `agent.example.com`, policy = the user's email.
+3. Optional: Access → Applications → add `agent.example.com`, policy = the
+   user's email. Omit this for app-SSO-only (the current VM).
 
 ```bash
 # AL2023: use the static binary (no Debian/apt repo)
@@ -600,7 +603,11 @@ systemctl status cloudflared --no-pager
 ```
 
 **STOP** and ask the user to complete the dashboard steps (tunnel, DNS,
-Access policy) if you don't have the token. Do not open 80/443.
+optional Access policy) if you don't have the token. Do not open 80/443.
+
+> **Current VM (2026-10-23):** Cloudflare Access is removed. The Tunnel remains
+> and app SSO is the only application gate. Re-enabling Access is optional
+> defense-in-depth and adds a second login.
 
 **EC2 Security Group — the real boundary** (AL2023 has no `ufw`; do not install
 one Debian-style):
@@ -660,8 +667,9 @@ sudo systemctl restart caddy
 ### SSO authentication (Phase 4)
 
 The app supports `AUTH_MODE=sso` (server-side BFF) or `AUTH_MODE=off` (rollback).
-Access and the loopback-only listeners remain the outer boundary in both modes.
-See `docs/sso-integration-plan.md` for the design.
+The Cloudflare Tunnel and loopback-only listeners remain the network boundary;
+Cloudflare Access is optional and removed on the current VM. See
+`docs/sso-integration-plan.md` for the design.
 
 Preconditions:
 
@@ -777,9 +785,10 @@ sudo sh -c 'ls -l /var/lib/nm-finance-agent/state/auth.db*'
 # auth.db must be -rw------- nmagent nmagent; wal/shm may exist while running
 ```
 
-Browser acceptance (owner; Cloudflare Access stays enabled):
+Browser acceptance (owner; the current VM has no Access):
 
-- Access login → app SSO login card (not blank, not the app);
+- Open the public URL → app SSO login card (not blank, not the app); if Access
+  is enabled, complete its login first;
 - SSO login → app; reload stays signed in; logout returns to login;
 - SSE streams and Stop works; Wiki and MCP work;
 - `nm_auth` cookie is `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/`;
@@ -787,7 +796,8 @@ Browser acceptance (owner; Cloudflare Access stays enabled):
 - wrong password shows `Wrong username or password.`;
 - SSO login/audit log shows the owner public IP, not `127.0.0.1`.
 
-Temporary rollback (maintenance window only; Access remains enabled):
+Temporary rollback (maintenance window only; Tunnel remains enabled; Access is
+currently removed):
 
 ```bash
 sudo sed -i 's/^AUTH_MODE=.*/AUTH_MODE=off/' /etc/nm-finance-agent.env
@@ -812,8 +822,9 @@ Notes:
 - SQLite may create `auth.db-wal`/`auth.db-shm` as `644` while the service runs.
   The `state` directory is `750 nmagent:nmagent`; add `UMask=0077` to the app
   unit if stricter isolation is required.
-- Do not disable Cloudflare Access or expose `3001`/`8080` to compensate for an
-  auth failure.
+- Do not disable app SSO or expose `3001`/`8080` to compensate for an auth
+  failure. Access is currently removed; if re-enabled, do not disable it to
+  troubleshoot.
 
 ---
 
@@ -977,7 +988,7 @@ sudo systemctl restart nm-finance-agent
 | mirror warnings / ONNX errors | prefer `AGENTDB_REMOTE_URL`; or `AGENTDB_MIRROR=0` to disable |
 | SSE buffered | Caddy `flush_interval -1`; no `encode` on `/api` |
 | 502 from Caddy | app not listening: `ss -ltnp \| grep 3001`; check service |
-| Access redirect loop | Access app hostname ≠ tunnel hostname; fix in dashboard |
+| Access redirect loop | only if Access is enabled: Access app hostname ≠ tunnel hostname; fix in dashboard |
 | `execute` fails | `nmagent` shell/permissions; `ls -ld /var/lib/nm-finance-agent/workspace` |
 | MCP server fails at boot | `journalctl` names it; disable it in `/var/lib/nm-finance-agent/mcp_servers.json` |
 | deep research slow | expected 10–40 min; check the LangSmith trace, not the process |
@@ -996,7 +1007,7 @@ sudo systemctl restart nm-finance-agent
 - [ ] EC2 Security Group: 22 from your IP; 80/443 only for public Caddy; no 3001/8080
 - [ ] optional `firewalld` mirrors the Security Group
 - [ ] app on `127.0.0.1:3001`; never exposed
-- [ ] Cloudflare Access or Caddy basic auth in front
+- [ ] Cloudflare Tunnel + app SSO in front (Access or Caddy basic auth optional)
 - [ ] `/etc/nm-finance-agent.env` mode `640 root:nmagent`; no repo `.env`
 - [ ] `AUTH_MODE=sso`; `application.nmfinance` grant verified; unauthenticated `/api/sessions` → `401`
 - [ ] `/etc/nm-finance-agent/sso-ca.pem` matches the SSO leaf; renewal date recorded
@@ -1102,8 +1113,8 @@ Reports land under `$WORKSPACE_DIR/research/`.
   while leaving the data writable through `ReadWritePaths`.
 - **No repo `.env`**: `dotenv({ override: true })` would override systemd and
   duplicate secrets; one authoritative env file is easier to audit.
-- **Caddy in front**: static SPA + SSE-aware API proxy + TLS/Access; the app
-  stays loopback-only.
+- **Caddy in front**: static SPA + SSE-aware API proxy + TLS (Access optional);
+  the app stays loopback-only.
 - **Installed `nm-skills`**: `SKILLS_CLI` avoids `uv run --directory` writing
   into `/opt` under the systemd sandbox.
 - **Remote mirror**: no ONNX model download, no native sidecar, lower RAM and

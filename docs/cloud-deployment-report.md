@@ -1,12 +1,13 @@
 # Cloud Deployment Report — NM Finance Agent
 
-**Status:** deployed and operational; SSO authentication enabled (Phase 4)  
+**Status:** deployed and operational; app SSO is the only application auth (Access removed)  
 **Deployment completed:** 2026-10-22 (UTC)  
 **SSO rollout:** 2026-10-23 (UTC)  
-**Report date:** 2026-10-23 10:09 UTC  
+**Report date:** 2026-10-23 10:29 UTC  
 **Public URL:** <https://agent.neuralmatrix.site>  
 **Deployed commit:** `7167222` (`feat(auth): SSO BFF login and session gate; add Phase 4 cloud handover`)  
 **Auth mode:** `sso` — required permission `application.nmfinance`  
+**Edge:** Cloudflare Tunnel; Cloudflare Access removed 2026-10-23  
 **Deployment runbook:** [`docs/vm-deployment-runbook.md`](./vm-deployment-runbook.md)
 
 > This report contains no secret values. The live secret file is
@@ -17,9 +18,10 @@
 ## 1. Summary
 
 The app is deployed on a single AWS EC2 instance and is reachable through
-Cloudflare Tunnel + Cloudflare Access at the public URL above. Caddy serves the
-built SPA and proxies `/api/*` to the Express/SSE app on loopback. All three
-systemd units are active and enabled.
+Cloudflare Tunnel at the public URL above. Caddy serves the built SPA and
+proxies `/api/*` to the Express/SSE app on loopback. All three systemd units are
+active and enabled. Cloudflare Access was removed on 2026-10-23; the app's SSO is
+now the only application authentication layer.
 
 This was a fresh deployment: no data migration was performed. The sessions
 visible in the sidebar are validation artifacts from deployment and browser
@@ -33,15 +35,17 @@ a session whose SSO introspection includes `application.nmfinance`; only
 verification.
 
 The deployment and SSO rollout are **working**; the owner confirmed that
-`https://agent.neuralmatrix.site/` loads after Access login and completed the
-browser acceptance checks. The earlier Caddy `Host`-matching bug that produced a
-blank white page is fixed, and the runbook has been updated.
+`https://agent.neuralmatrix.site/` loads after app SSO login and completed the
+browser acceptance checks. Access was removed afterward to avoid the second
+login; the Tunnel and loopback-only origin remain. The earlier Caddy
+`Host`-matching bug that produced a blank white page is fixed, and the runbook
+has been updated.
 
 ## 2. Architecture
 
 ```text
 Browser
-  │  HTTPS + Cloudflare Access
+  │  HTTPS (Cloudflare edge; Access removed)
   ▼
 Cloudflare edge (zone: neuralmatrix.site)
   │  Cloudflare Tunnel
@@ -68,11 +72,11 @@ Caddy 127.0.0.1:8080
 
 - Public hostname: `agent.neuralmatrix.site`
 - Tunnel ingress: `agent.neuralmatrix.site` → `http://127.0.0.1:8080`
-- Cloudflare Access team domain: `long-truth-2746.cloudflareaccess.com`
-- Access policy: single-user email policy configured by the owner
+- Cloudflare Access: **removed 2026-10-23**; DNS and Tunnel unchanged
 - TLS terminates at Cloudflare; the origin is HTTP on loopback only
 - Auth: `AUTH_MODE=sso`; cookie `nm_auth` (`HttpOnly`, `Secure`,
-  `SameSite=Strict`, `Path=/`); required permission `application.nmfinance`
+  `SameSite=Strict`, `Path=/`); required permission `application.nmfinance`;
+  this is the only application gate
 - SSO endpoint: `https://2.24.91.212:8443`; pinned leaf CA at
   `/etc/nm-finance-agent/sso-ca.pem`
 - Cloudflare account/tunnel IDs are intentionally omitted from this report;
@@ -272,18 +276,21 @@ auth.required_permission=application.nmfinance
 - Unauthenticated `/api/sessions` returns `401` through Caddy; `/api/health`
   remains `200`.
 
-### Public edge
+### Public edge (after Access removal)
 
-Unauthenticated requests are redirected to Access, as expected:
+Cloudflare Access was removed on 2026-10-23; the Tunnel remains. Unauthenticated
+requests reach Caddy and are handled by the app:
 
 | Path | Unauthenticated result |
 |---|---|
-| `/` | `302` → Access login |
-| `/api/health` | `302` → Access login |
-| `/assets/index-3pfl-QS1.js` | `302` → Access login |
+| `/` | `200`, app login page (`text/html`) |
+| `/api/health` | `200`, JSON |
+| `/api/sessions` | `401` |
+| `/api/auth/me` | `401` |
+| `/assets/index-3pfl-QS1.js` | `200`, JavaScript |
 
-The Access login page itself returns `200` with title
-`Sign in ・ Cloudflare Access`.
+Before removal, all paths returned `302` to the Access login. After removal, the
+app login page renders directly in headless Chromium with no Access redirect.
 
 ### Caddy / tunnel Host check
 
@@ -299,9 +306,9 @@ must return `200`, `Content-Type: text/html`, and a non-zero
 
 - DNS: `agent.neuralmatrix.site` is proxied through Cloudflare.
 - Tunnel public hostname: `agent.neuralmatrix.site` → `http://127.0.0.1:8080`.
-- Access application covers the hostname and all paths (including `/assets/*`).
-  Logged-in requests reach Caddy; unauthenticated requests get a `302` to the
-  Access login.
+- Cloudflare Access application: removed 2026-10-23. The Tunnel and DNS were not
+  changed; unauthenticated requests now reach Caddy and the app enforces SSO.
+- App SSO is the only application authentication layer; see §15.
 - Rocket Loader is **off**.
 - Auto Minify is no longer available in the Cloudflare dashboard (removed by
   Cloudflare); do not spend time looking for it.
@@ -393,6 +400,9 @@ Cloudflare dashboard or `journalctl -u cloudflared` for tunnel status.
    leaf certificate, which expires **2027-10-21**. Replace it with the renewed
    leaf, re-verify the SHA-256 fingerprint, and restart the app. Pinning a leaf
    makes renewal a manual step.
+10. **Edge rate limiting after Access removal.** `/api/auth/login` is now
+    internet-reachable. The app has a 10-attempts/minute login limiter; add a
+    Cloudflare WAF rate-limit rule for `/api/auth/login` if the plan supports it.
 
 ## 11. Operations cheat sheet
 
@@ -424,6 +434,14 @@ curl -s -o /dev/null -w 'sessions=%{http_code}\n' \
 
 sudo sh -c 'ls -l /var/lib/nm-finance-agent/state/auth.db*'
 # expect auth.db mode 600, owner nmagent
+
+# Public edge (no Access): app login page is public; API stays gated
+curl -s -o /dev/null -w 'root=%{http_code}\n' https://agent.neuralmatrix.site/
+# expect 200
+curl -s -o /dev/null -w 'sessions=%{http_code}\n' https://agent.neuralmatrix.site/api/sessions
+# expect 401
+curl -s -o /dev/null -w 'health=%{http_code}\n' https://agent.neuralmatrix.site/api/health
+# expect 200
 ```
 
 ### Restart / reload
@@ -436,7 +454,8 @@ sudo systemctl restart cloudflared
 
 ### Temporary SSO rollback
 
-Use only in an agreed maintenance window. Cloudflare Access remains enabled.
+Use only in an agreed maintenance window. The Cloudflare Tunnel remains enabled;
+Cloudflare Access is currently removed.
 
 ```bash
 sudo sed -i 's/^AUTH_MODE=.*/AUTH_MODE=off/' /etc/nm-finance-agent.env
@@ -485,28 +504,33 @@ Do not copy the repository `.env` into `/opt`; the live environment file is
 
 - Do not expose `3001` or `8080` on `0.0.0.0`; both must stay loopback-only.
 - Do not run the app as root; it runs as `nmagent`.
-- Do not disable Cloudflare Access or put the app on a public port to “make it
-  work.”
+- Do not disable app SSO or put the app on a public port to “make it work.”
 - Do not commit `.env`, `auth.db`, databases, session data, or the `skills/`
   mirror.
 - Do not change the Caddy site address back to `http://127.0.0.1:8080`; use
   `:8080` with `bind 127.0.0.1`.
-- Do not disable `AUTH_MODE=sso` or Cloudflare Access to troubleshoot; use the
-  documented rollback only in a maintenance window.
+- Do not disable `AUTH_MODE=sso` to troubleshoot; use the documented rollback
+  only in a maintenance window.
+- Do not assume Cloudflare Access is present; it was removed 2026-10-23. The
+  Tunnel is transport, not authentication.
 - Do not print `/etc/nm-finance-agent.env`, `/etc/cloudflared/token`, or
   `auth.db` rows.
 
 ## 13. Handoff checklist for the laptop agent
 
 - [x] Phase 4 SSO deployed at `7167222`; machine and browser acceptance passed.
-- [x] `https://agent.neuralmatrix.site` loads after Access login; owner tested
+- [x] `https://agent.neuralmatrix.site` loads after app SSO login; owner tested
       login/reload/logout, SSE/Stop, Wiki, and MCP.
-- [x] Phase 4 docs committed with this report (cloud report + VM runbook).
+- [x] Cloudflare Access removed 2026-10-23; Tunnel retained; app SSO is the only
+      application gate.
+- [x] Phase 4 and Access-removal docs committed with this report (cloud report +
+      VM runbook).
 - [ ] Rotate the tunnel token that was pasted into chat.
 - [ ] Schedule and perform a reboot test.
 - [ ] Decide on backups/restore testing (T10); treat `auth.db` as secret.
 - [ ] Monitor memory/swap on `t4g.small`.
 - [ ] Replace the pinned SSO certificate before 2027-10-21.
+- [ ] Add a Cloudflare WAF rate-limit rule for `/api/auth/login` if available.
 - [ ] Optional: tighten WAL/SHM modes (`UMask=0077`) and silence the Wiki graph
       `MaxListenersExceededWarning`.
 
@@ -532,8 +556,9 @@ Do not copy the repository `.env` into `/opt`; the live environment file is
 - The existing inline `SSO_CLIENT_SECRET` was preserved; no secret value was
   printed or changed. The env file still has exactly one SSO secret key.
 - Env backup: `/etc/nm-finance-agent.env.bak.20261023-094655` (`640`); secret.
-- No Caddy changes were needed: `:8080` with `bind 127.0.0.1` remains, and
-  Cloudflare Access stayed enabled throughout.
+- No Caddy changes were needed: `:8080` with `bind 127.0.0.1` remains.
+  Cloudflare Access stayed enabled during browser acceptance and was removed
+  afterward; see §15.
 
 ### Preconditions verified
 
@@ -543,7 +568,8 @@ Do not copy the repository `.env` into `/opt`; the live environment file is
   (`HTTP 200 {"active":false}`); no value was printed.
 - SSO `/healthz` returned `{"status":"ok"}`; the certificate matched the
   expected fingerprint and expiry.
-- The public hostname returned `302` to Access; `cloudflared` was active.
+- Before removal, the public hostname returned `302` to Access; `cloudflared`
+  was active.
 - `/var/lib/nm-finance-agent/state` was writable by `nmagent`; the owner
   confirmed the `application.nmfinance` grant.
 
@@ -591,3 +617,36 @@ errors.
 - Consider `UMask=0077` for the app unit to cover WAL/SHM files.
 - Complete the remaining open items in §10: tunnel-token rotation, reboot test,
   and backups/restore (with `auth.db` treated as secret).
+
+## 15. Cloudflare Access removed (2026-10-23)
+
+**Decision:** App SSO is now the only application authentication layer. The
+Cloudflare Access application for `agent.neuralmatrix.site` was deleted by the
+owner in Zero Trust, so users are no longer prompted twice. The Tunnel, DNS,
+Caddy config, and loopback listeners were not changed.
+
+### Verification after removal
+
+| Check | Result |
+|---|---|
+| Public `/` | `200`, `text/html`, title `NM Finance Agent` |
+| Public `/api/health` | `200`, `auth.mode=sso` |
+| Public `/api/sessions` | `401` |
+| Public `/api/auth/me` | `401` |
+| Public asset `/assets/index-3pfl-QS1.js` | `200`, JavaScript |
+| Access redirect | none (`redirect_url` empty; no `cloudflareaccess.com`) |
+| Headless Chromium | app login card, two inputs, no Access login |
+| Public login with fake credentials | `401 {"detail":"invalid_credentials"}` |
+| Tunnel / Caddy / app | active; `127.0.0.1:3001`/`8080` only |
+
+### Security notes
+
+- The login page and `/api/auth/login` are now internet-reachable. The app's
+  login limiter allows 10 attempts per minute per key. Add a Cloudflare WAF
+  rate-limit rule for `/api/auth/login` if the plan supports it.
+- Cloudflare Access no longer protects static assets or `/api/health`; it was an
+  outer gate, not a substitute for app authorization.
+- Cloudflare Tunnel still hides the origin and avoids inbound `3001`/`8080`; the
+  app SSO still enforces `application.nmfinance` on application routes.
+- Re-enabling Access is possible as defense-in-depth, but it adds a second
+  login. If re-enabled, do not disable it to troubleshoot.
