@@ -87,7 +87,9 @@ Key properties:
   login/refresh/logout/introspect, so `cip` binding and per-IP throttles behave as designed.
 - Tokens live in SQLite on the VM (`auth.db`), mode 600, owned by `nmagent`. The DB becomes
   secret material (a refresh token is a 7-day credential).
-- Cloudflare Access stays in front as the outer gate. SSO is the application identity layer.
+- Cloudflare Tunnel remains the network ingress. Cloudflare Access was removed on
+  2026-10-23; the app's SSO is the only application identity layer. Access can be
+  re-enabled as optional defense-in-depth, but it adds a second login.
 
 ---
 
@@ -265,7 +267,8 @@ guessing the codename.
 Implemented in `frontend/src/auth.ts`, `components/Login.tsx`, `components/AuthScreens.tsx`, the
 auth shell at the bottom of `App.tsx`, and the global 401 handler in `api.ts`. The shell reads
 `/api/health.auth.mode`: `off` (or an older backend with no `auth` block) skips the login screen
-entirely, so local `AUTH_MODE=off` and rollback keep working.
+entirely, so local `AUTH_MODE=off` development and short controlled rollback keep working. On the
+public VM, `off` is unauthenticated because Access has been removed; see §13.
 
 ---
 
@@ -339,9 +342,9 @@ Nothing to do for the BFF. If a future direct-browser flow is ever added, add
 | Secrets | `SSO_CLIENT_SECRET` server-side only; never logged, never sent to the browser. Token values only appear as `sha256[:12]` in logs. |
 | Fail mode | Closed: SSO unreachable → 503, never "allow because we cannot check". |
 | Session DB | `auth.db` is secret material (refresh tokens); mode 600, owner `nmagent`; include in backups or accept re-login after restore. |
-| Cloudflare Access | Stays in place as the outer gate; SSO is defense in depth and the identity source for future per-user features. |
+| Cloudflare Access | Removed 2026-10-23; the Tunnel remains and SSO is the only application gate. Re-enabling Access is optional defense-in-depth and adds a second login. |
 | Long-running SSE | Authorised once at connect. A turn may outlive the access token and, in principle, a suspension. Accepted for now; signed webhooks (`user.suspended`) are the later fix. |
-| SSO outage | Existing streams continue; new requests 503. Cloudflare Access still lets the page load, but login/API need the SSO. |
+| SSO outage | Existing streams continue; new requests 503. The Tunnel still serves the static login page, but login/API need the SSO. |
 
 ---
 
@@ -392,8 +395,10 @@ Nothing to do for the BFF. If a future direct-browser flow is ever added, add
 | **4. Cloud deploy** | Add auth env + CA file to `/etc/nm-finance-agent.env`; restart; verify through the tunnel; update the runbook/report | Handover: [`docs/sso-phase4-cloud-handover.md`](./sso-phase4-cloud-handover.md) |
 | **5. Hardening (optional)** | Signed webhook receiver for `user.suspended`, local JWKS pre-check, per-user workspace/session keying | Later; triggered by a second human user or SSO latency |
 
-**Rollback:** set `AUTH_MODE=off` and restart `nm-finance-agent`. Cloudflare Access remains the
-outer gate, so this is a safe revert to today's posture.
+**Rollback:** set `AUTH_MODE=off` and restart `nm-finance-agent` only for a brief,
+controlled test. With Cloudflare Access removed, `off` leaves the app publicly
+unauthenticated; it is **not** a safe long-lived rollback. Re-enable Access or
+stop the service for a longer rollback.
 
 **Deployment mechanics:** the code deploy is the existing procedure (`git pull --ff-only` as
 `deploy`, `npm ci`, frontend build, restart). The new pieces are the env block and the CA file:
@@ -427,7 +432,8 @@ append does not matter because the peer is loopback and the header takes precede
   added later as a pre-filter; it would also make the issuer fix matter.
 - **No direct browser→SSO flow, no SSO-hosted login page** (the SSO does not have one yet).
 - **No service tokens / on-behalf-of.** Not needed for a user-facing SPA.
-- **No change to Cloudflare Access, Caddy, MCP, or the skills registry.**
+- **No change to Cloudflare Tunnel, Caddy, MCP, or the skills registry.** (Cloudflare Access was
+  removed afterward; see the deployment report §15.)
 
 ---
 

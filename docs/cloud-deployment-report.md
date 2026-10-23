@@ -3,7 +3,7 @@
 **Status:** deployed and operational; app SSO is the only application auth (Access removed)  
 **Deployment completed:** 2026-10-22 (UTC)  
 **SSO rollout:** 2026-10-23 (UTC)  
-**Report date:** 2026-10-23 10:29 UTC  
+**Report date:** 2026-10-23 16:03 UTC  
 **Public URL:** <https://agent.neuralmatrix.site>  
 **Deployed commit:** `7167222` (`feat(auth): SSO BFF login and session gate; add Phase 4 cloud handover`)  
 **Auth mode:** `sso` — required permission `application.nmfinance`  
@@ -460,7 +460,10 @@ sudo systemctl restart cloudflared
 ### Temporary SSO rollback
 
 Use only in an agreed maintenance window. The Cloudflare Tunnel remains enabled;
-Cloudflare Access is currently removed.
+Cloudflare Access is currently removed. Because Access is gone, `AUTH_MODE=off`
+makes every application route publicly reachable without authentication. Use it
+only for a brief controlled test and restore `sso` immediately; for a longer
+rollback, re-enable Access or stop the service.
 
 ```bash
 sudo sed -i 's/^AUTH_MODE=.*/AUTH_MODE=off/' /etc/nm-finance-agent.env
@@ -528,8 +531,8 @@ Do not copy the repository `.env` into `/opt`; the live environment file is
       login/reload/logout, SSE/Stop, Wiki, and MCP.
 - [x] Cloudflare Access removed 2026-10-23; Tunnel retained; app SSO is the only
       application gate.
-- [x] Phase 4 and Access-removal docs committed with this report (cloud report +
-      VM runbook).
+- [x] Phase 4, Access-removal, and WAF docs committed with this report (cloud
+      report + VM runbook).
 - [ ] Rotate the tunnel token that was pasted into chat.
 - [ ] Schedule and perform a reboot test.
 - [ ] Decide on backups/restore testing (T10); treat `auth.db` as secret.
@@ -592,12 +595,15 @@ Do not copy the repository `.env` into `/opt`; the live environment file is
 | Caddy `/` | `200`, `text/html`, non-zero content |
 | Listeners | `127.0.0.1:3001`, `127.0.0.1:8080` only |
 | `auth.db` | `600 nmagent:nmagent` |
-| Rollback test | `AUTH_MODE=off` → `auth.mode=off`, sessions `200`; restored `sso` → sessions `401` |
+| Rollback test | `AUTH_MODE=off` → `auth.mode=off`, sessions `200`; restored `sso` → sessions `401` (performed while Access was still enabled) |
 | Browser acceptance | login, reload, logout, SSE/Stop, Wiki, MCP all passed |
 | Cookie flags | `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/` |
 | Login response | no access/refresh token exposed to JavaScript |
 | Wrong-password message | `Wrong username or password.` |
 | SSO login log | owner public IP, not `127.0.0.1` |
+
+> The rollback test was run while Cloudflare Access was still enabled. With Access
+> removed, `AUTH_MODE=off` is not a safe public posture; use the warning in §11.
 
 The login screen also rendered correctly in headless Chromium against the local
 origin: title `NM Finance Agent`, username/password inputs, no fatal console
@@ -703,6 +709,10 @@ eight are `401`, the rule is not matching (check the expression and the
 dashboard's Security Events). The app's own limiter would not fire until the
 11th request within a minute, so an app `429 {"detail":"rate_limited"}` at this
 point means the WAF rule did not match first.
+
+**Independent VM-side check (2026-10-23):** five `401`s, then `429`/error `1015`
+for attempts 6–8; after a 12-second wait, public `/` returned `200` and
+`/api/sessions` returned `401`.
 
 **Verified 2026-10-23** from the laptop IP: requests 1–5 returned
 `401 {"detail":"invalid_credentials"}`; requests 6–8 returned `429` with

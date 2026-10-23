@@ -15,7 +15,8 @@ secret handoff.
 
 > **You are the cloud agent.** This document is the handover. Follow it in order. If a
 > precondition is false, **stop and report** — do not improvise around an auth layer, and never
-> disable Cloudflare Access to “make it work”. The existing VM constraints still apply: no secret
+> disable the app's authentication layer to “make it work” (and do not disable Cloudflare Access
+> if it is enabled). The existing VM constraints still apply: no secret
 > printing, ports `3001`/`8080` loopback-only, the Caddy site address stays `:8080` with
 > `bind 127.0.0.1`, and the app runs as `nmagent`.
 
@@ -27,7 +28,7 @@ The app becomes a **backend-for-frontend (BFF) client** of the Neural-Matrix SSO
 
 ```text
 Browser
-  │ HTTPS + Cloudflare Access (unchanged)
+  │ HTTPS (Cloudflare Tunnel; Access optional, removed on current VM)
   ▼
 Caddy 127.0.0.1:8080
   ├─ /        → frontend/dist (SPA with login screen)
@@ -50,8 +51,9 @@ What changes in the app:
 | Storage | `AUTH_DB_PATH` (`/var/lib/nm-finance-agent/state/auth.db`), mode 600, refresh tokens inside |
 | Dependencies | **none added** (no `npm ci` surprises from new packages) |
 
-`AUTH_MODE=off` keeps the old open behaviour and is the rollback switch. `AUTH_MODE=sso` turns the
-gate on. The frontend reads `/api/health.auth.mode`, so it skips the login screen when auth is off
+`AUTH_MODE=off` keeps the old open behaviour and is the rollback switch. With
+Cloudflare Access removed, that also means public unauthenticated access; use it
+only for a brief controlled test. `AUTH_MODE=sso` turns the gate on. The frontend reads `/api/health.auth.mode`, so it skips the login screen when auth is off
 or when an older backend has no `auth` block.
 
 `sso_permissions.json` is the app's permission declaration for the SSO import API; the app never
@@ -81,8 +83,12 @@ deploying this repo.
 | 3 | ServiceClient **`nm-finance-agent`** is active and its secret is available to the VM. | The secret is in `/etc/nm-finance-agent.env` as `SSO_CLIENT_SECRET` **or** in a file referenced by `SSO_CLIENT_SECRET_FILE`. Do not print either. If neither exists, the **owner** must add it securely before step 5. |
 | 4 | The VM can reach the SSO. | `curl -sS --max-time 5 -k https://2.24.91.212:8443/healthz` → `{"status":"ok"}`. `-k` is only for this pre-check; the app uses the pinned certificate. |
 | 5 | The SSO certificate matches the expected fingerprint. | Step 4's cert: SHA-256 `32:91:54:35:C1:53:BE:0D:F8:4D:0E:72:F4:A9:9F:A9:F1:02:BC:D5:13:98:5D:45:96:3E:83:CD:FB:4F:F6:CD`; expires **2027-10-21**. |
-| 6 | Cloudflare Access is still enabled and the tunnel is healthy. | `systemctl status cloudflared --no-pager`; the dashboard/Access login still gates the hostname. |
+| 6 | Cloudflare Tunnel is healthy; Cloudflare Access is optional. | `systemctl status cloudflared --no-pager`; if Access is enabled, the dashboard/Access login still gates the hostname. On the current VM Access is removed, so app SSO is the only application gate. |
 | 7 | `/var/lib/nm-finance-agent/state` exists and is writable by `nmagent`. | `sudo ls -ld /var/lib/nm-finance-agent/state` → `nmagent:nmagent`. |
+
+Cloudflare edge rate limiting on `/api/auth/login` is documented in the current
+deployment report §16. It is a burst backstop; keep the app SSO and its login
+limiter active.
 
 **Owner-only steps:** #1 (push), #2 (grant + password), #3 (secret transfer if missing), and the
 browser acceptance test in §7. **Cloud-agent steps:** everything else.
@@ -354,7 +360,8 @@ ss -ltn | grep -E ':(3001|8080)\b'
 
 ## 7. Browser acceptance test (owner + cloud agent)
 
-Go through Cloudflare Access to `https://agent.neuralmatrix.site`.
+Open `https://agent.neuralmatrix.site` directly. The current VM has no
+Cloudflare Access; if Access is enabled, complete its login first.
 
 | # | Check | Expected |
 |---|---|---|
@@ -384,6 +391,11 @@ If the app shows `Access required` for the owner's account, the grant is missing
 
 Fast rollback (keeps the new build; the UI detects `off` and skips the login screen):
 
+> **Warning:** the current VM has no Cloudflare Access. `AUTH_MODE=off` therefore
+> exposes every application route without authentication. Use this only for a
+> brief controlled test, then restore `sso` immediately. For a longer rollback,
+> re-enable Access or stop the service.
+
 ```bash
 sudo sed -i 's/^AUTH_MODE=.*/AUTH_MODE=off/' /etc/nm-finance-agent.env
 sudo systemctl restart nm-finance-agent
@@ -391,7 +403,7 @@ curl -s -H 'Host: agent.neuralmatrix.site' http://127.0.0.1:8080/api/health \
   | python3 -c 'import sys,json; print(json.load(sys.stdin).get("auth"))'
 # {'mode': 'off', 'required_permission': None}
 curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: agent.neuralmatrix.site' http://127.0.0.1:8080/api/sessions
-# 200 (Cloudflare Access is still the outer gate)
+# 200 — with Access removed this is publicly unauthenticated; brief test only
 ```
 
 Full rollback (also restores the previous env file):
@@ -402,8 +414,8 @@ sudo systemctl restart nm-finance-agent
 ```
 
 If the service refuses to boot, `journalctl -u nm-finance-agent -n 50 --no-pager` shows the config
-error (missing secret, unreadable CA, bad URL). Fix it or use the `AUTH_MODE=off` rollback; do not
-leave the unit in a restart loop.
+error (missing secret, unreadable CA, bad URL). Fix it or use the `AUTH_MODE=off` rollback only
+briefly — with Access removed it is public — and do not leave the unit in a restart loop.
 
 `auth.db` contains refresh tokens. On a permanent rollback, either leave it (idle, expires in 7
 days) or destroy it deliberately:
@@ -479,7 +491,7 @@ Diagnostics that are safe to run: `journalctl -u nm-finance-agent`, `/api/health
 - [ ] SSE chat, Stop, session reload, Wiki, MCP toggle smoke-tested.
 - [ ] SSO login log shows the browser's public IP (not loopback).
 - [ ] Rollback (`AUTH_MODE=off`) tested or at least verified by reading the health response after a
-      temporary toggle (if a maintenance window allows).
+      temporary toggle (brief only; with Access removed this is publicly unauthenticated).
 - [ ] Deployment report + runbook updated; docs committed or handed back with paths.
 
 ---

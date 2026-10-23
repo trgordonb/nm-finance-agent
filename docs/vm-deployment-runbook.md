@@ -799,6 +799,10 @@ Browser acceptance (owner; the current VM has no Access):
 Temporary rollback (maintenance window only; Tunnel remains enabled; Access is
 currently removed):
 
+> **Warning:** with Access removed, `AUTH_MODE=off` exposes the app without
+> authentication. Use this only for a brief controlled check and restore `sso`
+> immediately; for a longer rollback, re-enable Access or stop the service.
+
 ```bash
 sudo sed -i 's/^AUTH_MODE=.*/AUTH_MODE=off/' /etc/nm-finance-agent.env
 sudo chown root:nmagent /etc/nm-finance-agent.env
@@ -829,8 +833,9 @@ Notes:
   10 seconds per IP, Block for 10 seconds, expression
   `starts_with(http.request.uri.path, "/api/auth/login")`, default 429. This is
   a burst backstop; the app's 10/min limiter and the SSO's per-user throttle
-  remain the per-minute controls. Trigger-verified 2026-10-23 (5×401, then WAF
-  429/1015).
+  remain the per-minute controls. Trigger-verified from the laptop and
+  independently from the VM on 2026-10-23 (5×401, then WAF 429/1015; public `/`
+  returned 200 after the 10 s block).
 
 ---
 
