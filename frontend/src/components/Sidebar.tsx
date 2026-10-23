@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { ChevronRight, Settings } from "lucide-react";
+import { ChevronRight, LogOut, Settings } from "lucide-react";
+import type { AuthUser } from "../auth";
 import type { Health, SessionInfo } from "../types";
 
 function relativeTime(iso: string): string {
@@ -51,6 +52,9 @@ interface Props {
   settingsOpen: boolean;
   /** Unseen follow-up tip counts per session id (sidebar badges). */
   followupCounts: Record<string, number>;
+  /** Signed-in user; null/absent when AUTH_MODE=off. */
+  user?: AuthUser | null;
+  onLogout?: () => void;
   onNewChat: () => void;
   onSelect: (sessionId: string) => void;
   onOpenSettings: () => void;
@@ -63,6 +67,8 @@ export default function Sidebar({
   streaming,
   settingsOpen,
   followupCounts,
+  user,
+  onLogout,
   onNewChat,
   onSelect,
   onOpenSettings,
@@ -141,6 +147,21 @@ export default function Sidebar({
       </div>
 
       <div className="sidebar-footer">
+        {user && (
+          <div className="sidebar-user">
+            <span className="user-avatar" aria-hidden="true">
+              {(user.username[0] ?? "?").toUpperCase()}
+            </span>
+            <span className="user-name" title={user.email ?? user.username}>
+              {user.username}
+            </span>
+            {onLogout && (
+              <button className="signout" onClick={onLogout} title="Sign out" aria-label="Sign out">
+                <LogOut size={14} />
+              </button>
+            )}
+          </div>
+        )}
         {health ? (
           <>
             <div className="footer-row">

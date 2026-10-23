@@ -91,15 +91,41 @@ cp .env.example .env    # then fill in keys
 npm install
 npm run start            # backend  → http://127.0.0.1:3001
 cd frontend && npm install && npm run dev   # web UI → http://localhost:5173 (proxies /api)
-npm test                 # 75 contract tests (repo root)
+npm test                 # full suite (141 tests at the time of writing)
 npm run research -- "question"   # deep research CLI (saves under workspace/research/)
 ```
 
 The frontend is the React app (sidebar sessions, streaming feed with
 collapsible tool results, Stop = turn cancel, Wiki tab, settings for
 Skills | MCP, deep-research progress strip). Its vite dev server proxies
-`/api` to the Express backend, so no CORS handling is needed in dev; the
-backend also sends permissive CORS headers for any other origin.
+`/api` to the Express backend, so no CORS handling is needed in dev (the
+backend no longer sends wildcard CORS headers — see Authentication below).
+
+## Authentication (SSO)
+
+Off by default (`AUTH_MODE=off`). With `AUTH_MODE=sso` the app is a
+backend-for-frontend client of the Neural-Matrix SSO server
+(`Neural-Matrix-LLC/SSO-server`):
+
+- the browser posts credentials to `POST /api/auth/login` and gets an
+  `HttpOnly`, `SameSite=Strict` cookie; access/refresh tokens stay server-side
+  in `auth.db` and never reach JavaScript;
+- every `/api/*` route except `/api/health` and `/api/auth/*` requires a live
+  session and the `application.nmfinance` permission; the server refreshes the
+  15-minute access token and introspects it (≤30 s cache) for revocation and
+  permission changes;
+- the SSO must have the `nm-finance-agent` ServiceClient, the
+  `application.nmfinance` permission, and (currently) the pinned self-signed
+  certificate configured via `SSO_CA_FILE`.
+
+The UI ships its own login screen (there is no SSO-hosted login page), a signed-in user chip with
+Sign out in the sidebar, and an "access required" screen when the account lacks
+`application.nmfinance`. With `AUTH_MODE=off` the login screen is skipped and the app behaves as
+before.
+
+Design and rollout notes: [`docs/sso-integration-plan.md`](docs/sso-integration-plan.md).
+Local testing: set `AUTH_MODE=sso` and `SSO_CA_FILE=./certs/sso-ca.pem` in
+`.env` after installing the certificate (see plan §9.1).
 
 ## API (step-1 scope)
 

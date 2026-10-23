@@ -3,6 +3,10 @@ node_modules/
 sessions.db
 sessions.db-*
 sessions.db*.bak
+# BFF auth sessions (refresh tokens) + the pinned SSO certificate
+auth.db
+auth.db-*
+/certs/
 /dist/
 /workspace/
 memories/MEMORY.md
@@ -32,3 +36,4 @@ container/model/
 # wrangler local state
 .wrangler/
 container/.wrangler/
+.omni/collector.json

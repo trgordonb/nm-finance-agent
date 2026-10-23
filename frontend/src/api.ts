@@ -14,8 +14,32 @@ import type {
   WikiSearchHit,
 } from "./types";
 
-async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
+/** A 401 from a protected API means the server session is gone. The app shell
+ *  registers a handler that drops back to the login screen. */
+export class UnauthorizedError extends Error {
+  constructor() {
+    super("not_authenticated");
+    this.name = "UnauthorizedError";
+  }
+}
+
+let unauthorizedHandler: (() => void) | null = null;
+
+export function setUnauthorizedHandler(handler: (() => void) | null): void {
+  unauthorizedHandler = handler;
+}
+
+async function apiFetch(path: string, init?: RequestInit): Promise<Response> {
   const res = await fetch(path, init);
+  if (res.status === 401) {
+    unauthorizedHandler?.();
+    throw new UnauthorizedError();
+  }
+  return res;
+}
+
+async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
+  const res = await apiFetch(path, init);
   if (!res.ok) {
     let detail = `${res.status}`;
     try {
@@ -107,7 +131,7 @@ export async function dismissFollowup(sessionId: string, index: number): Promise
 }
 
 export async function cancelTurn(turnId: string): Promise<void> {
-  await fetch("/api/chat/cancel", {
+  await apiFetch("/api/chat/cancel", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ turn_id: turnId }),
@@ -124,7 +148,7 @@ export interface WikiUpload {
 /** Save one PDF into the agent workspace for wiki ingestion (raw request body —
  *  the backend has no multipart parser; the name rides the query string). */
 export async function uploadWikiPdf(file: File): Promise<WikiUpload> {
-  const res = await fetch(`/api/uploads/wiki?name=${encodeURIComponent(file.name)}`, {
+  const res = await apiFetch(`/api/uploads/wiki?name=${encodeURIComponent(file.name)}`, {
     method: "POST",
     headers: { "Content-Type": "application/pdf" },
     body: file,
@@ -155,7 +179,7 @@ export async function streamChat(
   signal: AbortSignal,
   onEvent: SseHandler,
 ): Promise<void> {
-  const res = await fetch("/api/chat", {
+  const res = await apiFetch("/api/chat", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ message, session_id: sessionId }),
@@ -204,7 +228,7 @@ export const getWikiConcepts = (domain: string) =>
 /** One compiled page as raw markdown (the proxy forwards text/plain, not JSON). */
 export async function getWikiPage(slug: string, domain: string): Promise<string> {
   const path = `/api/wiki/page/${encodeURIComponent(slug)}?domain=${encodeURIComponent(domain)}`;
-  const res = await fetch(path);
+  const res = await apiFetch(path);
   if (!res.ok) {
     let detail = `${res.status}`;
     try {

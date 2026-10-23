@@ -13,8 +13,13 @@ import {
   getResearchRun,
   getSessionMessages,
   getSessions,
+  setUnauthorizedHandler,
   streamChat,
+  UnauthorizedError,
 } from "./api";
+import { getMe, logout, type AuthStatus, type AuthUser } from "./auth";
+import Login from "./components/Login";
+import { AuthSplash, NoAccess } from "./components/AuthScreens";
 import type { FeedItem, Followups, Health, NewItem, SessionInfo, ToolCall } from "./types";
 import Sidebar from "./components/Sidebar";
 import SkillsTab from "./components/SkillsTab";
@@ -33,7 +38,12 @@ function formatElapsed(ms: number): string {
   return `${Math.floor(total / 60)}:${String(total % 60).padStart(2, "0")}`;
 }
 
-export default function App() {
+interface AgentAppProps {
+  user: AuthUser | null;
+  onLogout?: () => void;
+}
+
+function AgentApp({ user, onLogout }: AgentAppProps) {
   const [view, setView] = useState<"chat" | "wiki" | "settings">("chat");
   const [settingsSection, setSettingsSection] = useState<"skills" | "mcp">("skills");
   const [health, setHealth] = useState<Health | null>(null);
@@ -237,7 +247,7 @@ export default function App() {
         await streamChat(text, sessionId, controller.signal, handleEvent);
       } catch (err) {
         const aborted = err instanceof DOMException && err.name === "AbortError";
-        if (!aborted) {
+        if (!aborted && !(err instanceof UnauthorizedError)) {
           push({
             kind: "notice",
             text: `error: ${err instanceof Error ? err.message : String(err)}`,
@@ -297,6 +307,7 @@ export default function App() {
           return next;
         });
       } catch (err) {
+        if (err instanceof UnauthorizedError) return;
         push({
           kind: "notice",
           text: `error: ${err instanceof Error ? err.message : String(err)}`,
@@ -411,6 +422,8 @@ export default function App() {
         streaming={streaming}
         settingsOpen={view === "settings"}
         followupCounts={followupCounts}
+        user={user}
+        onLogout={onLogout}
         onNewChat={newChat}
         onSelect={loadSession}
         onOpenSettings={() => setView("settings")}
@@ -520,4 +533,96 @@ export default function App() {
       </div>
     </div>
   );
+}
+
+// --- auth shell --------------------------------------------------------------
+// The rest of the app only mounts after auth resolves. That keeps every API
+// effect in AgentApp from firing (and 401-ing) behind the login screen.
+
+type AuthState =
+  | { status: "loading" }
+  | { status: "disabled" }
+  | { status: "anonymous" }
+  | {
+      status: "authenticated";
+      user: AuthUser;
+      allowed: boolean;
+      requiredPermission: string;
+    };
+
+export default function App() {
+  const [auth, setAuth] = useState<AuthState>({ status: "loading" });
+
+  useEffect(() => {
+    let cancelled = false;
+
+    // Any 401 from a protected API drops the UI back to login. The server
+    // session is already gone by the time this fires.
+    setUnauthorizedHandler(() => {
+      if (!cancelled) setAuth({ status: "anonymous" });
+    });
+
+    void (async () => {
+      const health = await getHealth().catch(() => null);
+      if (cancelled) return;
+
+      // Old backend (no `auth` block) or AUTH_MODE=off: keep the open UI.
+      if (health && health.auth?.mode !== "sso") {
+        setAuth({ status: "disabled" });
+        return;
+      }
+
+      try {
+        const me = await getMe();
+        if (cancelled) return;
+        setAuth(
+          me
+            ? {
+                status: "authenticated",
+                user: me.user,
+                allowed: me.allowed,
+                requiredPermission: me.required_permission,
+              }
+            : { status: "anonymous" },
+        );
+      } catch {
+        if (!cancelled) setAuth({ status: "anonymous" });
+      }
+    })();
+
+    return () => {
+      cancelled = true;
+      setUnauthorizedHandler(null);
+    };
+  }, []);
+
+  const handleLogin = useCallback((status: AuthStatus) => {
+    setAuth({
+      status: "authenticated",
+      user: status.user,
+      allowed: status.allowed,
+      requiredPermission: status.required_permission,
+    });
+  }, []);
+
+  const handleLogout = useCallback(() => {
+    // Immediate UI logout; the POST still carries the cookie to revoke the
+    // server session. A failure leaves an idle server row until it expires.
+    setAuth({ status: "anonymous" });
+    void logout().catch(() => undefined);
+  }, []);
+
+  if (auth.status === "loading") return <AuthSplash />;
+  if (auth.status === "anonymous") return <Login onSuccess={handleLogin} />;
+  if (auth.status === "disabled") return <AgentApp user={null} />;
+  if (!auth.allowed) {
+    return (
+      <NoAccess
+        user={auth.user}
+        requiredPermission={auth.requiredPermission}
+        onLogout={handleLogout}
+      />
+    );
+  }
+  return <AgentApp user={auth.user} onLogout={handleLogout} />;
 }

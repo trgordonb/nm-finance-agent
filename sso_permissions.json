@@ -1,0 +1,7 @@
+{
+  "app_codename": "nmfinance",
+  "app_name": "nm-finance-agent",
+  "description": "Agentic finance research, charting and wiki harness",
+  "version": 1,
+  "permissions": []
+}

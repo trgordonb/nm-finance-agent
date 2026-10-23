@@ -37,6 +37,12 @@ import {
   RESEARCH_MODE_ENABLED,
   RESEARCH_SAVE_REPORTS,
 } from "./config.js";
+import { authConfig } from "./auth/config.js";
+import { createAuthRouter } from "./auth/routes.js";
+import { createOriginGuard, createRequireAuth } from "./auth/middleware.js";
+import { SessionManager } from "./auth/session.js";
+import { certificateDaysRemaining, createSsoClient } from "./auth/sso.js";
+import { AuthStore } from "./auth/store.js";
 import { looksLikePdf, saveWikiUpload } from "./uploads.js";
 import { buildWikiTarget, fetchWiki } from "./wiki-proxy.js";
 import { PromptMemory } from "./memory.js";
@@ -204,16 +210,51 @@ function mirror_initializeGracefully(): Promise<void> {
 
 const app = express();
 app.use(express.json({ limit: "4mb" }));
-app.use((_req, res, next) => {
-  res.setHeader("Access-Control-Allow-Origin", "*");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
-  res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  if (_req.method === "OPTIONS") {
-    res.sendStatus(204);
-    return;
+
+// --- authentication (SSO BFF) -------------------------------------------------
+// AUTH_MODE=off keeps the historical open behaviour. With AUTH_MODE=sso the
+// browser holds only an HttpOnly cookie; access/refresh tokens stay in auth.db
+// and every API request is introspected against the SSO.
+const authStore = authConfig.mode === "sso" ? new AuthStore(authConfig.dbPath) : null;
+const ssoClient = authConfig.mode === "sso" ? createSsoClient(authConfig.sso) : null;
+const authManager =
+  authStore && ssoClient
+    ? new SessionManager({ config: authConfig, store: authStore, sso: ssoClient })
+    : null;
+
+if (authStore) {
+  const localStore = authStore;
+  const ttlMs = authConfig.sessionTtlDays * 86_400_000;
+  const purged = localStore.deleteExpired(Date.now() - ttlMs);
+  if (purged) log.info(`auth: purged ${purged} expired session(s)`);
+  const timer = setInterval(() => localStore.deleteExpired(Date.now() - ttlMs), 3_600_000);
+  timer.unref();
+  if (!authConfig.cookieSecure) {
+    log.warn("auth: AUTH_COOKIE_SECURE is off — set it to 1 behind HTTPS");
   }
-  next();
-});
+}
+if (ssoClient) {
+  const certDays = certificateDaysRemaining(authConfig.sso.caPem);
+  if (certDays !== null && certDays < 30) {
+    log.warn(`auth: pinned SSO certificate expires in ${Math.floor(certDays)} day(s)`);
+  }
+  void ssoClient
+    .healthz()
+    .then(() => log.info(`auth: SSO reachable at ${authConfig.sso.baseUrl}`))
+    .catch((err) => log.warn(`auth: SSO unreachable at boot (${String(err).slice(0, 140)})`));
+} else {
+  log.info("auth: disabled (AUTH_MODE=off)");
+}
+
+// Same-origin only: the old wildcard CORS headers are gone because the session
+// is cookie-authenticated. The Vite dev origin is allow-listed in auth config.
+app.use("/api", createOriginGuard(authConfig));
+if (authManager && ssoClient) {
+  app.use(
+    "/api/auth",
+    createAuthRouter({ config: authConfig, manager: authManager, sso: ssoClient }),
+  );
+}
 
 const ACTIVE_TURNS = new Map<string, AbortController>();
 
@@ -249,9 +290,19 @@ app.get("/api/health", (_req: Request, res: Response) => {
       exa: !!EXA_API_KEY,
       max_concurrent: RESEARCH_MAX_CONCURRENT,
     },
+    auth: {
+      mode: authConfig.mode,
+      required_permission: authConfig.mode === "sso" ? authConfig.requiredPermission : null,
+    },
     time: Date.now() / 1000,
   });
 });
+
+// Everything below /api requires a live SSO session and the app permission
+// (AUTH_MODE=off skips the gate entirely).
+if (authManager) {
+  app.use("/api", createRequireAuth(authConfig, authManager, { permission: true }));
+}
 
 app.get("/api/sessions", (_req, res) => {
   res.json(store.listSessions());

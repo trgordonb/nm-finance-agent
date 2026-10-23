@@ -78,6 +78,11 @@ export interface Health {
     pendingPush?: boolean;
     error?: string;
   };
+  /** Auth layer (src/auth/config.ts): `off` = no login, `sso` = cookie session. */
+  auth?: {
+    mode: "off" | "sso";
+    required_permission: string | null;
+  };
 }
 
 /** Admin view of a registry skill (GET /api/skills — includes disabled ones). */
