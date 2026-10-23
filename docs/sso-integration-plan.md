@@ -335,7 +335,7 @@ Nothing to do for the BFF. If a future direct-browser flow is ever added, add
 | Token storage | Server-side SQLite; browser holds only an opaque session id. No `localStorage`/`sessionStorage`. |
 | Cookie | `HttpOnly`, `SameSite=Strict`, `Secure` in the cloud, `Path=/`, 7-day expiry, rotated id on login. |
 | CSRF | SameSite=Strict + `Origin` check on every state-changing request; no cross-origin CORS. |
-| Brute force | SSO throttles login per IP and per username; pass the real IP. Optional local limiter on `/api/auth/login` (10/min/IP) as a second layer. |
+| Brute force | SSO throttles login per IP and per username; pass the real IP. Local limiter on `/api/auth/login` (10/min/IP) plus a Cloudflare WAF rate-limit rule (Free: 5 req/10 s per IP, Block 10 s; configured and trigger-verified 2026-10-23). |
 | Secrets | `SSO_CLIENT_SECRET` server-side only; never logged, never sent to the browser. Token values only appear as `sha256[:12]` in logs. |
 | Fail mode | Closed: SSO unreachable → 503, never "allow because we cannot check". |
 | Session DB | `auth.db` is secret material (refresh tokens); mode 600, owner `nmagent`; include in backups or accept re-login after restore. |

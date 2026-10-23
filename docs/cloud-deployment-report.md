@@ -392,17 +392,22 @@ Cloudflare dashboard or `journalctl -u cloudflared` for tunnel status.
    desired.
 8. **SQLite WAL/SHM modes.** `auth.db` is `600 nmagent:nmagent`, but while the
    service is running SQLite creates `auth.db-wal` and `auth.db-shm` as `644`.
-   The `state` directory is `750 nmagent:nmagent`, so access is limited to
-   `nmagent`, its group (which includes Caddy), and root. If stricter isolation
-   is wanted, add `UMask=0077` to the app unit and retest, or chmod the WAL/SHM
-   files; SQLite may recreate them on restart.
+   The parent `/var/lib/nm-finance-agent` is `700 nmagent:nmagent`, so traversal
+   is limited to `nmagent` and root — Caddy's membership in the `nmagent` group
+   does not help across a 700 parent. Verify with
+   `sudo namei -l /var/lib/nm-finance-agent/state/auth.db`; add `UMask=0077` to
+   the app unit if stricter isolation is wanted.
 9. **SSO certificate renewal.** `/etc/nm-finance-agent/sso-ca.pem` pins the SSO
    leaf certificate, which expires **2027-10-21**. Replace it with the renewed
    leaf, re-verify the SHA-256 fingerprint, and restart the app. Pinning a leaf
    makes renewal a manual step.
-10. **Edge rate limiting after Access removal.** `/api/auth/login` is now
-    internet-reachable. The app has a 10-attempts/minute login limiter; add a
-    Cloudflare WAF rate-limit rule for `/api/auth/login` if the plan supports it.
+10. **Edge rate limiting after Access removal — configured 2026-10-23.**
+    `/api/auth/login` is internet-reachable. A Cloudflare WAF rate-limit rule is
+    active on the Free plan: **5 requests / 10 s per IP, Block for 10 s**,
+    expression `starts_with(http.request.uri.path, "/api/auth/login")`, default
+    429 (Cloudflare error 1015). This is a burst backstop; the app's
+    10-attempts/minute limiter and the SSO's per-user throttle remain the
+    per-minute controls. Trigger verified 2026-10-23 (5×401, then WAF 429/1015); see §16.
 
 ## 11. Operations cheat sheet
 
@@ -530,7 +535,8 @@ Do not copy the repository `.env` into `/opt`; the live environment file is
 - [ ] Decide on backups/restore testing (T10); treat `auth.db` as secret.
 - [ ] Monitor memory/swap on `t4g.small`.
 - [ ] Replace the pinned SSO certificate before 2027-10-21.
-- [ ] Add a Cloudflare WAF rate-limit rule for `/api/auth/login` if available.
+- [x] Cloudflare WAF rate-limit rule on `/api/auth/login` (Free: 5 req/10 s
+      per IP, Block 10 s; configured and trigger-verified 2026-10-23).
 - [ ] Optional: tighten WAL/SHM modes (`UMask=0077`) and silence the Wiki graph
       `MaxListenersExceededWarning`.
 
@@ -642,11 +648,64 @@ Caddy config, and loopback listeners were not changed.
 ### Security notes
 
 - The login page and `/api/auth/login` are now internet-reachable. The app's
-  login limiter allows 10 attempts per minute per key. Add a Cloudflare WAF
-  rate-limit rule for `/api/auth/login` if the plan supports it.
+  login limiter allows 10 attempts per minute per key, and a Cloudflare WAF
+  rate-limit rule blocks 5 requests per 10 seconds per IP for 10 seconds (Free
+  plan, default 429). The SSO's per-user throttle remains the username-level
+  control.
 - Cloudflare Access no longer protects static assets or `/api/health`; it was an
   outer gate, not a substitute for app authorization.
 - Cloudflare Tunnel still hides the origin and avoids inbound `3001`/`8080`; the
   app SSO still enforces `application.nmfinance` on application routes.
 - Re-enabling Access is possible as defense-in-depth, but it adds a second
   login. If re-enabled, do not disable it to troubleshoot.
+
+## 16. Edge rate limiting (2026-10-23)
+
+**Status:** configured and trigger-verified 2026-10-23.
+
+| Setting | Value |
+|---|---|
+| Product | Cloudflare WAF → Security rules → Rate limiting rules |
+| Plan | Free (one rule, 10 s counting window) |
+| Expression | `starts_with(http.request.uri.path, "/api/auth/login")` |
+| Characteristic | IP (`ip.src`) |
+| Rate | 5 requests / 10 seconds |
+| Action | Block |
+| Duration | 10 seconds |
+| Response | default 429 (Cloudflare error 1015); Free plan has no custom JSON response |
+| Scope | login endpoint only; `/api/health`, assets, and authenticated APIs are unaffected |
+
+Why **Block** rather than a challenge: the SPA sends the login as a JSON
+`fetch` POST, and an HTML challenge page cannot be completed by `fetch`. The
+login form already maps 429 to "Too many attempts. Try again shortly." Even the
+Free-plan default error page produces the right UI message.
+
+This is a **burst backstop**. The per-minute/per-user controls remain the app's
+10 attempts/minute limiter and the SSO's 5 attempts/minute per username.
+
+### Trigger verification
+
+Run this from an IP you can afford to have blocked for 10 seconds (for example
+the VM shell). The 2026-10-23 verification below was run from the laptop after
+confirming the short block was acceptable.
+
+```bash
+for i in $(seq 1 8); do
+  curl -s -o /dev/null -w "$i %{http_code}\n" \
+    -X POST https://agent.neuralmatrix.site/api/auth/login \
+    -H 'Content-Type: application/json' \
+    -d '{"username":"rate-limit-probe","password":"wrong"}'
+done
+```
+
+Expected: five `401`s, then a `429` with the Cloudflare error 1015 page. If all
+eight are `401`, the rule is not matching (check the expression and the
+dashboard's Security Events). The app's own limiter would not fire until the
+11th request within a minute, so an app `429 {"detail":"rate_limited"}` at this
+point means the WAF rule did not match first.
+
+**Verified 2026-10-23** from the laptop IP: requests 1–5 returned
+`401 {"detail":"invalid_credentials"}`; requests 6–8 returned `429` with
+Cloudflare `error code: 1015`. The edge rule fires at exactly 5 requests / 10 s
+as configured. The probe stopped at 8, below the app's 10/min limiter, so the
+429s are the WAF, not Express.

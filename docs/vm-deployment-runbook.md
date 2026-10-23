@@ -248,7 +248,7 @@ sudo -u deploy npm ci                    # includes devDeps: tsx is the runtime
 sudo -u deploy npm --prefix frontend ci
 sudo -u deploy npm --prefix frontend run build
 sudo -u deploy npm run check
-sudo -u deploy npm test                  # expect 111 passing
+sudo -u deploy npm test                  # expect 141 passing (current suite)
 ```
 
 **Why `npm ci` without `--omit=dev`:** `npm start` is `tsx src/index.ts`, and
@@ -260,7 +260,7 @@ do **not** run a second divergent copy: either `sudo mv` that clone to
 `sudo chown -R deploy:nmagent /opt/nm-finance-agent` before `npm ci`.
 
 **Acceptance:** `frontend/dist/index.html` exists; `npm run check` exits 0;
-`npm test` reports 111 pass. **STOP** on a TypeScript error.
+`npm test` reports 141 pass. **STOP** on a TypeScript error.
 
 If a native dependency fails to build, `build-essential`/`python3` are already
 installed — re-run `npm ci` and report the failing package.
@@ -825,6 +825,12 @@ Notes:
 - Do not disable app SSO or expose `3001`/`8080` to compensate for an auth
   failure. Access is currently removed; if re-enabled, do not disable it to
   troubleshoot.
+- Cloudflare WAF rate limiting on `/api/auth/login`: Free plan, 5 requests per
+  10 seconds per IP, Block for 10 seconds, expression
+  `starts_with(http.request.uri.path, "/api/auth/login")`, default 429. This is
+  a burst backstop; the app's 10/min limiter and the SSO's per-user throttle
+  remain the per-minute controls. Trigger-verified 2026-10-23 (5×401, then WAF
+  429/1015).
 
 ---
 
@@ -1008,6 +1014,8 @@ sudo systemctl restart nm-finance-agent
 - [ ] optional `firewalld` mirrors the Security Group
 - [ ] app on `127.0.0.1:3001`; never exposed
 - [ ] Cloudflare Tunnel + app SSO in front (Access or Caddy basic auth optional)
+- [x] Cloudflare WAF rate-limit rule on `/api/auth/login` (Free: 5 req/10 s/IP,
+      Block 10 s; current VM, 2026-10-23)
 - [ ] `/etc/nm-finance-agent.env` mode `640 root:nmagent`; no repo `.env`
 - [ ] `AUTH_MODE=sso`; `application.nmfinance` grant verified; unauthenticated `/api/sessions` → `401`
 - [ ] `/etc/nm-finance-agent/sso-ca.pem` matches the SSO leaf; renewal date recorded

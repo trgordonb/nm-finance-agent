@@ -8,6 +8,11 @@ secret handoff.
 [`docs/cloud-deployment-report.md`](./cloud-deployment-report.md) (current host/state),
 [`docs/vm-deployment-runbook.md`](./vm-deployment-runbook.md) (base deploy procedure).
 
+> **Status: completed 2026-10-23.** The rollout is recorded in
+> [`cloud-deployment-report.md`](./cloud-deployment-report.md) §14, and the
+> subsequent Cloudflare Access removal in §15. This document is kept as the
+> executable procedure for a future redeploy/rollback.
+
 > **You are the cloud agent.** This document is the handover. Follow it in order. If a
 > precondition is false, **stop and report** — do not improvise around an auth layer, and never
 > disable Cloudflare Access to “make it work”. The existing VM constraints still apply: no secret
