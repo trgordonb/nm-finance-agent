@@ -657,6 +657,164 @@ sudo systemctl restart caddy
 
 **Never** put `encode` on the `/api` handler: compression buffers SSE.
 
+### SSO authentication (Phase 4)
+
+The app supports `AUTH_MODE=sso` (server-side BFF) or `AUTH_MODE=off` (rollback).
+Access and the loopback-only listeners remain the outer boundary in both modes.
+See `docs/sso-integration-plan.md` for the design.
+
+Preconditions:
+
+- the deployed commit contains `src/auth/*`, `sso_permissions.json`, and the
+  login UI;
+- the owner has confirmed the `application.nmfinance` grant;
+- exactly one of `SSO_CLIENT_SECRET=` or `SSO_CLIENT_SECRET_FILE=` already
+  exists in `/etc/nm-finance-agent.env` — do not add a second copy. If the file
+  form is used, install it `root:nmagent 640` (for example
+  `/etc/nm-finance-agent/sso-client-secret`) and keep it outside git.
+
+Install the pinned SSO leaf certificate (the handover path may not exist yet):
+
+```bash
+openssl s_client -connect 2.24.91.212:8443 -servername 2.24.91.212 </dev/null 2>/dev/null \
+  | openssl x509 -outform PEM > /tmp/sso-ca.pem
+openssl x509 -in /tmp/sso-ca.pem -noout -subject -dates -fingerprint -sha256
+
+sudo install -d -o root -g root -m 755 /etc/nm-finance-agent
+sudo install -o root -g nmagent -m 644 /tmp/sso-ca.pem /etc/nm-finance-agent/sso-ca.pem
+rm -f /tmp/sso-ca.pem
+```
+
+Current expected identity (replace on renewal; pinning a leaf is manual):
+
+```text
+subject=CN=2.24.91.212
+notAfter=Oct 21 06:38:44 2027 GMT
+SHA256=32:91:54:35:C1:53:BE:0D:F8:4D:0E:72:F4:A9:9F:A9:F1:02:BC:D5:13:98:5D:45:96:3E:83:CD:FB:4F:F6:CD
+```
+
+Add the auth block (remove stale auth keys first; keep the existing secret):
+
+```bash
+sudo sed -i -E '/^(AUTH_MODE|SSO_BASE_URL|SSO_CLIENT_ID|SSO_CA_FILE|SSO_TIMEOUT_MS|SSO_RETRIES|SSO_CACHE_TTL_SECONDS|SSO_TRUSTED_PROXIES|SSO_CLIENT_IP_HEADER|AUTH_REQUIRED_PERMISSION|AUTH_SESSION_TTL_DAYS|AUTH_COOKIE_NAME|AUTH_COOKIE_SECURE|AUTH_DB_PATH|AUTH_ALLOWED_ORIGINS)=/d' /etc/nm-finance-agent.env
+
+sudo tee -a /etc/nm-finance-agent.env >/dev/null <<'EOF'
+
+# --- SSO authentication (BFF) — docs/sso-integration-plan.md -----------------
+AUTH_MODE=sso
+SSO_BASE_URL=https://2.24.91.212:8443
+SSO_CLIENT_ID=nm-finance-agent
+SSO_CA_FILE=/etc/nm-finance-agent/sso-ca.pem
+SSO_TIMEOUT_MS=2000
+SSO_RETRIES=1
+SSO_CACHE_TTL_SECONDS=30
+SSO_TRUSTED_PROXIES=127.0.0.1,::1
+SSO_CLIENT_IP_HEADER=cf-connecting-ip
+AUTH_REQUIRED_PERMISSION=application.nmfinance
+AUTH_SESSION_TTL_DAYS=7
+AUTH_COOKIE_NAME=nm_auth
+AUTH_COOKIE_SECURE=1
+AUTH_DB_PATH=/var/lib/nm-finance-agent/state/auth.db
+# Must match the real public hostname exactly (no trailing slash):
+AUTH_ALLOWED_ORIGINS=https://agent.example.com
+# One of the following must already exist (do not add a second copy):
+# SSO_CLIENT_SECRET=...
+# SSO_CLIENT_SECRET_FILE=/etc/nm-finance-agent/sso-client-secret
+EOF
+
+sudo chown root:nmagent /etc/nm-finance-agent.env
+sudo chmod 640 /etc/nm-finance-agent.env
+```
+
+Verify names/counts only (never print values):
+
+```bash
+sudo sed -nE 's/^([A-Z0-9_]+)=.*/\1/p' /etc/nm-finance-agent.env \
+  | grep -E '^(AUTH_|SSO_)' | sort | uniq -c
+sudo grep -cE '^SSO_CLIENT_SECRET=' /etc/nm-finance-agent.env
+sudo grep -cE '^SSO_CLIENT_SECRET_FILE=' /etc/nm-finance-agent.env
+# exactly one of the two secret-key counts must be 1; the other must be 0
+```
+
+Rebuild, run checks, and restart:
+
+```bash
+sudo -u deploy bash -lc '
+  cd /opt/nm-finance-agent &&
+  npm ci &&
+  cd frontend && npm ci && npm run build
+'
+sudo -u deploy bash -lc '
+  cd /opt/nm-finance-agent &&
+  npm run check &&
+  OPENROUTER_API_KEY=presence-only npm test
+'
+sudo systemctl restart nm-finance-agent
+sleep 3
+sudo journalctl -u nm-finance-agent -n 80 --no-pager
+```
+
+The boot log must include `auth: SSO reachable at https://...`. It must not
+include `auth: SSO unreachable at boot`, `AUTH_COOKIE_SECURE is off`, or an
+`AUTH_MODE=sso:` configuration error.
+
+Verify the gate and session DB:
+
+```bash
+curl -sS -H 'Host: agent.example.com' http://127.0.0.1:8080/api/health \
+  | jq '{status, auth, skills, mcp_connected}'
+# expect auth = {"mode":"sso","required_permission":"application.nmfinance"}
+
+curl -s -o /dev/null -w 'sessions=%{http_code}\n' \
+  -H 'Host: agent.example.com' http://127.0.0.1:8080/api/sessions
+# expect 401
+
+curl -s -o /dev/null -w 'health=%{http_code}\n' \
+  -H 'Host: agent.example.com' http://127.0.0.1:8080/api/health
+# expect 200
+
+sudo sh -c 'ls -l /var/lib/nm-finance-agent/state/auth.db*'
+# auth.db must be -rw------- nmagent nmagent; wal/shm may exist while running
+```
+
+Browser acceptance (owner; Cloudflare Access stays enabled):
+
+- Access login → app SSO login card (not blank, not the app);
+- SSO login → app; reload stays signed in; logout returns to login;
+- SSE streams and Stop works; Wiki and MCP work;
+- `nm_auth` cookie is `HttpOnly`, `Secure`, `SameSite=Strict`, `Path=/`;
+- `POST /api/auth/login` exposes no access/refresh token;
+- wrong password shows `Wrong username or password.`;
+- SSO login/audit log shows the owner public IP, not `127.0.0.1`.
+
+Temporary rollback (maintenance window only; Access remains enabled):
+
+```bash
+sudo sed -i 's/^AUTH_MODE=.*/AUTH_MODE=off/' /etc/nm-finance-agent.env
+sudo chown root:nmagent /etc/nm-finance-agent.env
+sudo chmod 640 /etc/nm-finance-agent.env
+sudo systemctl restart nm-finance-agent
+# expect auth.mode=off and /api/sessions=200
+
+sudo sed -i 's/^AUTH_MODE=.*/AUTH_MODE=sso/' /etc/nm-finance-agent.env
+sudo chown root:nmagent /etc/nm-finance-agent.env
+sudo chmod 640 /etc/nm-finance-agent.env
+sudo systemctl restart nm-finance-agent
+# expect auth.mode=sso and /api/sessions=401
+```
+
+Notes:
+
+- Create `/etc/nm-finance-agent/` if missing; the env file is
+  `/etc/nm-finance-agent.env` (not inside that directory).
+- `auth.db` is secret material (refresh tokens). Never print rows, commit it, or
+  back it up unencrypted.
+- SQLite may create `auth.db-wal`/`auth.db-shm` as `644` while the service runs.
+  The `state` directory is `750 nmagent:nmagent`; add `UMask=0077` to the app
+  unit if stricter isolation is required.
+- Do not disable Cloudflare Access or expose `3001`/`8080` to compensate for an
+  auth failure.
+
 ---
 
 ## 12. T9 — Verification
@@ -664,12 +822,12 @@ sudo systemctl restart caddy
 ```bash
 # 1. service + health (loopback; bypasses the proxy)
 curl -fsS http://127.0.0.1:3001/api/health \
-  | jq '{model, skills, skills_required, skills_backend, mirror, mcp_connected}'
+  | jq '{status, auth, model, skills, skills_required, skills_backend, mirror, mcp_connected}'
 
-# 2. SSE through the proxy (should print events incrementally)
-curl -sN -X POST http://127.0.0.1:8080/api/chat \
-  -H 'content-type: application/json' \
-  -d '{"message":"reply with the single word ok"}'
+# 2. with AUTH_MODE=sso, unauthenticated API calls must be rejected
+curl -s -o /dev/null -w 'sessions=%{http_code}\n' \
+  -H 'Host: agent.example.com' http://127.0.0.1:8080/api/sessions
+# expect 401; authenticated SSE is tested from the browser UI
 
 # 3. frontend + auth through the public edge (adjust host)
 curl -sI https://agent.example.com/ | head -5
@@ -677,7 +835,8 @@ curl -sI https://agent.example.com/ | head -5
 
 Expected health: `skills` > 0, `skills_backend.mode = "s3"`,
 `skills_backend.degraded = false`, `skills_required = true`, `mirror.enabled = true`,
-`mcp_connected >= 1`.
+`mcp_connected >= 1`. With SSO, also expect `auth.mode = "sso"` and
+`auth.required_permission = "application.nmfinance"`.
 
 Then, from the UI or a chat turn:
 
@@ -839,6 +998,9 @@ sudo systemctl restart nm-finance-agent
 - [ ] app on `127.0.0.1:3001`; never exposed
 - [ ] Cloudflare Access or Caddy basic auth in front
 - [ ] `/etc/nm-finance-agent.env` mode `640 root:nmagent`; no repo `.env`
+- [ ] `AUTH_MODE=sso`; `application.nmfinance` grant verified; unauthenticated `/api/sessions` → `401`
+- [ ] `/etc/nm-finance-agent/sso-ca.pem` matches the SSO leaf; renewal date recorded
+- [ ] `state/auth.db` mode `600`; secret material excluded from unencrypted backups
 - [ ] `WORKSPACE_HARD_JAIL=1`
 - [ ] `SKILLS_REQUIRED=1`
 - [ ] `agent_browser` disabled (or Chromium explicitly installed)
@@ -863,6 +1025,8 @@ Done when all of these are true:
 6. `nm-backup.timer` fired once and a restore test succeeded
 7. reboot test: both services come back (`systemctl is-enabled`)
 8. no secrets in git; no port 3001 exposure
+9. SSO login/reload/logout works; unauthenticated `/api/sessions` = `401`;
+   `auth.db` is `600 nmagent:nmagent`
 
 Handover report (write it in the final message):
 
@@ -876,6 +1040,7 @@ Handover report (write it in the final message):
 - Mirror: remote|local, enabled=...
 - llmwiki: remote <host> | local | skipped
 - Proxy: Caddy + Tunnel (hostname) | Caddy TLS + basic auth
+- Auth: SSO BFF (`AUTH_MODE`, required permission, `auth.db`, cookie flags)
 - Backups: repo, schedule, last run, restore tested=yes/no
 - Deviations from runbook:
 - Open items: OAuth2, per-user containers, agent-browser, ...
@@ -885,8 +1050,9 @@ Handover report (write it in the final message):
 
 ## 18. Intentionally out of scope
 
-- **OAuth2** — planned; the interim is Access/basic auth. Do not implement it
-  during this deployment.
+- **Additional OAuth2 flows / per-user isolation** — the SSO BFF login is
+  deployed (Phase 4); do not add browser-side tokens or per-user containers
+  during this deployment. See `docs/sso-integration-plan.md`.
 - **Per-user containers / workspace separation** — deferred; see
   `docs/per-user-workspace-and-r2.md`. This VM is single-user.
 - **Cloudflare Sandbox** — deferred; see `docs/cloudflare-sandbox-compat.md`.
@@ -904,6 +1070,10 @@ Handover report (write it in the final message):
 SERVER_HOST SERVER_PORT NODE_ENV LANGCHAIN_PROJECT
 SESSION_DB_PATH WORKSPACE_DIR MEMORY_DIR SKILLS_DIR SKILLS_STATE_DIR
 WORKSPACE_HARD_JAIL
+AUTH_MODE SSO_BASE_URL SSO_CLIENT_ID SSO_CLIENT_SECRET SSO_CLIENT_SECRET_FILE
+SSO_CA_FILE SSO_TIMEOUT_MS SSO_RETRIES SSO_CACHE_TTL_SECONDS SSO_TRUSTED_PROXIES
+SSO_CLIENT_IP_HEADER AUTH_REQUIRED_PERMISSION AUTH_SESSION_TTL_DAYS
+AUTH_COOKIE_NAME AUTH_COOKIE_SECURE AUTH_DB_PATH AUTH_ALLOWED_ORIGINS
 SKILLS_REGISTRY R2_BUCKET R2_ENDPOINT_URL R2_ACCESS_KEY_ID R2_SECRET_ACCESS_KEY
 SKILLS_CLI SKILLS_REQUIRED
 AGENTDB_REMOTE_URL AGENTDB_REMOTE_TOKEN
