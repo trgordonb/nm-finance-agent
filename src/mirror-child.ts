@@ -12,9 +12,9 @@
 // Protocol (stdin/stdout, one JSON object per line):
 //   ready1400: {"ready":true}
 //   main → {"req":"init","id":N,"path":"..."}         → {"id":N,"ok":true}
-//          {"req":"upsert","id":N,"recs":[{id,turn,msg_index,session_id,role,content,created_at,tool_call_id,tool_name}]}
+//          {"req":"upsert","id":N,"recs":[{id,turn,msg_index,session_id,user_id,role,content,created_at,tool_call_id,tool_name}]}
 //                                                   → {"id":N,"ok":true,"count":K}
-//          {"req":"query","id":N,"text":"...","k":8} → {"id":N,"ok":true,"hits":[{...MirrorHit}]}
+//          {"req":"query","id":N,"text":"...","k":8,"user_id":"alice"} → {"id":N,"ok":true,"hits":[{...MirrorHit}]}
 //          {"req":"stats","id":N}                    → {"id":N,"ok":true,"records":K}
 //          {"req":"bye","id":N}                      → exits 0
 //   failures: {"id":N,"ok":false,"error":"..."}
@@ -28,6 +28,7 @@ interface UpsertRec {
   turn: number;
   msg_index: number;
   session_id: string;
+  user_id: string;
   role: string;
   content: string;
   created_at: string;
@@ -41,6 +42,7 @@ interface Hit {
   content: string;
   role: string;
   similarity: number;
+  userId: string;
 }
 
 async function main(): Promise<void> {
@@ -60,7 +62,7 @@ async function main(): Promise<void> {
   const write = (obj: unknown) => process.stdout.write(JSON.stringify(obj) + "\n");
 
   for await (const line of rl) {
-    let req: { req?: string; id?: number; path?: string; recs?: UpsertRec[]; text?: string; k?: number };
+    let req: { req?: string; id?: number; path?: string; recs?: UpsertRec[]; text?: string; k?: number; user_id?: string };
     try {
       req = JSON.parse(line);
     } catch {
@@ -112,6 +114,7 @@ async function main(): Promise<void> {
             vector: Float32Array.from(vec),
             metadata: {
               session_id: rec.session_id,
+              user_id: rec.user_id ?? null,
               turn: rec.turn,
               msg_index: rec.msg_index,
               role: rec.role,
@@ -131,19 +134,32 @@ async function main(): Promise<void> {
       if (req.req === "query") {
         if (!embed || !db) throw new Error("not initialized");
         const qvec = await embed(String(req.text ?? "").slice(0, 2000));
-        const raw = await db.search({ vector: Float32Array.from(qvec), k: Math.max(Number(req.k ?? 8), 1) });
+        const want = Math.max(Number(req.k ?? 8), 1);
+        const userId = String(req.user_id ?? "").trim();
+        // HNSW has no metadata filter: over-fetch, drop other users, then trim.
+        const raw = await db.search({
+          vector: Float32Array.from(qvec),
+          k: Math.max(want * 4, 32),
+        });
         const rows: Array<{ id: string; score?: number; distance?: number; metadata?: Record<string, unknown> }> =
           Array.isArray(raw) ? raw : (raw.results ?? []);
-        const hits: Hit[] = rows.map((r) => {
-          const meta = (r.metadata ?? {}) as Partial<RecMetaDump>;
-          return {
-            sessionId: String(meta.session_id ?? ""),
-            createdAt: String(meta.created_at ?? ""),
-            content: String(meta.content ?? ""),
-            role: String(meta.role ?? "unknown"),
-            similarity: Math.max(0, Math.min(1, 1 - (r.score ?? r.distance ?? 0))),
-          };
-        });
+        const hits: Hit[] = rows
+          .filter((r) => {
+            const owner = String((r.metadata as Partial<RecMetaDump> | undefined)?.user_id ?? "trgordonb");
+            return !userId || owner === userId;
+          })
+          .slice(0, want)
+          .map((r) => {
+            const meta = (r.metadata ?? {}) as Partial<RecMetaDump>;
+            return {
+              sessionId: String(meta.session_id ?? ""),
+              createdAt: String(meta.created_at ?? ""),
+              content: String(meta.content ?? ""),
+              role: String(meta.role ?? "unknown"),
+              similarity: Math.max(0, Math.min(1, 1 - (r.score ?? r.distance ?? 0))),
+              userId: String(meta.user_id ?? "trgordonb"),
+            };
+          });
         write({ id, ok: true, hits });
         continue;
       }
@@ -163,6 +179,7 @@ interface RustDb {
 
 interface RecMetaDump {
   session_id?: string;
+  user_id?: string;
   created_at?: string;
   content?: string;
   role?: string;

@@ -19,6 +19,11 @@ Only the Worker is network-exposed; the container port lives behind the
 Durable Object. The image is `linux/amd64`, CPU-only, and fully offline
 (`enableInternet: false`) — embeddings run inside the container.
 
+**User scoping:** every record carries `user_id`; `/query` over-fetches and
+drops hits from other logins. Records written before this field existed are
+treated as `trgordonb`. `container/rebuild.mjs` joins `sessions.user_id` when
+replaying the archive.
+
 ## Deploy
 
 Prereqs: Workers **Paid** plan, Docker running locally (wrangler builds and
@@ -64,8 +69,8 @@ unchanged. The first `recordTurn`/`search` after a sleep pays the cold start
 | `GET /health` | container: `{ok, ready, model, error}` |
 | `GET /stats` | container: `{ok, records, stored, ready}` (`stored` = rows on disk) |
 | `POST /init` | awaits engine load (idempotent; the client doesn't need it) |
-| `POST /upsert` | `{recs:[record…]}` → `{ok, count}` |
-| `POST /query` | `{text, k}` → `{ok, hits}` |
+| `POST /upsert` | `{recs:[record…]}` → `{ok, count}` (each record carries `user_id`) |
+| `POST /query` | `{text, k, user_id}` → `{ok, hits}` (over-fetches, drops other users) |
 
 ## Lifecycle + persistence (the knobs you'll tune)
 

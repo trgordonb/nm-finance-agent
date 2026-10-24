@@ -11,8 +11,8 @@
 //   GET  /stats  -> { ok, records, stored, ready }   stored = rows on disk
 //   GET  /status -> { ok, running: true, stats }     client boot probe
 //   POST /init   -> { ok }                           awaits engine load
-//   POST /upsert -> { ok, count }  { recs: [record…] }
-//   POST /query  -> { ok, hits }   { text, k }
+//   POST /upsert -> { ok, count }  { recs: [record…] }   (record.user_id set)
+//   POST /query  -> { ok, hits }   { text, k, user_id }
 //
 // The engine loads in the background at boot; data endpoints answer 503
 // {ok:false} until ready so callers degrade (the mirror is additive).
@@ -133,6 +133,7 @@ async function upsert(recs) {
       vector: Float32Array.from(vec),
       metadata: {
         session_id: rec.session_id,
+        user_id: rec.user_id ?? null,
         turn: rec.turn,
         msg_index: rec.msg_index,
         role: rec.role,
@@ -148,18 +149,25 @@ async function upsert(recs) {
   return count;
 }
 
-function toHits(rows) {
+function toHits(rows, userId, limit) {
   const list = Array.isArray(rows) ? rows : rows?.results ?? [];
-  return list.map((row) => {
-    const meta = row.metadata ?? {};
-    return {
-      sessionId: String(meta.session_id ?? ""),
-      createdAt: String(meta.created_at ?? ""),
-      content: String(meta.content ?? ""),
-      role: String(meta.role ?? "unknown"),
-      similarity: Math.max(0, Math.min(1, 1 - (row.score ?? row.distance ?? 0))),
-    };
-  });
+  return list
+    .filter((row) => {
+      const owner = String(row.metadata?.user_id ?? "trgordonb");
+      return !userId || owner === userId;
+    })
+    .slice(0, limit)
+    .map((row) => {
+      const meta = row.metadata ?? {};
+      return {
+        sessionId: String(meta.session_id ?? ""),
+        createdAt: String(meta.created_at ?? ""),
+        content: String(meta.content ?? ""),
+        role: String(meta.role ?? "unknown"),
+        similarity: Math.max(0, Math.min(1, 1 - (row.score ?? row.distance ?? 0))),
+        userId: String(meta.user_id ?? "trgordonb"),
+      };
+    });
 }
 
 const server = http.createServer(async (req, res) => {
@@ -197,8 +205,11 @@ const server = http.createServer(async (req, res) => {
       if (!ready) return send(res, 503, { ok: false, error: bootError ? `engine load failed: ${bootError}` : "initializing" });
       const body = await readBody(req);
       const qvec = await embed(String(body.text ?? "").slice(0, 2000));
-      const raw = await db.search({ vector: Float32Array.from(qvec), k: Math.max(Number(body.k ?? 8), 1) });
-      return send(res, 200, { ok: true, hits: toHits(raw) });
+      const want = Math.max(Number(body.k ?? 8), 1);
+      const userId = String(body.user_id ?? "").trim();
+      // HNSW has no metadata filter: over-fetch, drop other users, then trim.
+      const raw = await db.search({ vector: Float32Array.from(qvec), k: Math.max(want * 4, 32) });
+      return send(res, 200, { ok: true, hits: toHits(raw, userId, want) });
     }
     return send(res, 404, { ok: false, error: "not found" });
   } catch (e) {

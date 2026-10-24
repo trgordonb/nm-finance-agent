@@ -1,7 +1,7 @@
 # Per-user prompt memory — implementation plan
 
 **Status:** **implemented (2026-10-24)** — per-user `MEMORY.md`/`USER.md` plus
-a read-only `memories/_shared/MEMORY.md`; 156 tests passing.
+a read-only `memories/_shared/MEMORY.md`; 158 tests passing.
 **Depends on:** the per-user workspace/session scoping already landed
 (`src/workspace.ts` `currentUserId()`, `sessions.user_id`).
 **Related:** [`per-user-workspace-and-r2.md`](./per-user-workspace-and-r2.md),
@@ -46,8 +46,9 @@ memories/<login-id>/USER.md       # who this user is, preferences, style
 - Nothing else changes: the agent loop, nudge, and `memory_manage` keep the
   same contracts; only the path resolution and a few invariants change.
 
-**Non-goals:** shared/global project memory, memory encryption, semantic
-memory (agentdb mirror), per-user skill toggles, per-user containers.
+**Non-goals:** shared/global project memory, memory encryption, agentdb
+memory internals (handled separately), per-user skill toggles, per-user
+containers.
 
 ---
 

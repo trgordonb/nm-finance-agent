@@ -16,8 +16,12 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { SSEClientTransport } from "@modelcontextprotocol/sdk/client/sse.js";
+import fs from "node:fs";
+import path from "node:path";
 import { keepToolsFilter, type McpServerCfg, type McpLoadResult, type ServerStatus } from "./mcp-config.js";
 import { log } from "./logger.js";
+import { AGENTDB_MCP_DIR } from "./config.js";
+import { currentUserId, sanitizeUserId } from "./workspace.js";
 import type { ToolDef, ToolCall as ChatToolCall } from "./types.js";
 
 export type McpReport = ServerStatus[];
@@ -31,6 +35,58 @@ interface RawTool {
 const CONNECT_TIMEOUT_MS = Number(process.env.MCP_CONNECT_TIMEOUT_MS ?? "30000");
 const CALL_TIMEOUT_MS = Number(process.env.MCP_CALL_TIMEOUT_MS ?? "120000");
 
+/** Per-user agentdb MCP DB (reflexion episodes, skills, patterns). */
+export function agentdbUserDbPath(userId: string): string {
+  return path.join(AGENTDB_MCP_DIR, sanitizeUserId(userId) || "default", "agentdb-mcp.db");
+}
+
+/** Lazily connected stdio clients keyed by `agentdb:<user>` — one DB each. */
+const USER_CLIENTS = new Map<string, Promise<Client>>();
+
+async function agentdbClient(cfg: McpServerCfg, userId: string): Promise<Client> {
+  const key = `agentdb:${sanitizeUserId(userId) || "default"}`;
+  const existing = USER_CLIENTS.get(key);
+  if (existing) return existing;
+  if (cfg.transport !== "stdio" || !cfg.command) {
+    throw new Error("agentdb per-user transport requires a stdio command");
+  }
+  const promise = (async () => {
+    const dbPath = agentdbUserDbPath(userId);
+    fs.mkdirSync(path.dirname(dbPath), { recursive: true, mode: 0o700 });
+    const transport = new StdioClientTransport({
+      command: cfg.command as string,
+      args: cfg.args ?? [],
+      env: { ...process.env, ...cfg.env, AGENTDB_PATH: dbPath } as Record<string, string>,
+      stderr: "ignore" as const,
+    });
+    const client = new Client({ name: "nm-finance-agent", version: "0.1.0" });
+    await new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(
+        () => reject(new Error("agentdb per-user connect timeout 30s")),
+        30_000,
+      );
+      timer.unref?.();
+      client.connect(transport).then(
+        () => {
+          clearTimeout(timer);
+          resolve();
+        },
+        (e) => {
+          clearTimeout(timer);
+          reject(e);
+        },
+      );
+    }).catch(async (e) => {
+      await client.close().catch(() => undefined);
+      throw e;
+    });
+    return client;
+  })();
+  USER_CLIENTS.set(key, promise);
+  promise.catch(() => USER_CLIENTS.delete(key));
+  return promise;
+}
+
 async function connectServer(name: string, cfg: McpServerCfg): Promise<RawTool[]> {
   const client = new Client({ name: "nm-finance-agent", version: "0.1.0" });
   const timeout = <T>(p: Promise<T>, ms: number, what: string): Promise<T> =>
@@ -42,6 +98,9 @@ async function connectServer(name: string, cfg: McpServerCfg): Promise<RawTool[]
   let transport;
   if (cfg.transport === "stdio") {
     if (!cfg.command) throw new Error("stdio transport requires command");
+    if (cfg.env?.AGENTDB_PATH) {
+      fs.mkdirSync(path.dirname(cfg.env.AGENTDB_PATH), { recursive: true });
+    }
     transport = new StdioClientTransport({
       command: cfg.command,
       args: cfg.args ?? [],
@@ -87,6 +146,11 @@ export function closeOpenClients(except?: Set<string>): void {
     OPEN_CLIENTS.delete(name);
     void c.close().catch(() => undefined);
   }
+  if (except?.has("agentdb")) return;
+  for (const [key, pending] of [...USER_CLIENTS.entries()]) {
+    USER_CLIENTS.delete(key);
+    void pending.then((c) => c.close()).catch(() => undefined);
+  }
 }
 
 function flattenResult(result: unknown): string {
@@ -130,7 +194,7 @@ export async function bindMcpTools(load: McpLoadResult): Promise<BindResult> {
         const namespaced = raw.name.startsWith(`${name}_`) ? raw.name : `${name}_${raw.name}`;
         if (!matches(namespaced)) continue;
         bound++;
-        tools.push(toToolDef(namespaced, name, raw));
+        tools.push(toToolDef(namespaced, name, raw, cfg));
       }
       status.connected = true;
       status.tool_count = bound;
@@ -144,7 +208,7 @@ export async function bindMcpTools(load: McpLoadResult): Promise<BindResult> {
   return { tools, report };
 }
 
-function toToolDef(namespaced: string, server: string, raw: RawTool): ToolDef {
+function toToolDef(namespaced: string, server: string, raw: RawTool, cfg: McpServerCfg): ToolDef {
   return {
     name: namespaced,
     description:
@@ -155,17 +219,49 @@ function toToolDef(namespaced: string, server: string, raw: RawTool): ToolDef {
         ? (raw.inputSchema as ToolDef["parameters"])
         : { type: "object" as const, properties: {} },
     async execute(args: ChatToolCall["args"]) {
-      const client = OPEN_CLIENTS.get(server);
+      const userId = currentUserId();
+      let client: Client | undefined;
+      let callArgs: ChatToolCall["args"] = args ?? {};
+
+      // agentdb: one SQLite DB + one MCP server per login. The boot-time
+      // client only lists tools (discovery DB); data calls route here.
+      if (server === "agentdb" && cfg.transport === "stdio") {
+        try {
+          client = await agentdbClient(cfg, userId);
+          if (raw.name === "agentdb_pattern_store") {
+            const meta =
+              callArgs.metadata && typeof callArgs.metadata === "object" && !Array.isArray(callArgs.metadata)
+                ? (callArgs.metadata as Record<string, unknown>)
+                : {};
+            callArgs = { ...callArgs, metadata: { ...meta, user_id: userId } };
+          }
+          if (raw.name === "agentdb_learning_start_session" && !callArgs.user_id) {
+            callArgs = { ...callArgs, user_id: userId };
+          }
+          if (raw.name === "agentdb_init" && !callArgs.db_path) {
+            callArgs = { ...callArgs, db_path: agentdbUserDbPath(userId) };
+          }
+        } catch (e) {
+          log.warn(`MCP agentdb: per-user client failed for ${userId}: ${String(e).slice(0, 160)}`);
+          return `Error: MCP ${namespaced} unavailable for ${userId}: ${(e as Error).message}`.slice(0, 800);
+        }
+      } else {
+        client = OPEN_CLIENTS.get(server);
+      }
+
       if (!client) return `Error: MCP server ${server} is not connected`;
       try {
         const result = await Promise.race([
-          client.callTool({ name: raw.name, arguments: args ?? {} }),
+          client.callTool({ name: raw.name, arguments: callArgs }),
           new Promise<never>((_, rej) =>
             setTimeout(() => rej(new Error("call timeout")), CALL_TIMEOUT_MS),
           ),
         ]);
         return flattenResult(result);
       } catch (e) {
+        if (server === "agentdb" && cfg.transport === "stdio") {
+          USER_CLIENTS.delete(`agentdb:${sanitizeUserId(userId) || "default"}`);
+        }
         return `Error: MCP ${namespaced} failed: ${(e as Error).message}`.slice(0, 800);
       }
     },

@@ -328,6 +328,8 @@ AGENTDB_REMOTE_TOKEN=<from user>
 # --- mirror: local fallback (only if the remote is unset) ---
 # AGENTDB_PATH=/var/lib/nm-finance-agent/agent-mirror.db
 # AGENTDB_MAX_ELEMENTS=100000
+# Per-user agentdb MCP stores (defaults to SKILLS_STATE_DIR/agentdb):
+# AGENTDB_MCP_DIR=/var/lib/nm-finance-agent/state/agentdb
 
 # --- llm ---
 OPENROUTER_API_KEY=<from user>
@@ -438,6 +440,8 @@ sudo -u nmagent sqlite3 /var/lib/nm-finance-agent/sessions.db 'PRAGMA integrity_
   then re-run the §8 preflight.
 - `agent-mirror.db`: skip when using `AGENTDB_REMOTE_URL`; copy it only for the
   local sidecar (with the app stopped).
+- `state/agentdb/<login-id>/agentdb-mcp.db*` is the per-user agentdb MCP store
+  (formerly `workspace/agentdb-mcp.db`); copy `state/` as a whole.
 - `memories/` now contains per-login dirs (`<login-id>/MEMORY.md`, `USER.md`)
   plus `_shared/MEMORY.md` (read-only, `0444`). Copy the whole directory and
   preserve modes.

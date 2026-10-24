@@ -92,7 +92,7 @@ cp .env.example .env    # then fill in keys
 npm install
 npm run start            # backend  → http://127.0.0.1:3001
 cd frontend && npm install && npm run dev   # web UI → http://localhost:5173 (proxies /api)
-npm test                 # full suite (156 tests at the time of writing)
+npm test                 # full suite (158 tests at the time of writing)
 npm run research -- "question"   # deep research CLI (saves under $WORKSPACE_DIR/research/)
 ```
 
@@ -200,7 +200,12 @@ lacks — per-message embeddings for dense semantic `session_search` recall:
 - `src/tools/session_search.ts` — RRF fusion (k=60, wiki-hybrid convention)
   over the FTS5 leg ⊕ mirror's dense leg, retriever-tagged blocks
   (`· fts`, `· semantic(0.83)`, `· fts+semantic`), empty sentinel preserved
+- **User-scoped**: each record carries `user_id` (the SSO login id); `/query`
+  filters to the active login (legacy records without it count as
+  `trgordonb`). `session_search` still double-checks session ownership.
 - `AGENTDB_PATH` (default `./agent-mirror.db`), `AGENTDB_REQUEST_TIMEOUT_MS`
+- `AGENTDB_MCP_DIR` — per-user agentdb MCP stores (reflexion/skills/
+  patterns), default `state/agentdb`; one SQLite DB + stdio server per login
 - `AGENTDB_REMOTE_URL` (+`_TOKEN`) — run the same engine as a Cloudflare
   Container instead of the local sidecar (deploy/ops/persistence in
   `container/README.md`; unset = local sidecar unchanged)

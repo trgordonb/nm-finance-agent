@@ -46,6 +46,16 @@ export const SKILLS_STATE_DIR =
     ? path.resolve(process.env.SKILLS_STATE_DIR.trim())
     : path.resolve("./state");
 
+// Per-user agentdb MCP stores (reflexion episodes, skills, patterns). Each
+// login gets its own SQLite DB under this directory; the MCP client spawns a
+// dedicated stdio server for the active user. mcp_servers.json interpolates
+// this same variable for the boot-time discovery DB.
+export const AGENTDB_MCP_DIR =
+  process.env.AGENTDB_MCP_DIR && process.env.AGENTDB_MCP_DIR.trim()
+    ? path.resolve(process.env.AGENTDB_MCP_DIR.trim())
+    : path.join(SKILLS_STATE_DIR, "agentdb");
+process.env.AGENTDB_MCP_DIR = AGENTDB_MCP_DIR;
+
 // Per-user skill toggle profile (state/users/<id>/skills.json). The registry
 // CLI reads the same variable. Sanitised to one path segment: the value will
 // come from OAuth before long, and it must never traverse directories.

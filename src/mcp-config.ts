@@ -11,6 +11,11 @@
 
 import fs from "node:fs";
 import path from "node:path";
+import { AGENTDB_MCP_DIR } from "./config.js";
+
+// mcp_servers.json may reference ${AGENTDB_MCP_DIR}; importing config also
+// publishes the resolved value to process.env for the interpolator.
+process.env.AGENTDB_MCP_DIR ??= AGENTDB_MCP_DIR;
 const ALLOWED_TRANSPORTS = new Set(["stdio", "streamable_http", "sse"]);
 
 const PLACEHOLDER = /\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g;

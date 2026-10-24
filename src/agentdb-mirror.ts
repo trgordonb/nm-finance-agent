@@ -19,6 +19,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { log } from "./logger.js";
+import { currentUserId } from "./workspace.js";
 import type { ChatMessage } from "./types.js";
 
 export interface MirrorStatus {
@@ -35,6 +36,7 @@ export interface MirrorHit {
   content: string;
   role: string;
   similarity: number;
+  userId?: string;
 }
 
 interface SidecarMsg {
@@ -169,6 +171,7 @@ export class AgentDbMirror {
         turn: turnNumber,
         msg_index: i,
         session_id: sessionId,
+        user_id: currentUserId(),
         role: m.role,
         content: String(m.content ?? "").slice(0, 8000),
         created_at: new Date().toISOString(),
@@ -192,10 +195,11 @@ export class AgentDbMirror {
     if (!this.status.enabled || (!this.child && !this.remoteUrl)) return [];
     try {
       const text = query.slice(0, 2000);
+      const userId = currentUserId();
       const k = Math.max(limit * 2, 8);
       const res = this.remoteUrl
-        ? await this.remote("/query", { body: { text, k } })
-        : await this.request({ req: "query", text, k });
+        ? await this.remote("/query", { body: { text, k, user_id: userId } })
+        : await this.request({ req: "query", text, k, user_id: userId });
       if (!res.ok) throw new Error(res.error ?? "query failed");
       return res.hits ?? [];
     } catch (e) {

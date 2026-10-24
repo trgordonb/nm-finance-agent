@@ -25,15 +25,33 @@ if (!url) {
 }
 
 const db = new DatabaseSync(dbPath);
-const rows = db
-  .prepare(
-    `SELECT session_id, turn_number, message_index, role, content,
-            tool_call_id, tool_name, created_at
-       FROM turns
-      WHERE content IS NOT NULL AND length(trim(content)) > 0
-      ORDER BY id`
-  )
-  .all();
+const baseSelect = `session_id, turn_number, message_index, role, content,
+            tool_call_id, tool_name, created_at`;
+let rows;
+try {
+  // Attribution comes from the session ownership table when present.
+  rows = db
+    .prepare(
+      `SELECT t.session_id, t.turn_number, t.message_index, t.role, t.content,
+              t.tool_call_id, t.tool_name, t.created_at,
+              COALESCE(s.user_id, 'trgordonb') AS user_id
+         FROM turns t
+         LEFT JOIN sessions s ON s.session_id = t.session_id
+        WHERE t.content IS NOT NULL AND length(trim(t.content)) > 0
+        ORDER BY t.id`
+    )
+    .all();
+} catch {
+  // Pre-ownership archive: everything belongs to the legacy default user.
+  rows = db
+    .prepare(
+      `SELECT ${baseSelect}
+         FROM turns
+        WHERE content IS NOT NULL AND length(trim(content)) > 0
+        ORDER BY id`
+    )
+    .all();
+}
 db.close();
 console.log(`[rebuild] ${rows.length} messages from ${dbPath}`);
 
@@ -45,6 +63,7 @@ for (let i = 0; i < rows.length; i += batchSize) {
     turn: r.turn_number,
     msg_index: r.message_index,
     session_id: r.session_id,
+    user_id: r.user_id ?? "trgordonb",
     role: r.role,
     content: String(r.content).slice(0, 8000),
     created_at: r.created_at,

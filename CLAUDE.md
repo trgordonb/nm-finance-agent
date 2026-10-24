@@ -149,7 +149,8 @@ Full inventory with defaults in `.env.example`. Highlights:
   `_KEEP_RECENT_TURNS=2`
 - Nudge: `NUDGE_INTERVAL=5`
 - Mirror: `AGENTDB_MIRROR=0` off, `AGENTDB_PATH`, `AGENTDB_MAX_ELEMENTS`
-  (HNSW preallocation hint), `AGENTDB_REMOTE_URL/_TOKEN` (Cloudflare
+  (HNSW preallocation hint), `AGENTDB_MCP_DIR` (per-user agentdb MCP stores;
+  default `SKILLS_STATE_DIR/agentdb`), `AGENTDB_REMOTE_URL/_TOKEN` (Cloudflare
   Container mirror — `container/README.md`), embed/sidecar timeouts
 - Skills: `SKILLS_REGISTRY` (`s3://neuralmatrix`), `SKILLS_DIR`,
   `SKILLS_STATE_DIR`, `SKILLS_USER_ID` (toggle profile),
@@ -181,6 +182,11 @@ Full inventory with defaults in `.env.example`. Highlights:
 - **agentdb npm alpha wrappers unreliable** (sync/await bugs; RvfBackend not
   exported) — the mirror drives the ruvector core directly; the MCP pilot
   runs agentdb legacy SQLite mode. RVF containers NOT used (see HISTORY).
+- **AgentDB is user-scoped**: mirror records carry `user_id`, `/query` filters
+  to the active login (legacy records count as `trgordonb`), and the agentdb
+  MCP client spawns one stdio server + SQLite DB per login under
+  `AGENTDB_MCP_DIR/<id>/agentdb-mcp.db`; `agentdb_pattern_store` metadata and
+  learning sessions also carry the user id.
 - **Error/Rejected asymmetry** (installed across the porting sessions) is the
   loop's core self-recovery mechanism — every failure class returns guidance.
 - **python-provider quirks carried**: OpenRouter reasoning-token cap on
