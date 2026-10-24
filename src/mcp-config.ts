@@ -24,6 +24,8 @@ const PASSTHROUGH_KEYS = ["transport", "command", "args", "env", "url", "headers
 export interface ServerStatus {
   name: string;
   enabled: boolean;
+  /** Admin baseline from mcp_servers.json (before per-user overrides). */
+  global_enabled?: boolean;
   description?: string;
   transport?: string;
   error?: string | null;

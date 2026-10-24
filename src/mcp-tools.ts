@@ -22,6 +22,7 @@ import { keepToolsFilter, type McpServerCfg, type McpLoadResult, type ServerStat
 import { log } from "./logger.js";
 import { AGENTDB_MCP_DIR } from "./config.js";
 import { currentUserId, sanitizeUserId } from "./workspace.js";
+import { mcpServerEnabledForUser } from "./mcp-user-state.js";
 import type { ToolDef, ToolCall as ChatToolCall } from "./types.js";
 
 export type McpReport = ServerStatus[];
@@ -42,6 +43,13 @@ export function agentdbUserDbPath(userId: string): string {
 
 /** Lazily connected stdio clients keyed by `agentdb:<user>` — one DB each. */
 const USER_CLIENTS = new Map<string, Promise<Client>>();
+
+/** Bound tool name → MCP server name (used by the per-turn tool policy). */
+const TOOL_SERVERS = new Map<string, string>();
+
+export function mcpServerForTool(toolName: string): string | null {
+  return TOOL_SERVERS.get(toolName) ?? null;
+}
 
 async function agentdbClient(cfg: McpServerCfg, userId: string): Promise<Client> {
   const key = `agentdb:${sanitizeUserId(userId) || "default"}`;
@@ -182,6 +190,7 @@ interface BindResult {
 export async function bindMcpTools(load: McpLoadResult): Promise<BindResult> {
   const tools: ToolDef[] = [];
   const report: McpReport = load.statuses.map((s) => ({ ...s }));
+  TOOL_SERVERS.clear();
   for (const [name, cfg] of Object.entries(load.clientServers)) {
     const status = report.find((r) => r.name === name)!;
     try {
@@ -194,6 +203,7 @@ export async function bindMcpTools(load: McpLoadResult): Promise<BindResult> {
         const namespaced = raw.name.startsWith(`${name}_`) ? raw.name : `${name}_${raw.name}`;
         if (!matches(namespaced)) continue;
         bound++;
+        TOOL_SERVERS.set(namespaced, name);
         tools.push(toToolDef(namespaced, name, raw, cfg));
       }
       status.connected = true;
@@ -219,6 +229,9 @@ function toToolDef(namespaced: string, server: string, raw: RawTool, cfg: McpSer
         ? (raw.inputSchema as ToolDef["parameters"])
         : { type: "object" as const, properties: {} },
     async execute(args: ChatToolCall["args"]) {
+      if (!mcpServerEnabledForUser(server)) {
+        return `Rejected: MCP server ${JSON.stringify(server)} is disabled for this user`;
+      }
       const userId = currentUserId();
       let client: Client | undefined;
       let callArgs: ChatToolCall["args"] = args ?? {};

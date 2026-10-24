@@ -130,9 +130,9 @@ export default function SkillsTab({ health }: Props) {
         )}
 
         <div className="skills-note">
-          Toggles apply from the agent's next turn (the skills index re-renders per
-          turn) and persist for all future sessions. Bucket changes sync via the
-          nm-skills CLI (boot pull+push; debounced curation push).
+          Toggles are per-user (state/users/&lt;you&gt;/skills.json) and apply from the
+          agent's next turn; other users keep their own choices. Bucket changes sync
+          via the nm-skills CLI (boot pull+push; debounced curation push).
         </div>
       </div>
     </main>

@@ -442,6 +442,8 @@ sudo -u nmagent sqlite3 /var/lib/nm-finance-agent/sessions.db 'PRAGMA integrity_
   local sidecar (with the app stopped).
 - `state/agentdb/<login-id>/agentdb-mcp.db*` is the per-user agentdb MCP store
   (formerly `workspace/agentdb-mcp.db`); copy `state/` as a whole.
+- `state/users/<login-id>/{skills.json,mcp.json}` holds per-user skill and MCP
+  toggles; the same `state/` copy carries them.
 - `memories/` now contains per-login dirs (`<login-id>/MEMORY.md`, `USER.md`)
   plus `_shared/MEMORY.md` (read-only, `0444`). Copy the whole directory and
   preserve modes.

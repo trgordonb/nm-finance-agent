@@ -99,6 +99,8 @@ export interface SkillInfo {
 export interface McpServerInfo {
   name: string;
   enabled: boolean;
+  /** Admin baseline from mcp_servers.json; false cannot be enabled per-user. */
+  global_enabled?: boolean;
   description?: string;
   transport?: string;
   error?: string | null;

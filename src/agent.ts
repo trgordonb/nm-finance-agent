@@ -76,6 +76,8 @@ export class AgentLoop {
   tools: Map<string, ToolDef>;
   private memory: PromptMemory;
   private maxIterations: number;
+  /** Per-turn visibility policy (MCP per-user toggles); null = all bound. */
+  private toolPolicy: ((name: string) => boolean) | null = null;
   /** Injectable for contract tests; production uses the shared chat client. */
   private chatFn: typeof chat;
 
@@ -101,6 +103,19 @@ export class AgentLoop {
     this.tools = new Map<string, ToolDef>(tools.map((t) => [t.name, t]));
   }
 
+  /** Install/remove the per-turn tool visibility policy. */
+  setToolPolicy(policy: ((name: string) => boolean) | null): void {
+    this.toolPolicy = policy;
+  }
+
+  isToolEnabled(name: string): boolean {
+    return !this.toolPolicy || this.toolPolicy(name);
+  }
+
+  private enabledTools(): ToolDef[] {
+    return [...this.tools.values()].filter((t) => this.isToolEnabled(t.name));
+  }
+
   /** Memory block is rendered once per session by callers and passed in here.
    *  Tracing: one root "agent-turn" chain run per turn with llm/tool children
    *  (LangSmith REST runs API — fire-and-forget, never breaks the turn).
@@ -115,12 +130,16 @@ export class AgentLoop {
   ): Promise<TurnResult> {
     const messages: ChatMessage[] = [...history, { role: "user", content: userInput }];
     const episodeContext = meta?.episodeContext ?? "";
+    const enabledTools = this.enabledTools();
+    const hasReflexion = enabledTools.some(
+      (t) => t.name === "reflexion_store" || t.name.endsWith("_reflexion_store"),
+    );
     const systemPrompt =
       buildSystemPrompt(this.memory.load(), currentWorkspaceRoot()) +
-      agentdbCognitiveBlock(this.tools.has("reflexion_store")) +
+      agentdbCognitiveBlock(hasReflexion) +
       (episodeContext ? `\n${episodeContext}` : "");
-    const wire = toWire([...this.tools.values()]);
-    const toolNames = [...this.tools.keys()];
+    const wire = toWire(enabledTools);
+    const toolNames = enabledTools.map((t) => t.name);
     const newSlice: ChatMessage[] = [];
     let iterations = 0;
     let fatal: string | undefined;
@@ -141,7 +160,7 @@ export class AgentLoop {
         skills: skillsList,
         skills_index_chars: skillsList.length ? getSkillLibrary().renderIndex().length : 0,
         episode_context_chars: promptEpisodeContext.length,
-        tool_count: this.tools.size,
+        tool_count: enabledTools.length,
       },
       tags: ["nm-finance-agent"],
       metadata: {
@@ -302,11 +321,13 @@ export class AgentLoop {
         });
         const tool = this.tools.get(call.name);
         let resultStr: string;
-        if (!tool) {
+        if (tool && !this.isToolEnabled(call.name)) {
+          resultStr = `Rejected: tool ${call.name} is disabled for this user`;
+        } else if (!tool) {
           // Unknown tool name is a wrong-args denial (models occasionally use
           // another harness's vocabulary, e.g. `write` for `write_file`) —
           // recoverable: tell the model what IS bound and continue.
-          resultStr = unknownToolMessage(call.name, [...this.tools.keys()]);
+          resultStr = unknownToolMessage(call.name, toolNames);
         } else {
           try {
             resultStr = await tool.execute(call.args ?? {}, { signal: meta?.signal });

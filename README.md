@@ -92,7 +92,7 @@ cp .env.example .env    # then fill in keys
 npm install
 npm run start            # backend  → http://127.0.0.1:3001
 cd frontend && npm install && npm run dev   # web UI → http://localhost:5173 (proxies /api)
-npm test                 # full suite (158 tests at the time of writing)
+npm test                 # full suite (162 tests at the time of writing)
 npm run research -- "question"   # deep research CLI (saves under $WORKSPACE_DIR/research/)
 ```
 
@@ -138,9 +138,11 @@ Local testing: set `AUTH_MODE=sso` and `SSO_CA_FILE=./certs/sso-ca.pem` in
 | `GET /api/memory` | rendered `<agent_memory>` block + per-user budget usage and shared-memory metadata, **scoped to the authenticated login** |
 | `GET/POST /api/sessions/:sid/followups[/dismiss]` | extracted "next steps" tips (dismiss marks + badge counts) |
 | `GET /api/followups/counts` | live tip counts per session (sidebar badges) |
-| `GET /api/mcp` | mcp_servers.json listing + last-assembly connect status |
-| `POST /api/mcp/{name}/enabled` | atomic toggle (404 unknown) |
-| `POST /api/mcp/reload` | re-assemble runtime (409 while turns stream) |
+| `GET /api/mcp` | per-user effective server list (`mcp_servers.json` baseline + overrides) + last-assembly connect status |
+| `POST /api/mcp/{name}/enabled` | per-user toggle (404 unknown, 409 globally disabled) |
+| `POST /api/mcp/reload` | re-assemble runtime, global (409 while turns stream) |
+| `GET /api/skills` | skills index + per-user enabled state |
+| `POST /api/skills/{name}/enabled` | per-user skill toggle |
 | `POST /api/chat` `{message, session_id?}` | **SSE**: `session` → `message`* → (`research`)* → (`error`)? → `done`. Messages prefixed with `/research` run deep research: steps stream as `research` events and `done` carries `mode:"research"` |
 | `GET /api/research/:sessionId` | deep-research run state (status/step/question/report/error) for reload/reconnect |
 | `POST /api/chat/cancel` `{turn_id}` | aborts the active turn |
@@ -186,6 +188,11 @@ debounced `push --prune` after curation. Reads never touch R2.
 `SKILLS_REQUIRED=1` turns a failed or empty boot pull into a fatal exit (the
 fresh-VM trap), and `/api/health` reports `skills_backend.degraded`. Fresh-VM
 recipe, version pinning and failure semantics: `docs/skills-registry-deploy.md`.
+
+Per-user enable/disable state lives in
+`state/users/<login-id>/skills.json`; disabled skills disappear from that
+user's index and `load_skill`. MCP overrides live in the same directory as
+`mcp.json`; `mcp_servers.json` remains the admin baseline.
 
 ## AgentDB mirror (phase-in, additive)
 

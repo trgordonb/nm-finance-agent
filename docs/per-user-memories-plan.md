@@ -1,7 +1,7 @@
 # Per-user prompt memory — implementation plan
 
 **Status:** **implemented (2026-10-24)** — per-user `MEMORY.md`/`USER.md` plus
-a read-only `memories/_shared/MEMORY.md`; 158 tests passing.
+a read-only `memories/_shared/MEMORY.md`; 162 tests passing.
 **Depends on:** the per-user workspace/session scoping already landed
 (`src/workspace.ts` `currentUserId()`, `sessions.user_id`).
 **Related:** [`per-user-workspace-and-r2.md`](./per-user-workspace-and-r2.md),

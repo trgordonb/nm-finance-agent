@@ -45,11 +45,12 @@ options, the recommendation, and the triggers that should force a revisit.
 - Prompt memory is per-user (`memories/<login-id>/{MEMORY.md,USER.md}`) plus a
   read-only `memories/_shared/MEMORY.md` composed into every prompt
   (implemented; see `per-user-memories-plan.md`).
-- Still global: `state/users/<SKILLS_USER_ID>/` (skill toggles). AgentDB is
-  user-scoped: mirror records carry `user_id` and `/query` filters by the
-  active login; the agentdb MCP client spawns one DB + stdio server per login
-  under `state/agentdb/<login-id>/`. `execute` can read other users' folders
-  in one process — local folders are path separation, not a security boundary.
+- All toggle state is per-user: `state/users/<login-id>/{skills,mcp}.json`.
+  `mcp_servers.json` stays the admin baseline. AgentDB is user-scoped: mirror
+  records carry `user_id` and `/query` filters by the active login; the agentdb
+  MCP client spawns one DB + stdio server per login under
+  `state/agentdb/<login-id>/`. `execute` can read other users' folders in one
+  process — local folders are path separation, not a security boundary.
 
 ## 1. Context and decisions already taken
 

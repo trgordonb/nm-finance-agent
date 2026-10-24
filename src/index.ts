@@ -62,8 +62,9 @@ import { createCompressor, type ConversationCompressor } from "./compression.js"
 import { createSessionSearchSummarizer } from "./summarizer.js";
 import { memory_manage } from "./tools/memory_manage.js";
 import { skill_manage } from "./tools/skill_tools.js";
-import { loadMcpServers, setServerEnabled, type ServerStatus as McpStatus } from "./mcp-config.js";
-import { bindMcpTools, closeOpenClients } from "./mcp-tools.js";
+import { loadMcpServers, type ServerStatus as McpStatus } from "./mcp-config.js";
+import { bindMcpTools, closeOpenClients, mcpServerForTool } from "./mcp-tools.js";
+import { mcpServerEnabledForUser, setMcpServerEnabledForUser } from "./mcp-user-state.js";
 import type { ToolDef, ChatMessage } from "./types.js";
 import { initSkills, getSkillLibrary } from "./tools/skill_tools.js";
 import { SkillsCliBridge, SkillsRequiredError } from "./skills/sync.js";
@@ -95,6 +96,13 @@ const mirror = new AgentDbMirror();
 const searchSummarizer = createSessionSearchSummarizer();
 const loop = new AgentLoop({ memory, store, mirror, summarizer: searchSummarizer });
 
+// Per-user MCP visibility: servers stay bound globally (the tracked config is
+// the admin baseline), but each turn only sees the servers this login enabled.
+loop.setToolPolicy((name) => {
+  const server = mcpServerForTool(name);
+  return !server || mcpServerEnabledForUser(server);
+});
+
 // Skills R2 lifecycle (Phase 2): the CLI (uv + nm-skills-registry) is the
 // object-store authority tool; boot sync pulls the bucket into skills/ before
 // the first session indexes it, curation pushes are debounced client-side.
@@ -122,7 +130,10 @@ import { chat } from "./llm.js";
 // Namespaced MCP names double-prefix (agentdb_reflexion_retrieve) — match by
 // suffix rather than an exact key.
 const episodeRecallCache = new EpisodeRecallCache();
-const reflexionTool = () => [...loop.tools.values()].find((t) => t.name.endsWith("reflexion_retrieve")) ?? null;
+const reflexionTool = () =>
+  [...loop.tools.values()].find(
+    (t) => t.name.endsWith("reflexion_retrieve") && loop.isToolEnabled(t.name),
+  ) ?? null;
 async function maybeEpisodeRecall(userInput: string, history: ChatMessage[]): Promise<string> {
   const cached = episodeRecallCache.get(userInput);
   if (cached !== null) return cached;
@@ -147,9 +158,11 @@ async function maybeNudge(sessionId: string, newMessages: ChatMessage[]): Promis
   if (!nudgePolicy.shouldNudge(sessionId)) return undefined;
   nudgePolicy.markNudged(sessionId);
   const skillTool = loop.tools.get("skill_manage") ?? skill_manage;
-  const cognitive = [...loop.tools.values()].filter((t) =>
-    NUDGE_AGENTDB_TOOLS.some((n) => t.name === n || t.name.endsWith(`_${n}`)),
-  ); // reflexion_store + skill_create (Gate-1 B)
+  const cognitive = [...loop.tools.values()].filter(
+    (t) =>
+      NUDGE_AGENTDB_TOOLS.some((n) => t.name === n || t.name.endsWith(`_${n}`)) &&
+      loop.isToolEnabled(t.name),
+  ); // reflexion_store + skill_create (Gate-1 B), minus per-user-disabled servers
   const tools: Array<typeof memory_manage> = [memory_manage, skillTool, ...cognitive].filter(
     (t, i, arr) => arr.findIndex((x) => x.name === t.name) === i,
   ) as never;
@@ -749,7 +762,14 @@ app.get("/api/mcp", (_req, res) => {
   const lastReport = new Map((mcpReport ?? []).map((r: McpStatus) => [r.name, r]));
   const servers = statuses.map((s) => {
     const r: Partial<McpStatus> = lastReport.get(s.name) ?? {};
-    return { ...s, connected: r.connected ?? null, tool_count: r.tool_count ?? null, connect_error: r.connect_error ?? null };
+    return {
+      ...s,
+      global_enabled: s.enabled,
+      enabled: s.enabled && mcpServerEnabledForUser(s.name),
+      connected: r.connected ?? null,
+      tool_count: r.tool_count ?? null,
+      connect_error: r.connect_error ?? null,
+    };
   });
   res.json({ assembled: mcpReport !== null, servers });
 });
@@ -769,12 +789,20 @@ app.post("/api/mcp/:name/enabled", (req, res) => {
     res.status(400).json({ detail: "enabled must be boolean" });
     return;
   }
-  const result = setServerEnabled(req.params.name, enabled.enabled);
-  if (result.notFound) {
-    res.status(404).json({ detail: result.status });
+  const { statuses } = loadMcpServersSafe();
+  const server = statuses.find((s) => s.name === req.params.name);
+  if (!server) {
+    res.status(404).json({ detail: `no MCP server named ${JSON.stringify(req.params.name)}` });
     return;
   }
-  res.json({ status: result.status });
+  if (enabled.enabled && !server.enabled) {
+    res.status(409).json({
+      detail: `MCP server ${JSON.stringify(server.name)} is globally disabled in mcp_servers.json`,
+    });
+    return;
+  }
+  const result = setMcpServerEnabledForUser(req.params.name, enabled.enabled);
+  res.json({ status: result.status, enabled: mcpServerEnabledForUser(req.params.name) });
 });
 
 app.post("/api/mcp/reload", async (req, res) => {

@@ -23,6 +23,58 @@ function makeLoop(chatFn: any) {
   return new AgentLoop({ memory, store: {} as any, tools: [], chatFn });
 }
 
+function tool(name: string) {
+  return {
+    name,
+    description: "",
+    parameters: { type: "object" as const, properties: {} },
+    execute: () => "ok",
+  };
+}
+
+test("agent loop: per-user tool policy filters the wire list", async () => {
+  const seen: string[][] = [];
+  const chatFn: any = async (_messages: any[], tools: any[]) => {
+    seen.push((tools ?? []).map((t: any) => t.name));
+    return textResponse("ok");
+  };
+  const loop = new AgentLoop({
+    memory: { load: () => "", totalChars: () => 0 } as any,
+    store: {} as any,
+    tools: [tool("a"), tool("b")],
+    chatFn,
+  });
+  loop.setToolPolicy((name) => name !== "b");
+  const result = await loop.runTurn([], "hi");
+  assert.equal(result.fatal, undefined);
+  assert.deepEqual(seen[0], ["a"]);
+  assert.equal(loop.isToolEnabled("b"), false);
+});
+
+test("agent loop: a disabled tool is rejected if the model emits it anyway", async () => {
+  let calls = 0;
+  const chatFn: any = async () => {
+    calls++;
+    if (calls === 1) {
+      return {
+        ...textResponse(""),
+        toolCalls: [{ id: "call-1", name: "b", args: {} }],
+      };
+    }
+    return textResponse("done");
+  };
+  const loop = new AgentLoop({
+    memory: { load: () => "", totalChars: () => 0 } as any,
+    store: {} as any,
+    tools: [tool("a"), tool("b")],
+    chatFn,
+  });
+  loop.setToolPolicy((name) => name !== "b");
+  const result = await loop.runTurn([], "hi");
+  const toolMsg = result.messages.find((m) => m.role === "tool");
+  assert.match(String(toolMsg?.content), /Rejected: tool b is disabled for this user/);
+});
+
 test("agent loop: empty assistant response retries once at low effort", async () => {
   const calls: Array<{ opts: any; messages: any[] }> = [];
   const chatFn = async (messages: any[], _tools: any, opts: any) => {

@@ -17,6 +17,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { load as yaml } from "js-yaml";
 import { SKILLS_DIR, SKILLS_STATE_DIR, SKILLS_USER_ID } from "../config.js";
+import { currentUserId, sanitizeUserId } from "../workspace.js";
 
 const SKILL_FILE = "SKILL.md";
 const NAME_RE = /^[a-z0-9][a-z0-9_-]*$/;
@@ -68,11 +69,23 @@ function frontmatter(text: string): { meta: Record<string, string>; body: string
 
 export class SkillLibrary {
   readonly root: string;
-  private statePath: string;
+  private readonly explicitUser?: string;
 
-  constructor(skillsDir?: string, user: string = SKILLS_USER_ID) {
+  constructor(skillsDir?: string, user?: string) {
     this.root = path.resolve(skillsDir ?? process.env.SKILLS_DIR ?? SKILLS_DIR);
-    this.statePath = path.join(SKILLS_STATE_DIR, "users", user, "skills.json");
+    this.explicitUser = user ? sanitizeUserId(user) : undefined;
+  }
+
+  /** Active toggle profile: explicit test user, SSO login, then the env fallback. */
+  private userKey(): string {
+    if (this.explicitUser) return this.explicitUser;
+    const active = currentUserId();
+    if (active && active !== "default") return active;
+    return SKILLS_USER_ID || active || "default";
+  }
+
+  private statePath(): string {
+    return path.join(SKILLS_STATE_DIR, "users", this.userKey(), "skills.json");
   }
 
   // --- index --------------------------------------------------------------
@@ -147,15 +160,23 @@ export class SkillLibrary {
 
   private loadState(): DisabledState {
     try {
-      return JSON.parse(fs.readFileSync(this.statePath, "utf8")) as DisabledState;
+      return JSON.parse(fs.readFileSync(this.statePath(), "utf8")) as DisabledState;
     } catch {
       return { disabled: [] };
     }
   }
 
   private saveState(state: DisabledState): void {
-    fs.mkdirSync(path.dirname(this.statePath), { recursive: true });
-    fs.writeFileSync(this.statePath, `${JSON.stringify(state, null, 1)}\n`, "utf8");
+    const file = this.statePath();
+    fs.mkdirSync(path.dirname(file), { recursive: true, mode: 0o700 });
+    const tmp = `${file}.tmp-${process.pid}-${Date.now()}`;
+    fs.writeFileSync(tmp, `${JSON.stringify(state, null, 1)}\n`, { encoding: "utf8", mode: 0o600 });
+    fs.renameSync(tmp, file);
+    try {
+      fs.chmodSync(file, 0o600);
+    } catch {
+      /* best effort */
+    }
   }
 
   private disabled(): string[] {

@@ -83,7 +83,7 @@ nm-finance-agent/
 ├── mcp_servers.json      # git-tracked MCP config
 ├── skills/               # local working copy (gitignored mirror of the R2 bucket)
 ├── memories/<login-id>/  # per-user MEMORY.md/USER.md + _shared/ (gitignored)
-├── state/                # local-only, gitignored
+├── state/                # local-only: users/<login-id>/{skills,mcp}.json + agentdb/
 ├── workspace/<login-id>/ # per-SSO-user scratch area, gitignored
 ├── sessions.db           # the archive (turns+FTS5+titles+followups+compressions)
 └── agent-mirror.db       # ruvector redb sidecar store (rebuildable from archive)
@@ -123,6 +123,10 @@ nm-finance-agent/
 - **Prompt memory**: `MEMORY_DIR/<login-id>/{MEMORY.md,USER.md}` (3,575 chars
   per user) plus a read-only `_shared/MEMORY.md` (2,000-char prompt budget).
   `memory_manage` writes per-user only; the nudge follows the turn owner.
+- **Per-user toggles**: skill disabled lists live in
+  `state/users/<login-id>/skills.json`; MCP overrides in
+  `state/users/<login-id>/mcp.json`. `mcp_servers.json` is the admin baseline;
+  the AgentLoop filters MCP tools per turn and the MCP wrapper re-checks.
 - **Skills**: disabled = invisible to the agent surface, visible to admin;
   curation writes through to R2 via debounced push; push failures surface
   as Rejected-grade advisories in skill_manage results (conflict UX).
@@ -153,7 +157,8 @@ Full inventory with defaults in `.env.example`. Highlights:
   default `SKILLS_STATE_DIR/agentdb`), `AGENTDB_REMOTE_URL/_TOKEN` (Cloudflare
   Container mirror — `container/README.md`), embed/sidecar timeouts
 - Skills: `SKILLS_REGISTRY` (`s3://neuralmatrix`), `SKILLS_DIR`,
-  `SKILLS_STATE_DIR`, `SKILLS_USER_ID` (toggle profile),
+  `SKILLS_STATE_DIR`, `SKILLS_USER_ID` (`AUTH_MODE=off`/CLI fallback; the SSO
+  login id wins),
   `NM_SKILLS_REGISTRY_HOME`, `SKILLS_CLI` (installed binary; skips
   `uv run --directory`), `SKILLS_CLI_BRIDGE=0`,
   `SKILLS_REQUIRED=1` (fail boot on a failed/empty pull),

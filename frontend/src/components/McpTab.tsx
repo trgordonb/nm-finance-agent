@@ -62,7 +62,8 @@ export default function McpTab() {
   const enabledCount = useMemo(() => servers?.filter((s) => s.enabled).length ?? 0, [servers]);
 
   const statusLine = (s: McpServerInfo) => {
-    if (!s.enabled) return "disabled";
+    if (s.global_enabled === false) return "globally disabled in mcp_servers.json";
+    if (!s.enabled) return "disabled for you";
     if (s.error) return s.error;
     if (s.connected === null) return "not assembled yet";
     if (!s.connected) return s.connect_error ?? "connection failed";
@@ -125,8 +126,12 @@ export default function McpTab() {
                   className={`toggle${s.enabled ? " on" : ""}`}
                   role="switch"
                   aria-checked={s.enabled}
-                  aria-label={`${s.enabled ? "Disable" : "Enable"} MCP server ${s.name}`}
-                  disabled={busy !== null}
+                  aria-label={
+                    s.global_enabled === false
+                      ? `MCP server ${s.name} is globally disabled`
+                      : `${s.enabled ? "Disable" : "Enable"} MCP server ${s.name}`
+                  }
+                  disabled={busy !== null || s.global_enabled === false}
                   onClick={() => toggle(s)}
                 >
                   <span className="knob" />
@@ -137,8 +142,9 @@ export default function McpTab() {
         )}
 
         <div className="skills-note">
-          Toggles edit mcp_servers.json and apply after Reload runtime (server) or at the next
-          session (CLI) — the tool list is bound once per assembled runtime
+          Toggles are per-user (stored under state/users/&lt;you&gt;/mcp.json) and apply to
+          your next turn; other users keep their own choices. Reload runtime reconnects the
+          globally enabled servers; global enablement stays in mcp_servers.json.
         </div>
       </div>
     </main>
