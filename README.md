@@ -132,7 +132,7 @@ Local testing: set `AUTH_MODE=sso` and `SSO_CA_FILE=./certs/sso-ca.pem` in
 | Endpoint | Notes |
 |---|---|
 | `GET /api/health` | model, base_url, memory usage, tool list |
-| `GET /api/sessions` | archived sessions (each carries a `summary` one-liner: fallback truncated first user message → async LLM refine via the summarizer model) |
+| `GET /api/sessions` | archived sessions, **scoped to the authenticated login id** (each carries a `summary` one-liner: fallback truncated first user message → async LLM refine via the summarizer model) |
 | `GET /api/sessions/:id` | full message history (resumable) |
 | `GET /api/memory` | rendered `<agent_memory>` block + budget usage |
 | `GET/POST /api/sessions/:sid/followups[/dismiss]` | extracted "next steps" tips (dismiss marks + badge counts) |

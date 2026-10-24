@@ -36,6 +36,8 @@ export interface SessionDriver {
   /** Persist one completed agent turn; returns the turn number (1-based). */
   appendTurn(sessionId: string, messages: ChatMessage[]): number;
   loadSession(sessionId: string): ChatMessage[];
+  /** True when the current login owns the session id. */
+  ownsSession(sessionId: string): boolean;
   listSessions(): SessionRow[];
   /** Recall hits for a free-text query (may be []). */
   search(query: string, limit?: number): SessionHit[];

@@ -41,7 +41,7 @@ import { authConfig } from "./auth/config.js";
 import { createAuthRouter } from "./auth/routes.js";
 import { createOriginGuard, createRequireAuth, type AuthedRequest } from "./auth/middleware.js";
 import { SessionManager } from "./auth/session.js";
-import { currentWorkspaceRoot, runInWorkspace, workspaceUserKey } from "./workspace.js";
+import { currentWorkspaceRoot, currentUserId, runInWorkspace, workspaceUserKey } from "./workspace.js";
 import { certificateDaysRemaining, createSsoClient } from "./auth/sso.js";
 import { AuthStore } from "./auth/store.js";
 import { looksLikePdf, saveWikiUpload } from "./uploads.js";
@@ -257,7 +257,7 @@ if (authManager && ssoClient) {
   );
 }
 
-const ACTIVE_TURNS = new Map<string, AbortController>();
+const ACTIVE_TURNS = new Map<string, { controller: AbortController; userId: string }>();
 
 function sse(event: string, payload: unknown): string {
   return `event: ${event}\ndata: ${JSON.stringify(payload)}\n\n`;
@@ -279,7 +279,7 @@ app.get("/api/health", (_req: Request, res: Response) => {
     skills: getSkillLibrary().listAll().length,
     skills_backend: skillsBridge.info,
     skills_required: SKILLS_REQUIRED,
-    sessions: store.listSessions().length,
+    sessions: store.totalSessions(),
     mirror: mirror.getFastStatus(),
     mcp_connected: mcpReport ? mcpReport.filter((r) => r.connected && r.enabled).length : null,
     mcp_tools: [...loop.tools.keys()].filter((n) => n.includes("_")).length,
@@ -434,9 +434,15 @@ app.post("/api/chat", (req, res) => {
     return;
   }
 
+  const requestedSession = session_id && session_id.trim() ? session_id.trim() : null;
+  if (requestedSession && store.sessionExists(requestedSession) && !store.ownsSession(requestedSession)) {
+    res.status(404).json({ detail: "session not found" });
+    return;
+  }
+
   const turnId = randomUUID();
   const controller = new AbortController();
-  ACTIVE_TURNS.set(turnId, controller);
+  ACTIVE_TURNS.set(turnId, { controller, userId: currentUserId() });
 
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
@@ -444,7 +450,7 @@ app.post("/api/chat", (req, res) => {
   res.setHeader("X-Accel-Buffering", "no");
   res.flushHeaders();
 
-  const sessionId = session_id && session_id.trim() ? session_id.trim() : store.newSessionId();
+  const sessionId = requestedSession ?? store.newSessionId();
 
   let abandoned = false;
   const abortListener = () => {
@@ -788,6 +794,10 @@ app.post("/api/mcp/reload", async (req, res) => {
 // --- session follow-ups ("next steps" tips, followups.py parity) -------------
 
 app.get("/api/sessions/:sessionId/followups", (req, res) => {
+  if (!store.ownsSession(req.params.sessionId)) {
+    res.status(404).json({ detail: `session not found: ${req.params.sessionId}` });
+    return;
+  }
   res.json(
     getFollowups(req.params.sessionId) ?? {
       session_id: req.params.sessionId,
@@ -798,13 +808,21 @@ app.get("/api/sessions/:sessionId/followups", (req, res) => {
 });
 
 app.get("/api/followups/counts", (_req, res) => {
-  res.json({ counts: followupCounts() });
+  const owned: Record<string, number> = {};
+  for (const [sessionId, count] of Object.entries(followupCounts())) {
+    if (store.ownsSession(sessionId)) owned[sessionId] = count;
+  }
+  res.json({ counts: owned });
 });
 
 app.post("/api/sessions/:sessionId/followups/dismiss", (req, res) => {
   const { index } = (req.body ?? {}) as { index?: number };
   if (typeof index !== "number") {
     res.status(400).json({ detail: "index must be a number" });
+    return;
+  }
+  if (!store.ownsSession(req.params.sessionId)) {
+    res.status(404).json({ detail: `session not found: ${req.params.sessionId}` });
     return;
   }
   const dismissed = dismissFollowup(req.params.sessionId, index);
@@ -908,11 +926,11 @@ app.get("/api/yahoo/*", async (req, res) => {
 app.post("/api/chat/cancel", (req, res) => {
   const turnId = (req.body ?? {}) as { turn_id: string };
   const target = ACTIVE_TURNS.get(turnId.turn_id);
-  if (!target) {
+  if (!target || target.userId !== currentUserId()) {
     res.json({ cancelled: false, detail: "turn not active (already finished?)" });
     return;
   }
-  target.abort();
+  target.controller.abort();
   res.json({ cancelled: true });
 });
 

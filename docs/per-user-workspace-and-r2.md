@@ -38,8 +38,11 @@ options, the recommendation, and the triggers that should force a revisit.
 - `execute` exports `$WORKSPACE_DIR` and uses the scoped root as cwd; the system
   prompt names the absolute root; skills use `$WORKSPACE_DIR/...`.
 - Migration: existing `workspace/` contents moved to `workspace/trgordonb/`.
-- Still global: `sessions.db`, `memories/`, `state/users/<SKILLS_USER_ID>/`, and
-  the `agentdb` MCP database. `execute` can read other users' folders in one
+- `sessions.db` now carries a `sessions` ownership table (legacy rows
+  backfilled to `trgordonb` once; marker in `schema_meta`). List/load/search/
+  research/followups are owner-filtered; a second login sees none of the old
+  sessions. Still global: `memories/`, `state/users/<SKILLS_USER_ID>/`, and the
+  `agentdb` MCP database. `execute` can read other users' folders in one
   process — local folders are path separation, not a security boundary.
 
 ## 1. Context and decisions already taken

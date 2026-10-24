@@ -70,6 +70,13 @@ export function currentWorkspaceRoot(): string {
   return currentWorkspace().root;
 }
 
+/** The active session owner: SSO login id, else WORKSPACE_USER, else "default". */
+export function currentUserId(): string {
+  const active = scope.getStore();
+  if (active?.userId) return active.userId;
+  return sanitizeUserId(WORKSPACE_USER) || "default";
+}
+
 /** Resolve a user/tool-supplied path: relative → the active workspace root. */
 export function resolveInWorkspace(p: string): string {
   const root = currentWorkspaceRoot();

@@ -10,10 +10,23 @@
 import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import { DB_PATH } from "./config.js";
+import { currentUserId } from "./workspace.js";
 import type { ChatMessage } from "./types.js";
 import type { SessionDriver, SessionHit, SessionRow } from "./driver.js";
 
 export type { SessionRow } from "./driver.js";
+
+/** Pre-SSO archives belong to the previous default user. One-time backfill
+ *  (idempotent via INSERT OR IGNORE); change only if that account is renamed. */
+const LEGACY_SESSION_OWNER = "trgordonb";
+
+/** A session id is already owned by another login. */
+export class SessionOwnershipError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "SessionOwnershipError";
+  }
+}
 
 /** One deep-research run row (`/research` mode). Keyed by session_id — the
  *  session's latest run; the archive keeps the actual conversation. */
@@ -102,7 +115,54 @@ export class SQLiteSessionStore implements SessionDriver {
         started_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ','now')),
         finished_at   TEXT
       );
+
+      CREATE TABLE IF NOT EXISTS sessions (
+        session_id TEXT PRIMARY KEY,
+        user_id    TEXT NOT NULL,
+        created_at TEXT NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id, created_at);
+
+      CREATE TABLE IF NOT EXISTS schema_meta (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+      );
     `);
+
+    // Ownership backfill (once): all pre-SSO sessions belong to the previous
+    // default user. The marker keeps this from claiming sessions written later
+    // by an unowned/legacy process (they stay invisible instead of leaking).
+    const backfilled = this.db
+      .prepare(`SELECT value FROM schema_meta WHERE key = 'session_owner_backfill'`)
+      .get() as { value: string } | undefined;
+    if (!backfilled) {
+      this.db.exec(`
+        INSERT OR IGNORE INTO sessions (session_id, user_id, created_at)
+          SELECT session_id, '${LEGACY_SESSION_OWNER}', MIN(created_at)
+          FROM turns GROUP BY session_id;
+        INSERT OR IGNORE INTO sessions (session_id, user_id, created_at)
+          SELECT session_id, '${LEGACY_SESSION_OWNER}', MIN(started_at)
+          FROM research_runs GROUP BY session_id;
+        INSERT OR IGNORE INTO sessions (session_id, user_id, created_at)
+          SELECT session_id, '${LEGACY_SESSION_OWNER}', MIN(created_at)
+          FROM session_titles GROUP BY session_id;
+      `);
+      const hasFollowups = this.db
+        .prepare(`SELECT 1 AS x FROM sqlite_master WHERE type = 'table' AND name = 'followups'`)
+        .get();
+      if (hasFollowups) {
+        this.db.exec(`
+          INSERT OR IGNORE INTO sessions (session_id, user_id, created_at)
+            SELECT session_id, '${LEGACY_SESSION_OWNER}',
+                   COALESCE(strftime('%Y-%m-%dT%H:%M:%fZ', created_at, 'unixepoch'),
+                            strftime('%Y-%m-%dT%H:%M:%fZ','now'))
+            FROM followups;
+        `);
+      }
+      this.db
+        .prepare(`INSERT INTO schema_meta (key, value) VALUES ('session_owner_backfill', ?)`)
+        .run(new Date().toISOString());
+    }
   }
 
   close(): void {
@@ -113,6 +173,47 @@ export class SQLiteSessionStore implements SessionDriver {
     return crypto.randomUUID();
   }
 
+  /** Claim/create the session row for the current login; refuse a foreign id. */
+  private ensureSession(sessionId: string): void {
+    const owner = currentUserId();
+    const row = this.db
+      .prepare(`SELECT user_id FROM sessions WHERE session_id = ?`)
+      .get(sessionId) as { user_id: string } | undefined;
+    if (row) {
+      if (row.user_id !== owner) {
+        throw new SessionOwnershipError(`session ${sessionId} belongs to another user`);
+      }
+      return;
+    }
+    const legacyTurn = this.db
+      .prepare(`SELECT 1 AS x FROM turns WHERE session_id = ? LIMIT 1`)
+      .get(sessionId);
+    if (legacyTurn) {
+      throw new SessionOwnershipError(`session ${sessionId} has no owner; refusing to claim it`);
+    }
+    this.db
+      .prepare(`INSERT INTO sessions (session_id, user_id, created_at) VALUES (?, ?, ?)`)
+      .run(sessionId, owner, new Date().toISOString());
+  }
+
+  ownsSession(sessionId: string, userId: string = currentUserId()): boolean {
+    const row = this.db
+      .prepare(`SELECT user_id FROM sessions WHERE session_id = ?`)
+      .get(sessionId) as { user_id: string } | undefined;
+    return !!row && row.user_id === userId;
+  }
+
+  /** True when the id already exists (owned or foreign); false = a new chat. */
+  sessionExists(sessionId: string): boolean {
+    if (this.db.prepare(`SELECT 1 AS x FROM sessions WHERE session_id = ?`).get(sessionId)) return true;
+    return !!this.db.prepare(`SELECT 1 AS x FROM turns WHERE session_id = ? LIMIT 1`).get(sessionId);
+  }
+
+  totalSessions(): number {
+    const row = this.db.prepare(`SELECT COUNT(*) AS c FROM sessions`).get() as { c: number };
+    return Number(row.c);
+  }
+
   appendTurn(sessionId: string, messages: ChatMessage[]): number {
     const insert = this.db.prepare(
       `INSERT INTO turns (session_id, turn_number, message_index, role, content, tool_calls, tool_call_id, tool_name, usage)
@@ -120,6 +221,7 @@ export class SQLiteSessionStore implements SessionDriver {
     );
     this.db.exec("BEGIN IMMEDIATE");
     try {
+      this.ensureSession(sessionId);
       const turnNumberRow = this.db
         .prepare(`SELECT COALESCE(MAX(turn_number), 0) + 1 AS n FROM turns WHERE session_id = ?`)
         .get(sessionId) as { n: number };
@@ -146,6 +248,7 @@ export class SQLiteSessionStore implements SessionDriver {
   }
 
   loadSession(sessionId: string): ChatMessage[] {
+    if (!this.ownsSession(sessionId)) return [];
     const rows = this.db
       .prepare(`SELECT role, content, tool_calls, tool_call_id, tool_name, usage FROM turns WHERE session_id = ? ORDER BY id`)
       .all(sessionId) as Array<{
@@ -184,7 +287,7 @@ export class SQLiteSessionStore implements SessionDriver {
     });
   }
 
-  listSessions(): SessionRow[] {
+  listSessions(userId: string = currentUserId()): SessionRow[] {
     return this.db
       .prepare(
         `SELECT t.session_id,
@@ -194,17 +297,20 @@ export class SQLiteSessionStore implements SessionDriver {
                 st.title AS summary,
                 rr.status AS research_status
          FROM turns t
+         JOIN sessions s ON s.session_id = t.session_id
          LEFT JOIN session_titles st ON st.session_id = t.session_id
          LEFT JOIN research_runs rr ON rr.session_id = t.session_id
+         WHERE s.user_id = ?
          GROUP BY t.session_id ORDER BY created_at DESC`,
       )
-      .all() as unknown as SessionRow[];
+      .all(userId) as unknown as SessionRow[];
   }
 
   recordCompression(
     sessionId: string,
     meta: { summary: string; firstTurn: number; lastTurn: number; originalCount: number; model: string },
   ): void {
+    this.ensureSession(sessionId);
     this.db
       .prepare(
         `INSERT INTO compressions (session_id, summary, first_turn, last_turn, original_count, model)
@@ -221,6 +327,7 @@ export class SQLiteSessionStore implements SessionDriver {
     model: string;
     created_at: string;
   }> {
+    if (!this.ownsSession(sessionId)) return [];
     return this.db
       .prepare(
         `SELECT id, first_turn, last_turn, summary, model, created_at
@@ -231,6 +338,7 @@ export class SQLiteSessionStore implements SessionDriver {
 
   /** Title persistence: sync fallback rows and refined titles share the table. */
   setSessionTitle(sessionId: string, title: string, model: string): void {
+    if (!this.ownsSession(sessionId)) return;
     this.db
       .prepare(
         `INSERT INTO session_titles (session_id, title, model)
@@ -241,6 +349,7 @@ export class SQLiteSessionStore implements SessionDriver {
   }
 
   getSessionTitle(sessionId: string): string | null {
+    if (!this.ownsSession(sessionId)) return null;
     const row = this.db
       .prepare(`SELECT title FROM session_titles WHERE session_id = ?`)
       .get(sessionId) as { title: string } | undefined;
@@ -249,24 +358,26 @@ export class SQLiteSessionStore implements SessionDriver {
 
   /** The model label that produced the current title (for provenance/debug). */
   getSessionTitleModel(sessionId: string): string | null {
+    if (!this.ownsSession(sessionId)) return null;
     const row = this.db
       .prepare(`SELECT model FROM session_titles WHERE session_id = ?`)
       .get(sessionId) as { model: string } | undefined;
     return row?.model ?? null;
   }
 
-  search(query: string, limit: number = 5): SessionHit[] {
+  search(query: string, limit: number = 5, userId: string = currentUserId()): SessionHit[] {
     const tokens = query.split(/\s+/).filter(Boolean).map(sanitizeFts);
     if (!tokens.length) return [];
     const phrase = tokens.map((t) => `"${t}"`).join(" AND ");
     const joined = tokens.join(" OR ");
-    let hits = queryFts(this.db, phrase, limit);
-    if (!hits.length) hits = queryFts(this.db, joined, limit);
-    if (!hits.length) hits = queryLike(this.db, query, limit);
+    let hits = queryFts(this.db, phrase, limit, userId);
+    if (!hits.length) hits = queryFts(this.db, joined, limit, userId);
+    if (!hits.length) hits = queryLike(this.db, query, limit, userId);
     return hits;
   }
 
   deleteSession(sessionId: string): void {
+    if (!this.ownsSession(sessionId)) return;
     this.db.prepare(`DELETE FROM turns WHERE session_id = ?`).run(sessionId);
   }
 
@@ -274,6 +385,7 @@ export class SQLiteSessionStore implements SessionDriver {
 
   /** Start (or restart) a session's research run row. */
   startResearchRun(sessionId: string, question: string): void {
+    this.ensureSession(sessionId);
     this.db
       .prepare(
         `INSERT INTO research_runs (session_id, status, step, question, clarification, report, error, started_at, finished_at)
@@ -288,6 +400,7 @@ export class SQLiteSessionStore implements SessionDriver {
 
   /** Resume a paused (awaiting_clarification) run — question/started_at kept. */
   resumeResearchRun(sessionId: string): void {
+    if (!this.ownsSession(sessionId)) return;
     this.db
       .prepare(
         `UPDATE research_runs SET status = 'running', step = 'scope',
@@ -328,6 +441,7 @@ export class SQLiteSessionStore implements SessionDriver {
   }
 
   getResearchRun(sessionId: string): ResearchRunRow | null {
+    if (!this.ownsSession(sessionId)) return null;
     const row = this.db
       .prepare(
         `SELECT session_id, status, step, question, clarification, report, error, started_at, finished_at
@@ -353,17 +467,19 @@ function sanitizeFts(token: string): string {
   return token.replace(/"/g, '""');
 }
 
-function queryFts(db: DatabaseSync, match: string, limit: number): SessionHit[] {
+function queryFts(db: DatabaseSync, match: string, limit: number, userId: string): SessionHit[] {
   try {
     const rows = db
       .prepare(
         // external-content FTS5 has a single column (content, index 0)
         `SELECT t.session_id, t.created_at, t.content, snippet(turns_fts, 0, '', '', ' … ', 32) AS snip
-         FROM turns_fts f JOIN turns t ON t.id = f.rowid
-         WHERE turns_fts MATCH ?
+         FROM turns_fts f
+         JOIN turns t ON t.id = f.rowid
+         JOIN sessions s ON s.session_id = t.session_id
+         WHERE turns_fts MATCH ? AND s.user_id = ?
          ORDER BY t.created_at DESC LIMIT ?`,
       )
-      .all(match, limit) as Array<{ session_id: string; created_at: string; content: string; snip: string }>;
+      .all(match, userId, limit) as Array<{ session_id: string; created_at: string; content: string; snip: string }>;
     return rows.map((r, i) => ({
       session_id: r.session_id,
       created_at: r.created_at,
@@ -376,19 +492,21 @@ function queryFts(db: DatabaseSync, match: string, limit: number): SessionHit[] 
   }
 }
 
-function queryLike(db: DatabaseSync, query: string, limit: number): SessionHit[] {
+function queryLike(db: DatabaseSync, query: string, limit: number, userId: string): SessionHit[] {
   // Last resort for FTS-invalid queries: match on individual significant words.
   const words = query.split(/\s+/).filter((w) => w.length >= 3).slice(0, 5);
   if (!words.length) return [];
-  const clauses = words.map(() => `content LIKE ?`).join(" OR ");
+  const clauses = words.map(() => `t.content LIKE ?`).join(" OR ");
   try {
     const rows = db
       .prepare(
-        `SELECT session_id, created_at, content
-         FROM turns WHERE ${clauses}
-         ORDER BY created_at DESC LIMIT ?`,
+        `SELECT t.session_id, t.created_at, t.content
+         FROM turns t
+         JOIN sessions s ON s.session_id = t.session_id
+         WHERE s.user_id = ? AND (${clauses})
+         ORDER BY t.created_at DESC LIMIT ?`,
       )
-      .all(...words.map((w) => `%${w.replace(/[%_]/g, "")}%`), limit) as Array<{
+      .all(userId, ...words.map((w) => `%${w.replace(/[%_]/g, "")}%`), limit) as Array<{
       session_id: string;
       created_at: string;
       content: string;

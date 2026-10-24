@@ -91,7 +91,9 @@ export function createSessionSearchTool(
         const query = String(args.query ?? "");
         const fetchLimit = Math.max(limit * 2, 8); // extra candidates per leg for the fusion
         const fts = driver.search(query, fetchLimit);
-        const semantic = mirror?.status.enabled ? await mirror.search(query, fetchLimit) : [];
+        const semanticAll = mirror?.status.enabled ? await mirror.search(query, fetchLimit) : [];
+        // The mirror is process-wide; keep only sessions this login owns.
+        const semantic = semanticAll.filter((h) => h.sessionId && driver.ownsSession(h.sessionId));
         if (!fts.length && !semantic.length) return "No past session matches found.";
 
         // RRF fusion runs over both legs (a single leg degenerates to its

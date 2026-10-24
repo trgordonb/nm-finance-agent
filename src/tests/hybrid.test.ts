@@ -72,9 +72,13 @@ test("fusion: both legs rank identical hit first (RRF sum), tags fuse to fts+sem
 
 test("fusion: semantic-only hit survives when FTS leg is empty", async () => {
   const store = new SessionStore(path.join(fs.mkdtempSync(path.join(os.tmpdir(), "nmfa-")), "t.db"));
+  const sid = store.newSessionId();
+  // The mirror is process-wide, but recall is filtered to sessions this login
+  // owns; seed the ownership row with an archived (non-matching) turn.
+  store.appendTurn(sid, [{ role: "user", content: "archived unrelated notes" }]);
   const fake = new FakeMirror();
   fake.records.push({
-    sessionId: store.newSessionId(),
+    sessionId: sid,
     createdAt: "2026-10-09T00:00:00Z",
     content: "portfolio risk parity notes from an old session",
     role: "user",

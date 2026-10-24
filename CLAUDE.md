@@ -116,6 +116,9 @@ nm-finance-agent/
   (auto-created on login) is the root for relative tool paths and `execute`;
   `$WORKSPACE_DIR` is exported to shells. Local folders are path separation,
   not isolation (`execute` can read other users in the same process).
+- **Session ownership**: `sessions` maps `session_id → user_id`; list, load,
+  search, research runs and followups are filtered by the current login.
+  Pre-SSO rows are backfilled to `trgordonb` once (guarded by `schema_meta`).
 - **Skills**: disabled = invisible to the agent surface, visible to admin;
   curation writes through to R2 via debounced push; push failures surface
   as Rejected-grade advisories in skill_manage results (conflict UX).
