@@ -26,6 +26,7 @@ import {
   OPENROUTER_PROVIDER_FALLBACKS,
   OPENROUTER_REASONING,
   MEMORY_CHAR_LIMIT,
+  SHARED_MEMORY_CHAR_LIMIT,
   WORKSPACE_USER,
   SKILLS_REQUIRED,
   WIKI_API_URL,
@@ -273,8 +274,9 @@ app.get("/api/health", (_req: Request, res: Response) => {
     provider_order: OPENROUTER_PROVIDER_ORDER,
     provider_fallbacks: OPENROUTER_PROVIDER_FALLBACKS,
     reasoning: OPENROUTER_REASONING,
-    memory_chars: memory.totalChars(),
+    memory_chars: authConfig.mode === "sso" ? null : memory.totalChars(),
     memory_budget: MEMORY_CHAR_LIMIT,
+    shared_memory_chars: memory.sharedChars(),
     tools: [...loop.tools.keys()],
     skills: getSkillLibrary().listAll().length,
     skills_backend: skillsBridge.info,
@@ -366,9 +368,13 @@ app.get("/api/research/:sessionId", (req, res) => {
 
 app.get("/api/memory", (_req, res) => {
   res.json({
+    user: currentUserId(),
     block: memory.load(),
     usage: memory.totalChars(),
     budget: MEMORY_CHAR_LIMIT,
+    shared_chars: memory.sharedChars(),
+    shared_budget: SHARED_MEMORY_CHAR_LIMIT,
+    shared_over_budget: memory.sharedOverBudget(),
   });
 });
 
@@ -937,5 +943,5 @@ app.post("/api/chat/cancel", (req, res) => {
 app.listen(serverPort, serverHost, () => {
   console.error(`nm-finance-agent listening on http://${serverHost}:${serverPort}`);
   console.error(`  tools: ${[...loop.tools.keys()].join(", ")}`);
-  console.error(`  memory: ${memory.totalChars()}/${MEMORY_CHAR_LIMIT} chars`);
+  console.error(`  memory: per-user — shared ${memory.sharedChars()}/${SHARED_MEMORY_CHAR_LIMIT} chars`);
 });

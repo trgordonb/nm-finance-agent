@@ -14,7 +14,9 @@ export const memory_manage: ToolDef = {
     "Edit your persistent prompt memory files. Two layers:\n" +
     '- target="memory" → MEMORY.md: facts, decisions, project knowledge needed EVERY future session\n' +
     '- target="user" → USER.md: who the user is, their preferences, working style\n' +
-    `Combined budget: ${MEMORY_CHAR_LIMIT} chars across both files. Operations:\n` +
+    `Combined budget: ${MEMORY_CHAR_LIMIT} chars across both files. ` +
+    "A read-only SHARED MEMORY.md block (project-wide) is always included in the prompt; " +
+    "it cannot be edited here. Operations:\n" +
     "  add (target, text) — append a line\n" +
     "  replace (target, old, text) — rewrite an existing entry in place\n" +
     "  remove (target, old) — delete a line by exact phrase\n" +
@@ -34,6 +36,9 @@ export const memory_manage: ToolDef = {
   execute(args) {
     const op = String(args.operation ?? "add");
     const target = (args.target === "user" ? "user" : "memory") as "user" | "memory";
+    if (args.target === "shared") {
+      return "Rejected: shared memory is read-only; use target=\"memory\" or target=\"user\"";
+    }
     const text = String(args.text ?? "");
     const old = String(args.old ?? "");
     try {

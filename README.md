@@ -76,8 +76,9 @@ LangGraph-free engine (`src/research/`; plan + decisions in
 
 ## Contract parity pins (tested in `src/tests/contracts.test.ts`)
 
-- Combined MEMORY.md+USER.md budget = **3,575 chars**; rejections speak
-  `Rejected:` (recoverable) — never `Error:` (fatal, ends the turn).
+- Combined MEMORY.md+USER.md budget = **3,575 chars per user**; a read-only
+  `_shared/MEMORY.md` (2,000-char budget) is composed into every prompt.
+  Rejections speak `Rejected:` (recoverable) — never `Error:` (fatal, ends the turn).
 - Turn archive preserves assistant `tool_calls` + `tool_call_id` + tool name →
   resumed histories are provider-valid.
 - Tool results: system/fatal failures start with `Error:`, model-facing info
@@ -91,7 +92,7 @@ cp .env.example .env    # then fill in keys
 npm install
 npm run start            # backend  → http://127.0.0.1:3001
 cd frontend && npm install && npm run dev   # web UI → http://localhost:5173 (proxies /api)
-npm test                 # full suite (147 tests at the time of writing)
+npm test                 # full suite (156 tests at the time of writing)
 npm run research -- "question"   # deep research CLI (saves under $WORKSPACE_DIR/research/)
 ```
 
@@ -134,7 +135,7 @@ Local testing: set `AUTH_MODE=sso` and `SSO_CA_FILE=./certs/sso-ca.pem` in
 | `GET /api/health` | model, base_url, memory usage, tool list |
 | `GET /api/sessions` | archived sessions, **scoped to the authenticated login id** (each carries a `summary` one-liner: fallback truncated first user message → async LLM refine via the summarizer model) |
 | `GET /api/sessions/:id` | full message history (resumable) |
-| `GET /api/memory` | rendered `<agent_memory>` block + budget usage |
+| `GET /api/memory` | rendered `<agent_memory>` block + per-user budget usage and shared-memory metadata, **scoped to the authenticated login** |
 | `GET/POST /api/sessions/:sid/followups[/dismiss]` | extracted "next steps" tips (dismiss marks + badge counts) |
 | `GET /api/followups/counts` | live tip counts per session (sidebar badges) |
 | `GET /api/mcp` | mcp_servers.json listing + last-assembly connect status |

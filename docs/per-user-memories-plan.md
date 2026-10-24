@@ -1,12 +1,32 @@
 # Per-user prompt memory — implementation plan
 
-**Status:** planned · 2026-10-24 · **no code written**
+**Status:** **implemented (2026-10-24)** — per-user `MEMORY.md`/`USER.md` plus
+a read-only `memories/_shared/MEMORY.md`; 156 tests passing.
 **Depends on:** the per-user workspace/session scoping already landed
 (`src/workspace.ts` `currentUserId()`, `sessions.user_id`).
 **Related:** [`per-user-workspace-and-r2.md`](./per-user-workspace-and-r2.md),
 [`vm-deployment-runbook.md`](./vm-deployment-runbook.md).
 
 ---
+
+## 0. Implementation notes (2026-10-24)
+
+- **Layout**: `memories/<login-id>/MEMORY.md` + `USER.md` (3,575 chars per
+  user) and `memories/_shared/MEMORY.md` (read-only, 2,000-char prompt budget,
+  `SHARED_MEMORY_CHAR_LIMIT`).
+- `PromptMemory` resolves `currentUserId()` per call (stateless; the two
+  instances stay consistent); explicit-path construction still serves tests.
+- Writes are atomic (temp + rename), directories `0700`, files `0600`;
+  `_shared/MEMORY.md` is `0444` and `memory_manage` rejects `target="shared"`.
+- `/api/memory` returns `user`, per-user usage/budget, and shared
+  chars/budget/over-budget. `/api/health` reports `memory_chars: null` under
+  SSO (public endpoint; no per-user value) and `shared_memory_chars`.
+- Migration: the four project paragraphs in the old `MEMORY.md` plus the
+  `USER.md` data policy moved to `_shared/MEMORY.md`; `trgordonb/MEMORY.md`
+  and `USER.md` start empty. Originals are backed up in
+  `/tmp/nm-memories-original/` and a tarball.
+- Tests: `src/tests/memory-scope.test.ts` covers isolation, per-user budget,
+  `memory_manage`, explicit paths, and shared truncation.
 
 ## 1. Goal
 
@@ -165,24 +185,39 @@ agentdb mirror, or the tool JSON schemas.
 
 ---
 
-## 5. Migration
+## 5. Migration (implemented split)
 
-### One-time move (recommended, same pattern as the workspace)
+The old `memories/MEMORY.md` + `USER.md` were backed up, then split:
+
+- **project-wide facts** (Dukascopy tooling, MintEval finding, indicator
+  series, long-job/repro conventions) **and the data policy** →
+  `memories/_shared/MEMORY.md` (mode `0444`);
+- **per-user** `memories/trgordonb/MEMORY.md` and `USER.md` → empty (start
+  adding personal facts as needed).
 
 ```bash
-cd ~/projects/nm-finance-agent
-tar -czf "memories-backup-$(date +%F).tar.gz" memories
-mkdir -p memories/trgordonb
-mv memories/MEMORY.md memories/USER.md memories/trgordonb/
+tar -czf /tmp/nm-memories-backup-<stamp>.tar.gz memories
+mkdir -p /tmp/nm-memories-original
+cp -a memories/MEMORY.md memories/USER.md /tmp/nm-memories-original/
+mkdir -p memories/trgordonb memories/_shared
+# write the shared facts to memories/_shared/MEMORY.md
+: > memories/trgordonb/MEMORY.md
+: > memories/trgordonb/USER.md
+rm memories/MEMORY.md memories/USER.md
 chmod 700 memories/trgordonb
 chmod 600 memories/trgordonb/*.md
+chmod 755 memories/_shared
+chmod 444 memories/_shared/MEMORY.md
 ```
 
-- Verify: `ls memories`, `wc -c memories/trgordonb/*.md` (1,587 + 254).
+- Verified: shared = 1,888 bytes (1,871 trimmed; under the 2,000 budget),
+  per-user = 0. Originals are in `/tmp/nm-memories-original/`.
+- To move a line back to personal memory: `chmod u+w` the shared file, delete
+  the line, `chmod 444` it, then add the line via `memory_manage` as that user.
 - Do **not** leave a root `memories/MEMORY.md`; the new code ignores it, and it
   would confuse future migrations.
-- If `memories/trgordonb/` already exists (e.g. a test), merge manually rather
-  than `mv` over it.
+- If `memories/trgordonb/` already exists, merge manually rather than `mv`
+  over it.
 
 ### `.gitignore`
 

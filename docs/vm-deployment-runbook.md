@@ -438,6 +438,9 @@ sudo -u nmagent sqlite3 /var/lib/nm-finance-agent/sessions.db 'PRAGMA integrity_
   then re-run the §8 preflight.
 - `agent-mirror.db`: skip when using `AGENTDB_REMOTE_URL`; copy it only for the
   local sidecar (with the app stopped).
+- `memories/` now contains per-login dirs (`<login-id>/MEMORY.md`, `USER.md`)
+  plus `_shared/MEMORY.md` (read-only, `0444`). Copy the whole directory and
+  preserve modes.
 - **STOP** if `integrity_check` is not `ok`.
 
 ---

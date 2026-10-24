@@ -62,6 +62,9 @@ export function buildNudgePrompt(charsUsed: number, charBudget: number = MEMORY_
     'capture it with the skill_manage tool instead (action="create" with a terse ' +
     'step-by-step body; action="patch" for updates to an existing skill). Skills ' +
     "are procedures; prompt memory is facts. Do not duplicate one in the other.\n\n" +
+    "A read-only SHARED MEMORY.md block may appear in the current contents; it is " +
+    "project-wide, cannot be edited here, and must not be duplicated. Write only " +
+    'target="memory" or target="user".\n\n' +
     "Rules:\n" +
     "- Most turns produce NO writes. Silence is a valid and expected outcome; write " +
     "only what clears the bar of 'useful in a future session'.\n" +

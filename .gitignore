@@ -9,8 +9,7 @@ auth.db-*
 /certs/
 /dist/
 /workspace/
-memories/MEMORY.md
-memories/USER.md
+/memories/
 *.log
 .omni/
 .claude/

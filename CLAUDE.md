@@ -82,7 +82,8 @@ nm-finance-agent/
 │   └── src/charts/       #   (Skills|MCP), Yahoo fetch via proxy, @luxalgo/vela lazy
 ├── mcp_servers.json      # git-tracked MCP config
 ├── skills/               # local working copy (gitignored mirror of the R2 bucket)
-├── memories/ state/      # local-only, gitignored
+├── memories/<login-id>/  # per-user MEMORY.md/USER.md + _shared/ (gitignored)
+├── state/                # local-only, gitignored
 ├── workspace/<login-id>/ # per-SSO-user scratch area, gitignored
 ├── sessions.db           # the archive (turns+FTS5+titles+followups+compressions)
 └── agent-mirror.db       # ruvector redb sidecar store (rebuildable from archive)
@@ -119,6 +120,9 @@ nm-finance-agent/
 - **Session ownership**: `sessions` maps `session_id → user_id`; list, load,
   search, research runs and followups are filtered by the current login.
   Pre-SSO rows are backfilled to `trgordonb` once (guarded by `schema_meta`).
+- **Prompt memory**: `MEMORY_DIR/<login-id>/{MEMORY.md,USER.md}` (3,575 chars
+  per user) plus a read-only `_shared/MEMORY.md` (2,000-char prompt budget).
+  `memory_manage` writes per-user only; the nudge follows the turn owner.
 - **Skills**: disabled = invisible to the agent surface, visible to admin;
   curation writes through to R2 via debounced push; push failures surface
   as Rejected-grade advisories in skill_manage results (conflict UX).
@@ -158,6 +162,8 @@ Full inventory with defaults in `.env.example`. Highlights:
 - Workspace: `WORKSPACE_DIR` (root; each SSO login gets
   `<root>/<login-id>/`), `WORKSPACE_USER` (`AUTH_MODE=off` fallback; empty =
   flat root), `WORKSPACE_HARD_JAIL` (confine writes to the scoped root)
+- Memory: `MEMORY_DIR` (root; each SSO login gets `<root>/<login-id>/`),
+  `SHARED_MEMORY_CHAR_LIMIT` (read-only `_shared/MEMORY.md` prompt budget)
 - Server: `SERVER_HOST/PORT` (127.0.0.1:3001)
 
 ## Design decisions

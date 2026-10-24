@@ -176,7 +176,7 @@ export default function Sidebar({
               </button>
             </div>
             <div className="footer-row dim">
-              memory {health.memory_chars}/{health.memory_budget} · {health.tools.length} tools
+              memory {health.memory_chars ?? "—"}/{health.memory_budget} · {health.tools.length} tools
             </div>
           </>
         ) : (

@@ -5,15 +5,17 @@ dotenv.config({ override: true });
 import fs from "node:fs";
 import path from "node:path";
 
-export const MEMORY_CHAR_LIMIT = 3575; // combined MEMORY.md + USER.md budget (Hermes-style, matches nm-memory-layer)
+export const MEMORY_CHAR_LIMIT = 3575; // combined MEMORY.md + USER.md budget PER USER (Hermes-style, matches nm-memory-layer)
 
 export const MEMORY_DIR =
   process.env.MEMORY_DIR && process.env.MEMORY_DIR.trim()
     ? path.resolve(process.env.MEMORY_DIR.trim())
     : path.resolve("./memories");
 
-export const MEMORY_MD_PATH = path.join(MEMORY_DIR, "MEMORY.md");
-export const USER_MD_PATH = path.join(MEMORY_DIR, "USER.md");
+// Read-only project memory composed into every user's prompt. Separate budget
+// from the per-user MEMORY.md + USER.md pair; memory_manage cannot edit it.
+export const SHARED_MEMORY_CHAR_LIMIT =
+  Number(process.env.SHARED_MEMORY_CHAR_LIMIT ?? "2000") || 2000;
 
 export const DB_PATH =
   process.env.SESSION_DB_PATH && process.env.SESSION_DB_PATH.trim()
@@ -177,6 +179,16 @@ export const serverPort = Number(process.env.SERVER_PORT || "3001");
 // Create the memory dir when absent so add() works immediately.
 if (!fs.existsSync(MEMORY_DIR)) {
   fs.mkdirSync(MEMORY_DIR, { recursive: true });
+}
+
+// Per-user memory landed 2026-10-24; a leftover root MEMORY.md/USER.md is no
+// longer read. Warn loudly so an old process or a partial migration is visible.
+for (const legacy of ["MEMORY.md", "USER.md"]) {
+  if (fs.existsSync(path.join(MEMORY_DIR, legacy))) {
+    console.error(
+      `WARN legacy global memory ${legacy} at ${MEMORY_DIR} is ignored — move it to ${MEMORY_DIR}/<login-id>/`,
+    );
+  }
 }
 
 if (!fs.existsSync(WORKSPACE_DIR)) {

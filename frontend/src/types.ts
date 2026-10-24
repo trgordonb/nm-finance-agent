@@ -62,8 +62,9 @@ export interface Health {
   status: string;
   model: string;
   base_url: string;
-  memory_chars: number;
+  memory_chars: number | null;
   memory_budget: number;
+  shared_memory_chars?: number;
   /** Tool names bound into the agent loop. */
   tools: string[];
   sessions: number;
