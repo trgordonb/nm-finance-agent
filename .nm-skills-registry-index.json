@@ -24,8 +24,8 @@
 "size": 3755
 },
 "skills/convert-arxiv-to-md/SKILL.md": {
-"etag": "\"b1c48ffc227ecf7a1bb68312ea8db348\"",
-"size": 7850
+"etag": "\"1c89065818c79da25fb3bdf63490b929\"",
+"size": 7855
 },
 "skills/convert-arxiv-to-md/evals/evals.json": {
 "etag": "\"47ab2ee2417b70a9ea4c77c61755208d\"",
@@ -60,8 +60,8 @@
 "size": 60
 },
 "skills/convert-web-article-to-md/SKILL.md": {
-"etag": "\"7837d90250c7624668be0066738b3650\"",
-"size": 17048
+"etag": "\"c18bfdfa4a709802e398c81624989214\"",
+"size": 17065
 },
 "skills/convert-web-article-to-md/evals/evals.json": {
 "etag": "\"0d9bc3c2bf9e40de6d6739433e37a1c9\"",
@@ -92,12 +92,12 @@
 "size": 2999
 },
 "skills/financial-toolkits/SKILL.md": {
-"etag": "\"c7cb6e3d0570b1e66dbdbd09f5c886b9\"",
-"size": 10230
+"etag": "\"19e81de5958e20489df38e27af1e661f\"",
+"size": 10240
 },
 "skills/financial-toolkits/references/core.md": {
-"etag": "\"83fdac8c386d1aab7cc7da4d3d4b8954\"",
-"size": 2644
+"etag": "\"b26acaed748ce334ea4e40bb9134adb2\"",
+"size": 2665
 },
 "skills/financial-toolkits/references/discovery.md": {
 "etag": "\"eeee56fe92ea53eb0b0627e6bb0794a5\"",
@@ -124,8 +124,8 @@
 "size": 1399
 },
 "skills/financial-toolkits/references/portfolio.md": {
-"etag": "\"1526a40f7607ee96b68d99e093af22e1\"",
-"size": 931
+"etag": "\"2a5e3aabd79127884df99efda3c391e8\"",
+"size": 952
 },
 "skills/financial-toolkits/references/ratios.md": {
 "etag": "\"0762aaeaabe81c32d989f252a9a1b6d7\"",
@@ -144,32 +144,32 @@
 "size": 15091
 },
 "skills/llm-wiki/references/revert-ingest.md": {
-"etag": "\"01aa0f7708b25cb969024fae1f1a0d18\"",
-"size": 3496
+"etag": "\"1de70fcdd87a9bfcf4dadf7c0a566361\"",
+"size": 3495
 },
 "skills/llm-wiki/scripts/llmwiki.sh": {
 "etag": "\"52f0c786fdd37411889ea202de9dcded\"",
 "size": 7553
 },
 "skills/luxalgo-indicator-writeup/SKILL.md": {
-"etag": "\"76d2e5470d2ee8233eda07906604fe71\"",
-"size": 1783
+"etag": "\"49523ab0d3cc6ba5943595360e917c3c\"",
+"size": 1797
 },
 "skills/paper-claim-repro/SKILL.md": {
-"etag": "\"42723b9647fff95fdd582822910eb8d2\"",
-"size": 8573
+"etag": "\"bd18d7d2ffb0a231fce0a02262c2e48a\"",
+"size": 8588
 },
 "skills/paper-claim-repro/assets/repro_report.template.md": {
-"etag": "\"67f06b3627d25b00aedde3924c0e4ddc\"",
-"size": 2103
+"etag": "\"42dfe5a9cf38e7f632f9ed5f54e487da\"",
+"size": 2118
 },
 "skills/paper-claim-repro/assets/strategy_spec.template.json": {
 "etag": "\"18284f52ec4db00c26685f509896de66\"",
 "size": 1336
 },
 "skills/paper-claim-repro/evals/evals.json": {
-"etag": "\"77ba5377a14fa2ed514ac180afd0bc71\"",
-"size": 2019
+"etag": "\"dee3c2ab89d00d661cddbcb9387a1231\"",
+"size": 2024
 },
 "skills/scholar-search/SKILL.md": {
 "etag": "\"3be520e19822592d23b12c078d6e02a6\"",
@@ -184,8 +184,8 @@
 "size": 4780
 },
 "skills/strategy-backtest/SKILL.md": {
-"etag": "\"74d5ba9b4868fac10529edc86362c8c5\"",
-"size": 10937
+"etag": "\"09182053d5515d7f78fda9bae9138b39\"",
+"size": 10958
 },
 "skills/strategy-backtest/assets/strategy_classic_template.py": {
 "etag": "\"2fccfac306fc005e885c61b20260eeec\"",
@@ -408,12 +408,12 @@
 "size": 2177
 },
 "skills/strategy-extract/SKILL.md": {
-"etag": "\"561b1d19bb95d2071e99c18a20cd1d55\"",
-"size": 6369
+"etag": "\"5e70702dfb2f3919ff78a1d4cd7c3028\"",
+"size": 6375
 },
 "skills/strategy-extract/assets/spec_template.json": {
-"etag": "\"10244ae7da23ff2a643cb5250baf545d\"",
-"size": 2430
+"etag": "\"a4c7914c6d9809bfa72b344ba9a680ac\"",
+"size": 2433
 },
 "skills/strategy-extract/evals/evals.json": {
 "etag": "\"949fbbceb1d89dcb26dc1ac30ff1794f\"",
@@ -440,8 +440,8 @@
 "size": 2971
 },
 "skills/tradedesk-dukascopy/references/split_s3_to_hourly.py": {
-"etag": "\"9424139bbecaaef406d00d30be8428cb\"",
-"size": 2793
+"etag": "\"ab9f70c4b4c1518279673d5014971c52\"",
+"size": 2797
 },
 "skills/tradedesk-dukascopy/references/troubleshooting.md": {
 "etag": "\"f2fef202eb2c7033c480af67beda2ace\"",
@@ -452,12 +452,12 @@
 "size": 9103
 },
 "skills/trading-strategy-review/SKILL.md": {
-"etag": "\"3acdb20f7fffd5c293590078411549a2\"",
-"size": 26985
+"etag": "\"e0c4acdb85862534723d04f5eeb9fdd5\"",
+"size": 27000
 },
 "skills/trading-strategy-review/evals/evals.json": {
-"etag": "\"897927efd7001c2a4d305d5b2a88d6c7\"",
-"size": 1822
+"etag": "\"de898da2252d62120a36ff409cdf5073\"",
+"size": 1832
 },
 "skills/trading-strategy-review/examples/ma-crossover-review.md": {
 "etag": "\"d620fd58de93ddc38a14052183b7ba4e\"",
@@ -480,20 +480,20 @@
 "size": 3309
 },
 "skills/vela-charts/SKILL.md": {
-"etag": "\"d7d42df28fdfe6cf38562a2966116477\"",
-"size": 6281
+"etag": "\"4e415604ba8dac03b9fe02e0013315aa\"",
+"size": 6304
 },
 "skills/vela-charts/references/native-indicators.md": {
-"etag": "\"cfb09635e0d1157f65075474a712edd8\"",
-"size": 3043
+"etag": "\"b2c0acb1584bb4be971ba3c61bf83c90\"",
+"size": 3048
 },
 "skills/vela-charts/references/yahoo-data.md": {
-"etag": "\"8061486b2780fea77dbf624d6480be65\"",
-"size": 3178
+"etag": "\"40746882b5850937a8c6ff883fe57d15\"",
+"size": 3183
 },
 "skills/vela-charts/scripts/render_chart.py": {
-"etag": "\"6454ebc158cc41c2aaf8fec536d5e7bb\"",
-"size": 13912
+"etag": "\"6f960f17fb8e89753639e153cf04de96\"",
+"size": 13987
 },
 "skills/vol-regime-detector/SKILL.md": {
 "etag": "\"2f3cf4d5ec8a41f3f4aa681fcff8f9eb\"",
