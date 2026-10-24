@@ -31,7 +31,7 @@ export const execute: ToolDef = {
         maxBuffer: 1_000_000,
         cwd: resolveInWorkspace(""),
         // $SKILLS_DIR lets shell commands reach skill scripts regardless of cwd
-        env: { ...process.env, SKILLS_DIR },
+        env: { ...process.env, SKILLS_DIR, WORKSPACE_DIR: resolveInWorkspace("") },
       };
       // Cancel responsiveness: Stop aborts the turn signal, so kill the
       // foreground child instead of waiting for EXECUTE_TIMEOUT_MS.

@@ -10,7 +10,8 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { EXA_API_KEY, RESEARCH_SAVE_REPORTS, WORKSPACE_DIR } from "../config.js";
+import { EXA_API_KEY, RESEARCH_SAVE_REPORTS } from "../config.js";
+import { currentWorkspaceRoot } from "../workspace.js";
 import { runDeepResearch } from "./orchestrator.js";
 import { saveResearchReport } from "./reports.js";
 import type { ResearchEvent } from "./types.js";
@@ -45,7 +46,7 @@ const started = Date.now();
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 let logPath = "";
 try {
-  const logDir = path.join(WORKSPACE_DIR, "research", "logs");
+  const logDir = path.join(currentWorkspaceRoot(), "research", "logs");
   fs.mkdirSync(logDir, { recursive: true });
   logPath = path.join(logDir, `${stamp}.log`);
 } catch {

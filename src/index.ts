@@ -26,7 +26,7 @@ import {
   OPENROUTER_PROVIDER_FALLBACKS,
   OPENROUTER_REASONING,
   MEMORY_CHAR_LIMIT,
-  WORKSPACE_DIR,
+  WORKSPACE_USER,
   SKILLS_REQUIRED,
   WIKI_API_URL,
   WIKI_API_TOKEN,
@@ -39,8 +39,9 @@ import {
 } from "./config.js";
 import { authConfig } from "./auth/config.js";
 import { createAuthRouter } from "./auth/routes.js";
-import { createOriginGuard, createRequireAuth } from "./auth/middleware.js";
+import { createOriginGuard, createRequireAuth, type AuthedRequest } from "./auth/middleware.js";
 import { SessionManager } from "./auth/session.js";
+import { currentWorkspaceRoot, runInWorkspace, workspaceUserKey } from "./workspace.js";
 import { certificateDaysRemaining, createSsoClient } from "./auth/sso.js";
 import { AuthStore } from "./auth/store.js";
 import { looksLikePdf, saveWikiUpload } from "./uploads.js";
@@ -304,6 +305,15 @@ if (authManager) {
   app.use("/api", createRequireAuth(authConfig, authManager, { permission: true }));
 }
 
+// Workspace scope follows the authenticated login id: every /api handler and
+// its async continuations resolve relative paths against WORKSPACE_DIR/<id>.
+// AUTH_MODE=off falls back to WORKSPACE_USER, or the flat WORKSPACE_DIR.
+app.use("/api", (req, _res, next) => {
+  const auth = (req as AuthedRequest).auth;
+  const userId = auth ? workspaceUserKey(auth.username, auth.sub) : WORKSPACE_USER;
+  runInWorkspace(userId, next);
+});
+
 app.get("/api/sessions", (_req, res) => {
   res.json(store.listSessions());
 });
@@ -382,7 +392,7 @@ app.post(
       return;
     }
     const name = String((req.query as Record<string, unknown>).name ?? "upload.pdf");
-    const saved = saveWikiUpload(path.join(WORKSPACE_DIR, "uploads"), body, name);
+    const saved = saveWikiUpload(path.join(currentWorkspaceRoot(), "uploads"), body, name);
     res.json({ path: `uploads/${saved.fileName}`, filename: saved.fileName, bytes: saved.bytes });
   },
 );

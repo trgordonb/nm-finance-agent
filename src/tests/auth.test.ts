@@ -19,9 +19,14 @@ import type { IntrospectResponse, LoginResponse } from "../auth/sso.js";
 process.env.AUTH_MODE = "off";
 const { loadAuthConfig } = await import("../auth/config.js");
 
+// The login route creates the user's workspace on success; point the root at a
+// temp dir *before* importing routes (which pulls in root config/workspace).
+process.env.WORKSPACE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "nmfa-auth-ws-"));
+process.env.MEMORY_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "nmfa-auth-mem-"));
+const { createAuthRouter } = await import("../auth/routes.js");
+
 import { AuthStore } from "../auth/store.js";
 import { SessionManager, SessionExpiredError } from "../auth/session.js";
-import { createAuthRouter } from "../auth/routes.js";
 import {
   createOriginGuard,
   createRequireAuth,

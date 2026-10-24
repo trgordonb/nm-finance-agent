@@ -1,6 +1,9 @@
 # Per-user workspaces, isolation, and R2 — deferred decision record
 
-**Status:** deferred · 2026-10-20 · **no code written**
+**Status:** **decided (2026-10-24)** — per-user **local folders** under
+`WORKSPACE_DIR/<login-id>/`, implemented in `src/workspace.ts` (AsyncLocalStorage
+scope, auto-created on SSO login). R2 remains backup-only; per-user containers
+are still the isolation step if users become untrusted.
 **Relates to:** [`docs/cloudflare-sandbox-compat.md`](./cloudflare-sandbox-compat.md) — the Cloudflare
 Sandbox study, deferred in favour of a plain cloud VM.
 
@@ -17,14 +20,27 @@ options, the recommendation, and the triggers that should force a revisit.
 2. **Separating storage is not separating users.** The current workspace guard blocks *writes*
    only; reads are deliberately open. Two users on one process can read each other's files and
    the harness `.env` via `execute`.
-3. **The recommended target is one container per user on the VM**, each with its own volume,
-   its own `sessions.db`, and only that user's directory mounted. R2 backs the volumes up.
+3. **The chosen model is one local folder per SSO login id** under one process
+   (implemented 2026-10-24). One container per user remains the target if users
+   become untrusted or need real isolation.
 4. **For a single user / trusted collaborators**, per-user directories under one process are
    enough hygiene for now, and the code change is ~40 lines (see §7).
-5. **Do nothing today.** When OAuth2 lands, avoid baking in a single global `WORKSPACE_DIR`
-   assumption; that is the only cheap hedge.
+5. **Per-user containers remain deferred**; the workspace decision is settled.
 
 ---
+
+## 0. Implemented (2026-10-24)
+
+- `src/workspace.ts` scopes every relative path with `AsyncLocalStorage`; the
+  `/api` middleware sets it from `req.auth.username` (fallback `sub`), and the
+  login route creates `WORKSPACE_DIR/<sanitised-id>/`.
+- `WORKSPACE_USER` is the `AUTH_MODE=off` fallback (empty = flat root).
+- `execute` exports `$WORKSPACE_DIR` and uses the scoped root as cwd; the system
+  prompt names the absolute root; skills use `$WORKSPACE_DIR/...`.
+- Migration: existing `workspace/` contents moved to `workspace/trgordonb/`.
+- Still global: `sessions.db`, `memories/`, `state/users/<SKILLS_USER_ID>/`, and
+  the `agentdb` MCP database. `execute` can read other users' folders in one
+  process — local folders are path separation, not a security boundary.
 
 ## 1. Context and decisions already taken
 

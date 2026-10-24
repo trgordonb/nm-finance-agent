@@ -8,6 +8,7 @@ import { log } from "../logger.js";
 import type { AuthConfig } from "./config.js";
 import { clientIpFor, createRequireAuth, readCookie, type AuthedRequest } from "./middleware.js";
 import type { SessionManager } from "./session.js";
+import { ensureWorkspaceFor, workspaceUserKey } from "../workspace.js";
 import {
   SsoAccountInactive,
   SsoClient,
@@ -57,6 +58,11 @@ export function createAuthRouter({ config, manager, sso }: AuthRouterDeps): Rout
     try {
       const result = await sso.login(body.username, body.password, ip);
       const raw = manager.create(result, ip);
+      try {
+        ensureWorkspaceFor(workspaceUserKey(result.user.username, String(result.user.id)));
+      } catch (err) {
+        log.warn(`auth: could not create workspace for ${result.user.username} (${String(err).slice(0, 140)})`);
+      }
       res.cookie(config.cookieName, raw, cookieOptions(config));
       res.setHeader("Cache-Control", "no-store");
       res.json({

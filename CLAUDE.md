@@ -82,7 +82,8 @@ nm-finance-agent/
 │   └── src/charts/       #   (Skills|MCP), Yahoo fetch via proxy, @luxalgo/vela lazy
 ├── mcp_servers.json      # git-tracked MCP config
 ├── skills/               # local working copy (gitignored mirror of the R2 bucket)
-├── memories/ workspace/ state/   # local-only, gitignored
+├── memories/ state/      # local-only, gitignored
+├── workspace/<login-id>/ # per-SSO-user scratch area, gitignored
 ├── sessions.db           # the archive (turns+FTS5+titles+followups+compressions)
 └── agent-mirror.db       # ruvector redb sidecar store (rebuildable from archive)
 ```
@@ -111,6 +112,10 @@ nm-finance-agent/
 - **Titles once; followups cosmetic**: sync fallback then async refine
   (summarizer model, model-labeled); followups only fire on the tuned regex
   prefilter, fire-and-forget, never block.
+- **Workspace scope**: with `AUTH_MODE=sso`, `WORKSPACE_DIR/<login-id>/`
+  (auto-created on login) is the root for relative tool paths and `execute`;
+  `$WORKSPACE_DIR` is exported to shells. Local folders are path separation,
+  not isolation (`execute` can read other users in the same process).
 - **Skills**: disabled = invisible to the agent surface, visible to admin;
   curation writes through to R2 via debounced push; push failures surface
   as Rejected-grade advisories in skill_manage results (conflict UX).
@@ -147,7 +152,9 @@ Full inventory with defaults in `.env.example`. Highlights:
   `SKILLS_PUSH_DEBOUNCE_MS` — deploy recipe in
   `docs/skills-registry-deploy.md`
 - MCP: `MCP_SERVERS_FILE`, connect/call timeouts
-- Workspace: `WORKSPACE_DIR`, `WORKSPACE_HARD_JAIL` (server exposure posture)
+- Workspace: `WORKSPACE_DIR` (root; each SSO login gets
+  `<root>/<login-id>/`), `WORKSPACE_USER` (`AUTH_MODE=off` fallback; empty =
+  flat root), `WORKSPACE_HARD_JAIL` (confine writes to the scoped root)
 - Server: `SERVER_HOST/PORT` (127.0.0.1:3001)
 
 ## Design decisions

@@ -4,7 +4,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { WORKSPACE_DIR } from "../config.js";
+import { currentWorkspaceRoot } from "../workspace.js";
 
 export function slugify(question: string): string {
   const slug = question
@@ -27,7 +27,7 @@ export function saveResearchReport(opts: {
   const target = opts.out
     ? path.resolve(opts.out)
     : path.join(
-        WORKSPACE_DIR,
+        currentWorkspaceRoot(),
         "research",
         `${stamp}${opts.tag ? `-${opts.tag}` : ""}-${slugify(opts.question)}.md`,
       );

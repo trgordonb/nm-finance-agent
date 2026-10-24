@@ -61,8 +61,8 @@ LangGraph-free engine (`src/research/`; plan + decisions in
   Stop cancels mid-run; a run that pauses on a clarifying question resumes
   when you reply in the same session (no prefix needed).
 - **CLI**: `npm run research -- "question" [--out report.md] [--quiet]` —
-  headless runs with per-run logs under `workspace/research/logs/`.
-- **Outputs**: completed runs save the report to `workspace/research/`
+  headless runs with per-run logs under `$WORKSPACE_DIR/research/logs/`.
+- **Outputs**: completed runs save the report to `$WORKSPACE_DIR/research/`
   (`RESEARCH_SAVE_REPORTS=0` disables), append it to the session archive, and
   trace the full tree (`deep-research` root + `llm:research:*` / `tool:*`
   children) to LangSmith. Run state lives in the `research_runs` table with
@@ -91,8 +91,8 @@ cp .env.example .env    # then fill in keys
 npm install
 npm run start            # backend  → http://127.0.0.1:3001
 cd frontend && npm install && npm run dev   # web UI → http://localhost:5173 (proxies /api)
-npm test                 # full suite (141 tests at the time of writing)
-npm run research -- "question"   # deep research CLI (saves under workspace/research/)
+npm test                 # full suite (147 tests at the time of writing)
+npm run research -- "question"   # deep research CLI (saves under $WORKSPACE_DIR/research/)
 ```
 
 The frontend is the React app (sidebar sessions, streaming feed with
@@ -155,20 +155,25 @@ curl -N -X POST http://127.0.0.1:3001/api/chat \
 ## Workspace (python-repo practice, carried + hardened)
 
 `./workspace` (gitignored, auto-created; `WORKSPACE_DIR` to move it) is the
-agent's scratch area, via mechanism rather than convention:
+agent's scratch area. With `AUTH_MODE=sso`, each login id gets
+`./workspace/<login-id>/` (auto-created on login; the system prompt names the
+absolute root). `AUTH_MODE=off` keeps the flat `./workspace` unless
+`WORKSPACE_USER` is set. Paths are scoped via `AsyncLocalStorage`, so tools and
+shell commands inherit the request's user without extra parameters:
 
 - `ls`/`read_file`/`write_file`/`edit_file`/`glob`/`grep`/`execute` all resolve
-  **relative paths against the workspace**; `execute` spawns with
-  `cwd = WORKSPACE_DIR`, so script outputs land there by construction
-  (relative-path `ls` even echoes its absolute dir for the model).
+  **relative paths against the scoped workspace**; `execute` spawns with
+  `cwd = <scoped root>` and exports `$WORKSPACE_DIR`, so script outputs land
+  there by construction.
 - Absolute paths remain allowed for reading real sources (repo files,
-  sessions.db, datasets elsewhere).
+  sessions.db, datasets elsewhere). One process is shared, so this is path
+  separation, not a security boundary (`execute` can read another user's
+  folder); per-user containers are the isolation step.
 - Writes into harness internals (`src/`, `frontend/src`, `.env`,
   `tsconfig.json`, package files) are **rejected** with a `Rejected:` denial
   (model-recoverable — never the fatal `Error:` prefix). Other
   outside-workspace writes pass loudly in GOTCHA mode; set
-  `WORKSPACE_HARD_JAIL=1` to confine writes to the workspace entirely when the
-  server is network-exposed.
+  `WORKSPACE_HARD_JAIL=1` to confine writes to the scoped workspace.
 
 ## Skills registry (R2)
 

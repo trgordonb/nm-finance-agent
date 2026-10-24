@@ -29,6 +29,11 @@ export const WORKSPACE_DIR =
     ? path.resolve(process.env.WORKSPACE_DIR.trim())
     : path.resolve("./workspace");
 
+// Auth-off fallback for the user-scoped workspace (WORKSPACE_DIR/<id>).
+// With AUTH_MODE=sso the SSO login id selects the folder instead. Empty =
+// flat legacy workspace (tests / single-user dev).
+export const WORKSPACE_USER = (process.env.WORKSPACE_USER ?? "").trim();
+
 export const SKILLS_DIR =
   process.env.SKILLS_DIR && process.env.SKILLS_DIR.trim()
     ? path.resolve(process.env.SKILLS_DIR.trim())

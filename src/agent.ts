@@ -18,7 +18,10 @@ import { getSkillLibrary } from "./tools/skill_tools.js";
 import { agentdbCognitiveBlock } from "./agentdb-hooks.js";
 import type { SearchSummarizer } from "./summarizer.js";
 
-export function buildSystemPrompt(memoryBlock: string): string {  const base =
+import { currentWorkspaceRoot } from "./workspace.js";
+
+export function buildSystemPrompt(memoryBlock: string, workspaceRoot: string): string {
+  const base =
     "You are an adaptable AI agent.\n" +
     "\n" +
     "SESSION MEMORY (episodic, on-demand):\n" +
@@ -34,11 +37,13 @@ export function buildSystemPrompt(memoryBlock: string): string {  const base =
     "Do NOT store topic-specific findings there; leave those to the session archive. " +
     "Memory edits take effect from the NEXT session, never mid-conversation.\n" +
     "\n" +
-    "WORKSPACE:\n" +
+    "WORKSPACE (yours: `" + workspaceRoot + "`):\n" +
     "All your file tools and shell commands are workspace-rooted — relative paths and " +
-    "script outputs land in the workspace dir automatically. Put every artifact you " +
+    "script outputs land in this folder automatically. Put every artifact you " +
     "produce (reports, downloads, datasets, scripts) there; use absolute paths only to " +
     "read outside sources. Writes into the harness's own source dirs are rejected.\n" +
+    "`$WORKSPACE_DIR` is exported to your shells and points at this folder; use it " +
+    "when a SKILL.md command needs an absolute path.\n" +
     "IMPORTANT: for skills/ scripts referenced in SKILL.md bodies, use their " +
     "ABSOLUTE paths — $SKILLS_DIR is exported to your shells and points at the " +
     "skills root (your commands run with the workspace as cwd, so bare " +
@@ -111,7 +116,7 @@ export class AgentLoop {
     const messages: ChatMessage[] = [...history, { role: "user", content: userInput }];
     const episodeContext = meta?.episodeContext ?? "";
     const systemPrompt =
-      buildSystemPrompt(this.memory.load()) +
+      buildSystemPrompt(this.memory.load(), currentWorkspaceRoot()) +
       agentdbCognitiveBlock(this.tools.has("reflexion_store")) +
       (episodeContext ? `\n${episodeContext}` : "");
     const wire = toWire([...this.tools.values()]);
