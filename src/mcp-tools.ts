@@ -88,6 +88,19 @@ async function agentdbClient(cfg: McpServerCfg, userId: string): Promise<Client>
       await client.close().catch(() => undefined);
       throw e;
     });
+
+    // agentdb's packaged schema bootstrap is conditional on its schema files
+    // resolving; a fresh per-user DB can otherwise stay empty (seen live:
+    // "no such table: episodes"). Call the init tool for its CREATE-IF-NOT-
+    // EXISTS side effect. It then reports isError from its own stats query
+    // (`WHERE type="table"` is an identifier in SQLite), so the report is
+    // ignored; a later tool fails loudly if the schema is genuinely missing.
+    try {
+      await client.callTool({ name: "agentdb_init", arguments: { db_path: dbPath } });
+    } catch (e) {
+      await client.close().catch(() => undefined);
+      throw e;
+    }
     return client;
   })();
   USER_CLIENTS.set(key, promise);

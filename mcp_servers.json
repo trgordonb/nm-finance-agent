@@ -51,7 +51,6 @@
         "AGENTDB_PATH": "${AGENTDB_MCP_DIR}/_discovery/agentdb-mcp.db"
       },
       "keep_tools": [
-        "agentdb_init",
         "agentdb_stats",
         "agentdb_pattern_store",
         "agentdb_pattern_search",
