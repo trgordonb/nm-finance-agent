@@ -96,10 +96,15 @@ unchanged. The first `recordTurn`/`search` after a sleep pays the cold start
   ```bash
   AGENTDB_REMOTE_URL=… AGENTDB_REMOTE_TOKEN=… node container/rebuild.mjs
   # optional first arg: path to sessions.db (default ./sessions.db)
+  # REBUILD_BATCH=32 (default) — keep small on the ½-vCPU instance
+  # REBUILD_START=<row> — resume after a timeout (the script prints progress)
   ```
 
-  Replaying is safe: same-id inserts are idempotent in the current ruvector
-  build (re-pushing a batch did not grow the store in testing).
+  The script waits for `/health`, retries transient resets/429/5xx with
+  backoff, and prints `N/1135` progress. A full replay takes ~14 minutes at
+  batch 32 on `standard-1`; run it in `tmux`/`nohup` if your shell has a
+  10-minute cap. Replaying is safe: same-id inserts are idempotent in the
+  current ruvector build (re-pushing a batch did not grow the store).
 
 - Prefer R2 over snapshots? Push `agent-mirror.db` to R2 on a debounce and on
   SIGTERM (the platform grants up to 15 min of grace), and restore it in the
