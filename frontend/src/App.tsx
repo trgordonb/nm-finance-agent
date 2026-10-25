@@ -44,8 +44,19 @@ interface AgentAppProps {
 }
 
 function AgentApp({ user, onLogout }: AgentAppProps) {
-  const [view, setView] = useState<"chat" | "wiki" | "settings">("chat");
+  const [view, setView] = useState<"chat" | "wiki">("chat");
+  const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<"skills" | "mcp">("skills");
+
+  // Close the settings modal with Escape.
+  useEffect(() => {
+    if (!settingsOpen) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") setSettingsOpen(false);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [settingsOpen]);
   const [health, setHealth] = useState<Health | null>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
@@ -420,13 +431,13 @@ function AgentApp({ user, onLogout }: AgentAppProps) {
         sessions={sessions}
         activeId={sessionId}
         streaming={streaming}
-        settingsOpen={view === "settings"}
+        settingsOpen={settingsOpen}
         followupCounts={followupCounts}
         user={user}
         onLogout={onLogout}
         onNewChat={newChat}
         onSelect={loadSession}
-        onOpenSettings={() => setView("settings")}
+        onOpenSettings={() => setSettingsOpen(true)}
       />
       <div className="content">
         <div className="tabbar" role="tablist">
@@ -445,14 +456,6 @@ function AgentApp({ user, onLogout }: AgentAppProps) {
             onClick={() => setView("wiki")}
           >
             Wiki
-          </button>
-          <button
-            className={`tab${view === "settings" ? " active" : ""}`}
-            role="tab"
-            aria-selected={view === "settings"}
-            onClick={() => setView("settings")}
-          >
-            MCP
           </button>
         </div>
         {view === "chat" ? (
@@ -507,30 +510,46 @@ function AgentApp({ user, onLogout }: AgentAppProps) {
               setView("chat");
             }}
           />
-        ) : (
-          <div className="settings">
-            <div className="tabbar" role="tablist" aria-label="Settings sections">
-              <button
-                className={`tab${settingsSection === "skills" ? " active" : ""}`}
-                role="tab"
-                aria-selected={settingsSection === "skills"}
-                onClick={() => setSettingsSection("skills")}
-              >
-                Skills
-              </button>
-              <button
-                className={`tab${settingsSection === "mcp" ? " active" : ""}`}
-                role="tab"
-                aria-selected={settingsSection === "mcp"}
-                onClick={() => setSettingsSection("mcp")}
-              >
-                MCP
+        ) : null}
+      </div>
+      {settingsOpen && (
+        <div className="modal-overlay" onClick={() => setSettingsOpen(false)}>
+          <div
+            className="modal settings-modal"
+            role="dialog"
+            aria-modal="true"
+            aria-label="Settings — skills and MCP servers"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="modal-head">
+              <div className="tabbar" role="tablist" aria-label="Settings sections">
+                <button
+                  className={`tab${settingsSection === "skills" ? " active" : ""}`}
+                  role="tab"
+                  aria-selected={settingsSection === "skills"}
+                  onClick={() => setSettingsSection("skills")}
+                >
+                  Skills
+                </button>
+                <button
+                  className={`tab${settingsSection === "mcp" ? " active" : ""}`}
+                  role="tab"
+                  aria-selected={settingsSection === "mcp"}
+                  onClick={() => setSettingsSection("mcp")}
+                >
+                  MCP
+                </button>
+              </div>
+              <button className="modal-x" aria-label="Close settings" onClick={() => setSettingsOpen(false)}>
+                ✕
               </button>
             </div>
-            {settingsSection === "skills" ? <SkillsTab health={health} /> : <McpTab />}
+            <div className="modal-body">
+              {settingsSection === "skills" ? <SkillsTab health={health} /> : <McpTab />}
+            </div>
           </div>
-        )}
-      </div>
+        </div>
+      )}
     </div>
   );
 }

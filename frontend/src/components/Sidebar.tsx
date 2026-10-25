@@ -147,6 +147,26 @@ export default function Sidebar({
       </div>
 
       <div className="sidebar-footer">
+        {health ? (
+          <>
+            <div className="footer-row">
+              <span className="dot ok" /> {health.model}
+              <button
+                className={`gear${settingsOpen ? " active" : ""}`}
+                aria-label="Settings — skills and MCP servers"
+                title="Skills & MCP server settings"
+                onClick={onOpenSettings}
+              >
+                <Settings size={14} />
+              </button>
+            </div>
+            <div className="footer-row dim">
+              memory {health.memory_chars ?? "—"}/{health.memory_budget} · {health.tools.length} tools
+            </div>
+          </>
+        ) : (
+          <div className="footer-row dim">connecting…</div>
+        )}
         {user && (
           <div className="sidebar-user">
             <span className="user-avatar" aria-hidden="true">
@@ -161,26 +181,6 @@ export default function Sidebar({
               </button>
             )}
           </div>
-        )}
-        {health ? (
-          <>
-            <div className="footer-row">
-              <span className="dot ok" /> {health.model}
-              <button
-                className={`gear${settingsOpen ? " active" : ""}`}
-                aria-label="Settings — MCP servers"
-                title="MCP server settings"
-                onClick={onOpenSettings}
-              >
-                <Settings size={14} />
-              </button>
-            </div>
-            <div className="footer-row dim">
-              memory {health.memory_chars ?? "—"}/{health.memory_budget} · {health.tools.length} tools
-            </div>
-          </>
-        ) : (
-          <div className="footer-row dim">connecting…</div>
         )}
       </div>
     </aside>
