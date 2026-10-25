@@ -138,6 +138,32 @@ test("agent loop: budget wrap-up nudge fires once near the cap, turn lands clean
   );
 });
 
+test("agent loop: per-turn maxIterations + wrapup margin override (cron fires)", async () => {
+  const nudges: string[] = [];
+  let call = 0;
+  const chatFn: any = async (messages: any[]) => {
+    call++;
+    const last = String(messages.at(-1)?.content ?? "");
+    if (last.startsWith("Tool budget:")) nudges.push(last);
+    if (nudges.length) return textResponse("landed");
+    return { ...textResponse(""), toolCalls: [{ id: `call-${call}`, name: "a", args: {} }] };
+  };
+  const loop = new AgentLoop({
+    memory: { load: () => "", totalChars: () => 0 } as any,
+    store: {} as any,
+    tools: [tool("a")],
+    chatFn,
+    maxIterations: 60, // global cap — the turn must use its own
+  });
+
+  const result = await loop.runTurn([], "hi", undefined, { maxIterations: 3, wrapupRemaining: 2 });
+
+  assert.equal(result.iterations, 2); // the model lands right after the nudge
+  assert.equal(result.fatal, undefined);
+  assert.equal(nudges.length, 1);
+  assert.match(nudges[0], /Tool budget: 2 of 3 iterations left/);
+});
+
 test("agent loop: cancel aborts an in-flight LLM call as cancelled", async () => {
   const ctrl = new AbortController();
   const chatFn = async (_messages: any[], _tools: any, opts: any) => {

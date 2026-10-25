@@ -130,6 +130,11 @@ export default function Sidebar({
                         research
                       </span>
                     )}
+                    {s.cron_name && (
+                      <span className="session-tag" title={`scheduled job: ${s.cron_name}`}>
+                        scheduled
+                      </span>
+                    )}
                     {s.summary && <span className="session-title-text">{s.summary}</span>}
                     {(followupCounts[s.session_id] ?? 0) > 0 && s.session_id !== activeId && (
                       <span

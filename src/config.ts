@@ -129,6 +129,23 @@ export const BUDGET_TOOL_MAX_ITERATIONS = Number(process.env.BUDGET_TOOL_MAX_ITE
 export const BUDGET_WRAPUP_REMAINING = Number(process.env.BUDGET_WRAPUP_REMAINING ?? "5");
 export const EXECUTE_TIMEOUT_MS = Number(process.env.EXECUTE_TIMEOUT_MS ?? "120000");
 
+// Agent cron (docs/agent-cron-plan.md): in-process scheduler over cron_jobs /
+// cron_runs. CRON_ENABLED=0 hides the cron_manage tool and stops the ticker.
+export const CRON_ENABLED = (process.env.CRON_ENABLED ?? "1") !== "0";
+export const CRON_TICK_MS = Number(process.env.CRON_TICK_MS ?? "30000");
+export const CRON_MAX_PARALLEL = Number(process.env.CRON_MAX_PARALLEL ?? "2");
+// After a restart, a job whose fire time passed while the process was down
+// catches up once (1) or re-anchors to the next scheduled slot (0).
+export const CRON_CATCH_UP_MISSED = (process.env.CRON_CATCH_UP_MISSED ?? "1") !== "0";
+// Consecutive failed fires before a job auto-pauses (UI shows "paused (failing)").
+export const CRON_FAILURE_PAUSE_STREAK = Number(process.env.CRON_FAILURE_PAUSE_STREAK ?? "5");
+// A fire missed by more than this many minutes while the process was down is
+// skipped rather than caught up (once-jobs get disabled with last_status=skipped).
+export const CRON_MISFIRE_GRACE_MIN = Number(process.env.CRON_MISFIRE_GRACE_MIN ?? "10");
+// Unattended scheduled runs get a wider wrap-up margin than chat turns: nobody
+// is watching, so landing with persisted state matters more than extra steps.
+export const CRON_WRAPUP_REMAINING = Number(process.env.CRON_WRAPUP_REMAINING ?? "10");
+
 // Optional session-search condensation (Hermes-style). It is enrichment only:
 // a slow free model must never hold a turn for the full LLM timeout. On
 // timeout/abort the tool falls back to raw excerpts.

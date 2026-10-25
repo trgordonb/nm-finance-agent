@@ -4,6 +4,8 @@
 
 import type {
   ApiMessage,
+  CronJobInfo,
+  CronRunInfo,
   Followups,
   Health,
   McpListResponse,
@@ -132,6 +134,50 @@ export async function dismissFollowup(sessionId: string, index: number): Promise
     },
   );
 }
+
+/** Agent cron: list jobs (with live running flag), run one now, patch or
+ *  delete. See docs/agent-cron-plan.md — the UI reads the same routes the
+ *  agent's cron_manage tool writes. */
+export const getCronJobs = () =>
+  fetchJSON<{ jobs: CronJobInfo[]; server_timezone: string }>("/api/cron/jobs");
+
+export const getCronJobRuns = (id: string) =>
+  fetchJSON<{ runs: CronRunInfo[] }>(`/api/cron/jobs/${encodeURIComponent(id)}/runs?limit=10`);
+
+export const createCronJob = (body: {
+  name: string;
+  schedule_kind: string;
+  schedule_expr: string;
+  payload: string;
+  timezone?: string | null;
+}) =>
+  fetchJSON<{ job: CronJobInfo; next_runs: number[] }>("/api/cron/jobs", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+export const patchCronJob = (
+  id: string,
+  body: {
+    action?: "pause" | "resume";
+    payload?: string;
+    schedule_kind?: string;
+    schedule_expr?: string;
+    timezone?: string | null;
+  },
+) =>
+  fetchJSON<{ job: CronJobInfo }>(`/api/cron/jobs/${encodeURIComponent(id)}`, {
+    method: "PATCH",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+
+export const runCronJobNow = (id: string) =>
+  fetchJSON<{ run_id: string }>(`/api/cron/jobs/${encodeURIComponent(id)}/run`, { method: "POST" });
+
+export const deleteCronJob = (id: string) =>
+  apiFetch(`/api/cron/jobs/${encodeURIComponent(id)}`, { method: "DELETE" });
 
 export async function cancelTurn(turnId: string): Promise<void> {
   await apiFetch("/api/chat/cancel", {

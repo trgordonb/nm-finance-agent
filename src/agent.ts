@@ -125,7 +125,16 @@ export class AgentLoop {
     history: ChatMessage[],
     userInput: string,
     shouldStop?: () => boolean,
-    meta?: { sessionId?: string; signal?: AbortSignal; episodeContext?: string },
+    meta?: {
+      sessionId?: string;
+      signal?: AbortSignal;
+      episodeContext?: string;
+      /** Per-turn budget override (agent cron jobs carry their own cap). */
+      maxIterations?: number;
+      /** Iterations remaining at which the wrap-up nudge fires; defaults to
+       *  BUDGET_WRAPUP_REMAINING. Unattended runs use a larger margin. */
+      wrapupRemaining?: number;
+    },
     onMessage?: (msg: ChatMessage) => void,
   ): Promise<TurnResult> {
     const messages: ChatMessage[] = [...history, { role: "user", content: userInput }];
@@ -171,7 +180,9 @@ export class AgentLoop {
 
     let result: TurnResult | undefined;
 
-    for (let i = 0; i < this.maxIterations; i++) {
+    const cap = Math.max(1, meta?.maxIterations ?? this.maxIterations);
+    const wrapupRemaining = meta?.wrapupRemaining ?? BUDGET_WRAPUP_REMAINING;
+    for (let i = 0; i < cap; i++) {
       if (shouldStop?.()) {
         cancelled = true;
         break;
@@ -181,13 +192,13 @@ export class AgentLoop {
       // to land the turn (persist state, end with a summary) instead of dying
       // at the hard cap mid-step. Injected into messages only — like the
       // empty-retry nudge below, it is not part of the persisted slice.
-      const remaining = this.maxIterations - i;
-      if (remaining === BUDGET_WRAPUP_REMAINING && !wrapupInjected) {
+      const remaining = cap - i;
+      if (remaining === wrapupRemaining && !wrapupInjected) {
         wrapupInjected = true;
         messages.push({
           role: "user",
           content:
-            `Tool budget: ${remaining} of ${this.maxIterations} iterations left. Wrap up now: ` +
+            `Tool budget: ${remaining} of ${cap} iterations left. Wrap up now: ` +
             "finish or safely stop the current step, persist anything needed to resume in a later " +
             "turn (files on disk), and end this turn with a brief summary of what was completed " +
             "and what remains. Do not start new multi-step work.",
@@ -404,4 +415,30 @@ export function unknownToolMessage(name: string, bound: string[]): string {
     ` Bound tools: ${bound.join(", ")}.` +
     (suggestion ? ` Did you mean ${suggestion}?` : "")
   );
+}
+
+/** Length of the provider-valid prefix of a turn's messages: an assistant
+ *  tool_call group is only complete once every call has its tool result
+ *  before the next assistant message; a dangling group (cancel mid-tool) is
+ *  dropped. Shared by the chat route and the cron fire path. */
+export function validPrefixLen(messages: ChatMessage[]): number {
+  let valid = 0;
+  let pending = 0;
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    if (m.role === "assistant") {
+      if (pending > 0) break;
+      const calls = m.tool_calls ?? [];
+      pending = calls.filter((c) => c.id).length;
+      if (pending === 0) valid = i + 1;
+    } else if (m.role === "tool") {
+      if (pending <= 0) break;
+      pending -= 1;
+      if (pending === 0) valid = i + 1;
+    } else {
+      if (pending > 0) break;
+      valid = i + 1;
+    }
+  }
+  return valid;
 }

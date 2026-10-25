@@ -16,6 +16,9 @@ export interface SessionRow {
   /** Deep-research run status when the session has one (research_runs join);
    *  null for ordinary chat sessions. */
   research_status?: string | null;
+  /** Owning agent-cron job name when the session belongs to a scheduled job
+   *  (cron_jobs join); null for ordinary sessions. */
+  cron_name?: string | null;
 }
 
 /** One ranked recall hit — retriever-tagged for the hybrid fusion step. */

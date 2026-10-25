@@ -56,6 +56,38 @@ export interface SessionInfo {
   /** Deep-research run state when the session has one (running,
    *  awaiting_clarification, completed, failed, cancelled, interrupted). */
   research_status?: string | null;
+  /** Owning agent-cron job name when the session belongs to a scheduled job. */
+  cron_name?: string | null;
+}
+
+/** One agent-cron job (GET /api/cron/jobs). Booleans arrive as SQLite ints. */
+export interface CronJobInfo {
+  id: string;
+  name: string;
+  schedule_kind: "cron" | "interval" | "once";
+  schedule_expr: string;
+  payload: string;
+  session_id: string | null;
+  enabled: number;
+  next_run_at: number | null;
+  last_run_at: number | null;
+  last_status: string | null;
+  last_error: string | null;
+  failure_streak: number;
+  timezone: string | null;
+  running?: boolean;
+}
+
+/** One recorded fire of a cron job. */
+export interface CronRunInfo {
+  id: string;
+  fire_at: number;
+  started_at: number | null;
+  finished_at: number | null;
+  status: string;
+  iterations: number | null;
+  error: string | null;
+  result_excerpt: string | null;
 }
 
 export interface Health {

@@ -1,0 +1,51 @@
+{
+  "inputs": {
+    "symbols": [
+      "NFLX.US"
+    ],
+    "weights": {
+      "NFLX.US": 1.0
+    },
+    "aligned_days": 151,
+    "return_observations": 150,
+    "first_date": "2026-03-20 00:00:00",
+    "last_date": "2026-10-23 00:00:00"
+  },
+  "concentration": {
+    "hhi": 1.0,
+    "effective_n": 1.0,
+    "top1_weight": 1.0,
+    "top3_weight": 1.0
+  },
+  "volatility": {
+    "daily_vol": 0.0221648958763166,
+    "annualized_vol": 0.3518568139462487,
+    "downside_deviation_annualized": 0.2769251647731023
+  },
+  "drawdown": {
+    "max_drawdown": -0.3966045053984386,
+    "max_drawdown_start": "2026-04-16 00:00:00",
+    "max_drawdown_trough": "2026-10-21 00:00:00"
+  },
+  "tail_risk": {
+    "var_95": 0.033429522242158276,
+    "expected_shortfall_95": 0.056482760209698654,
+    "var_99": 0.06553676976278693,
+    "expected_shortfall_99": 0.08492779768664399,
+    "method": "historical simulation (non-parametric)"
+  },
+  "diversification": {
+    "diversification_ratio": null,
+    "note": "needs at least 2 assets"
+  },
+  "correlation": {
+    "avg_pairwise_abs": null,
+    "max_pair": null,
+    "beta_to_equal_weight": null,
+    "note": "needs at least 2 assets"
+  },
+  "skipped": [],
+  "warnings": [
+    "weights summed to 0.125828; renormalized to 1.0"
+  ]
+}

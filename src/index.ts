@@ -37,6 +37,7 @@ import {
   RESEARCH_MAX_CONCURRENT,
   RESEARCH_MODE_ENABLED,
   RESEARCH_SAVE_REPORTS,
+  CRON_ENABLED,
 } from "./config.js";
 import { authConfig } from "./auth/config.js";
 import { createAuthRouter } from "./auth/routes.js";
@@ -50,7 +51,7 @@ import { buildWikiTarget, fetchWiki } from "./wiki-proxy.js";
 import { PromptMemory } from "./memory.js";
 import { SQLiteSessionStore } from "./store.js";
 import { AgentDbMirror } from "./agentdb-mirror.js";
-import { AgentLoop } from "./agent.js";
+import { AgentLoop, validPrefixLen } from "./agent.js";
 import { buildToolRegistry } from "./tools/index.js";
 import { enabled as tracingEnabled, TRACE_PROJECT } from "./tracing.js";
 import { log } from "./logger.js";
@@ -79,6 +80,18 @@ import { runDeepResearch } from "./research/orchestrator.js";
 import { saveResearchReport } from "./research/reports.js";
 import { createDeepResearchTool } from "./research/tool.js";
 import type { ResearchEvent, ResearchOutcome } from "./research/types.js";
+import { CronScheduler, isScheduledRun } from "./cron/scheduler.js";
+import { createCronManageTool } from "./cron/tool.js";
+import {
+  isScheduleKind,
+  isValidTimezone,
+  nextFire,
+  nextFires,
+  serverTimezone,
+  validateSchedule,
+  type ScheduleKind,
+} from "./cron/parse.js";
+import type { CronJobRow } from "./store.js";
 
 type McpReport = McpStatus[];
 
@@ -96,9 +109,17 @@ const mirror = new AgentDbMirror();
 const searchSummarizer = createSessionSearchSummarizer();
 const loop = new AgentLoop({ memory, store, mirror, summarizer: searchSummarizer });
 
+// Agent cron (docs/agent-cron-plan.md): per-user scheduled jobs, in-process
+// ticker, fires run as ordinary turns in the owner's ALS context.
+const cronScheduler = new CronScheduler({ store, loop, mirror, getRuntime });
+if (CRON_ENABLED) cronScheduler.start();
+
 // Per-user MCP visibility: servers stay bound globally (the tracked config is
 // the admin baseline), but each turn only sees the servers this login enabled.
+// Scheduled runs additionally lose cron_manage (loop prevention): a fired job
+// cannot schedule more jobs unless its allow_scheduling opt-in is set later.
 loop.setToolPolicy((name) => {
+  if (isScheduledRun() && name === "cron_manage") return false;
   const server = mcpServerForTool(name);
   return !server || mcpServerEnabledForUser(server);
 });
@@ -188,6 +209,7 @@ function buildBaseRegistry() {
   // Optional integration: expose the research engine to the main agent
   // (RESEARCH_AS_TOOL, default off — a run takes 20-40 min and real spend).
   if (RESEARCH_MODE_ENABLED && RESEARCH_AS_TOOL) tools.push(createDeepResearchTool());
+  if (CRON_ENABLED) tools.push(createCronManageTool(store, cronScheduler));
   return tools;
 }
 
@@ -333,39 +355,21 @@ app.get("/api/sessions", (_req, res) => {
   res.json(store.listSessions());
 });
 
-// Longest prefix of a (possibly partial) turn that is safe to archive — mirror
-// of server.py _valid_prefix_len: every assistant tool_call must be answered by
-// its tool result before the next assistant message; a dangling group (cancel
-// mid-tool) is dropped.
-function validPrefixLen(messages: ChatMessage[]): number {
-  let valid = 0;
-  let pending = 0;
-  for (let i = 0; i < messages.length; i++) {
-    const m = messages[i];
-    if (m.role === "assistant") {
-      if (pending > 0) break;
-      const calls = m.tool_calls ?? [];
-      pending = calls.filter((c) => c.id).length;
-      if (pending === 0) valid = i + 1;
-    } else if (m.role === "tool") {
-      if (pending <= 0) break;
-      pending -= 1;
-      if (pending === 0) valid = i + 1;
-    } else {
-      if (pending > 0) break;
-      valid = i + 1;
-    }
-  }
-  return valid;
-}
-
 app.get("/api/sessions/:sessionId", (req, res) => {
-  const messages = store.loadSession(req.params.sessionId);
-  if (!messages.length) {
-    res.status(404).json({ detail: `session not found: ${req.params.sessionId}` });
+  const sessionId = req.params.sessionId;
+  const messages = store.loadSession(sessionId);
+  if (messages.length) {
+    res.json({ session_id: sessionId, messages });
     return;
   }
-  res.json({ session_id: req.params.sessionId, messages });
+  // Registered but empty (e.g. a cron fire in flight — its turns persist at
+  // completion): an empty archive the UI can watch, not a 404. Foreign or
+  // unknown ids still 404.
+  if (store.ownsSession(sessionId)) {
+    res.json({ session_id: sessionId, messages: [] });
+    return;
+  }
+  res.status(404).json({ detail: `session not found: ${sessionId}` });
 });
 
 // Deep-research run state for a session (reconnect / status polling; the live
@@ -377,6 +381,169 @@ app.get("/api/research/:sessionId", (req, res) => {
     return;
   }
   res.json(row);
+});
+
+// --- agent cron (docs/agent-cron-plan.md §8) ---------------------------------
+// Per-user scheduled jobs. Ownership on every route; the scheduler fires runs
+// with the owner's context (see src/cron/).
+
+app.get("/api/cron/jobs", (req, res) => {
+  const jobs = store.listCronJobs(currentUserId()).map((j) => ({
+    ...j,
+    running: store.hasActiveCronRun(j.id),
+  }));
+  res.json({ jobs, server_timezone: serverTimezone() });
+});
+
+app.post("/api/cron/jobs", (req, res) => {
+  const body = (req.body ?? {}) as Partial<CronJobRow> & { name?: string };
+  const user = currentUserId();
+  const name = String(body.name ?? "").trim();
+  const kind = String(body.schedule_kind ?? "");
+  const expr = String(body.schedule_expr ?? "").trim();
+  const payload = String(body.payload ?? "").trim();
+  if (!name || !isScheduleKind(kind) || !payload) {
+    res.status(400).json({ detail: "name, schedule_kind and payload are required" });
+    return;
+  }
+  const timezone = typeof body.timezone === "string" ? body.timezone.trim() || null : null;
+  if (!isValidTimezone(timezone)) {
+    res.status(400).json({ detail: `invalid timezone ${JSON.stringify(body.timezone)}` });
+    return;
+  }
+  const invalid = validateSchedule(kind as ScheduleKind, expr, timezone);
+  if (invalid) {
+    res.status(400).json({ detail: invalid });
+    return;
+  }
+  if (store.getCronJobForUser(user, name)) {
+    res.status(409).json({ detail: `a job named ${JSON.stringify(name)} already exists` });
+    return;
+  }
+  const next = nextFire(kind as ScheduleKind, expr, Date.now(), timezone);
+  if (next === null) {
+    res.status(400).json({ detail: "could not compute the next fire" });
+    return;
+  }
+  const now = Date.now();
+  const job = store.createCronJob({
+    id: randomUUID(),
+    user_id: user,
+    name,
+    schedule_kind: kind as ScheduleKind,
+    schedule_expr: expr,
+    payload,
+    session_id: null,
+    created_from_session: null,
+    enabled: 1,
+    allow_scheduling: 0,
+    max_iterations: null,
+    timezone,
+    next_run_at: next,
+    last_run_at: null,
+    last_status: null,
+    last_error: null,
+    failure_streak: 0,
+    created_at: now,
+    updated_at: now,
+  });
+  res
+    .status(201)
+    .json({ job, next_runs: nextFires(kind as ScheduleKind, expr, now, 2, timezone) });
+});
+
+function cronJobOr404(req: Request, res: Response): CronJobRow | null {
+  const job = store.getCronJobForUser(currentUserId(), String(req.params.id ?? ""));
+  if (!job) {
+    res.status(404).json({ detail: `no scheduled job ${JSON.stringify(req.params.id ?? "")}` });
+    return null;
+  }
+  return job;
+}
+
+app.get("/api/cron/jobs/:id", (req, res) => {
+  const job = cronJobOr404(req, res);
+  if (!job) return;
+  res.json({ job, runs: store.listCronRuns(job.id, 20) });
+});
+
+app.patch("/api/cron/jobs/:id", (req, res) => {
+  const job = cronJobOr404(req, res);
+  if (!job) return;
+  const body = (req.body ?? {}) as Record<string, unknown>;
+  const action = String(body.action ?? "update");
+  if (action === "pause") {
+    res.json({ job: store.updateCronJob(job.id, { enabled: 0, next_run_at: null }) });
+    return;
+  }
+  if (action === "resume") {
+    const next = nextFire(
+      job.schedule_kind as ScheduleKind,
+      job.schedule_expr,
+      Date.now(),
+      job.timezone,
+    );
+    res.json({
+      job: store.updateCronJob(job.id, {
+        enabled: 1,
+        next_run_at: next ?? Date.now(),
+        failure_streak: 0,
+      }),
+    });
+    return;
+  }
+  const fields: Partial<CronJobRow> = {};
+  if (typeof body.payload === "string" && body.payload.trim()) fields.payload = body.payload.trim();
+  if (typeof body.max_iterations === "number" && Number.isFinite(body.max_iterations)) {
+    fields.max_iterations = Math.floor(body.max_iterations);
+  }
+  let tz = job.timezone;
+  if (body.timezone != null) {
+    tz = typeof body.timezone === "string" && body.timezone.trim() ? body.timezone.trim() : null;
+    if (!isValidTimezone(tz)) {
+      res.status(400).json({ detail: `invalid timezone ${JSON.stringify(body.timezone)}` });
+      return;
+    }
+    fields.timezone = tz;
+  }
+  if (body.schedule_kind != null || body.schedule_expr != null || body.timezone != null) {
+    const kind = isScheduleKind(body.schedule_kind) ? body.schedule_kind : (job.schedule_kind as ScheduleKind);
+    const expr = String(body.schedule_expr ?? job.schedule_expr).trim();
+    const invalid = validateSchedule(kind, expr, tz);
+    if (invalid) {
+      res.status(400).json({ detail: invalid });
+      return;
+    }
+    fields.schedule_kind = kind;
+    fields.schedule_expr = expr;
+    if (job.enabled) fields.next_run_at = nextFire(kind, expr, Date.now(), tz);
+  }
+  res.json({ job: store.updateCronJob(job.id, fields) });
+});
+
+app.delete("/api/cron/jobs/:id", (req, res) => {
+  const job = cronJobOr404(req, res);
+  if (!job) return;
+  store.deleteCronJob(job.id);
+  res.json({ ok: true, removed: job.name });
+});
+
+app.post("/api/cron/jobs/:id/run", (req, res) => {
+  const job = cronJobOr404(req, res);
+  if (!job) return;
+  const runId = cronScheduler.runJobNow(job);
+  if (runId === null) {
+    res.status(409).json({ detail: `job ${JSON.stringify(job.name)} is already running (or paused)` });
+    return;
+  }
+  res.status(202).json({ run_id: runId });
+});
+
+app.get("/api/cron/jobs/:id/runs", (req, res) => {
+  const job = cronJobOr404(req, res);
+  if (!job) return;
+  const limit = Math.min(Math.max(Number(req.query.limit ?? 20) || 20, 1), 50);
+  res.json({ runs: store.listCronRuns(job.id, limit) });
 });
 
 app.get("/api/memory", (_req, res) => {

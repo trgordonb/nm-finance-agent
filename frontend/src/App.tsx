@@ -23,6 +23,7 @@ import { AuthSplash, NoAccess } from "./components/AuthScreens";
 import type { FeedItem, Followups, Health, NewItem, SessionInfo, ToolCall } from "./types";
 import Sidebar from "./components/Sidebar";
 import SkillsTab from "./components/SkillsTab";
+import CronTab from "./components/CronTab";
 import McpTab from "./components/McpTab";
 import WikiTab from "./components/WikiTab";
 import Feed from "./components/Feed";
@@ -44,7 +45,7 @@ interface AgentAppProps {
 }
 
 function AgentApp({ user, onLogout }: AgentAppProps) {
-  const [view, setView] = useState<"chat" | "wiki">("chat");
+  const [view, setView] = useState<"chat" | "wiki" | "cron">("chat");
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<"skills" | "mcp">("skills");
 
@@ -457,6 +458,14 @@ function AgentApp({ user, onLogout }: AgentAppProps) {
           >
             Wiki
           </button>
+          <button
+            className={`tab${view === "cron" ? " active" : ""}`}
+            role="tab"
+            aria-selected={view === "cron"}
+            onClick={() => setView("cron")}
+          >
+            Scheduled
+          </button>
         </div>
         {view === "chat" ? (
         <main className="main">
@@ -510,7 +519,14 @@ function AgentApp({ user, onLogout }: AgentAppProps) {
               setView("chat");
             }}
           />
-        ) : null}
+        ) : (
+          <CronTab
+            onOpenSession={(sid) => {
+              void loadSession(sid);
+              setView("chat");
+            }}
+          />
+        )}
       </div>
       {settingsOpen && (
         <div className="modal-overlay" onClick={() => setSettingsOpen(false)}>

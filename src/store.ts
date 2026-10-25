@@ -42,6 +42,45 @@ export interface ResearchRunRow {
   finished_at: string | null;
 }
 
+/** One agent-cron job (docs/agent-cron-plan.md). Booleans are INTEGER columns. */
+export interface CronJobRow {
+  id: string;
+  user_id: string;
+  name: string;
+  schedule_kind: string; // 'cron' | 'interval' | 'once'
+  schedule_expr: string;
+  payload: string;
+  session_id: string | null; // the job's own session (lazy on first fire)
+  created_from_session: string | null;
+  enabled: number;
+  allow_scheduling: number;
+  max_iterations: number | null;
+  timezone: string | null;
+  next_run_at: number | null; // epoch ms
+  last_run_at: number | null;
+  last_status: string | null; // 'ok' | 'error' | 'skipped' | null
+  last_error: string | null;
+  failure_streak: number;
+  created_at: number;
+  updated_at: number;
+}
+
+/** One cron fire — the run ledger the UI history reads. */
+export interface CronRunRow {
+  id: string;
+  job_id: string;
+  session_id: string | null;
+  fire_at: number;
+  started_at: number | null;
+  finished_at: number | null;
+  status: string; // 'claimed' | 'running' | 'completed' | 'failed' | 'skipped' | 'interrupted'
+  iterations: number | null;
+  prompt_tokens: number | null;
+  completion_tokens: number | null;
+  error: string | null;
+  result_excerpt: string | null;
+}
+
 export class SQLiteSessionStore implements SessionDriver {
   readonly name = "sqlite";
   readonly dbPath: string;
@@ -122,6 +161,47 @@ export class SQLiteSessionStore implements SessionDriver {
         created_at TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id, created_at);
+
+      CREATE TABLE IF NOT EXISTS cron_jobs (
+        id                   TEXT PRIMARY KEY,
+        user_id              TEXT NOT NULL,
+        name                 TEXT NOT NULL,
+        schedule_kind        TEXT NOT NULL,
+        schedule_expr        TEXT NOT NULL,
+        payload              TEXT NOT NULL,
+        session_id           TEXT,
+        created_from_session TEXT,
+        enabled              INTEGER NOT NULL DEFAULT 1,
+        allow_scheduling     INTEGER NOT NULL DEFAULT 0,
+        max_iterations       INTEGER,
+        timezone             TEXT,
+        next_run_at          INTEGER,
+        last_run_at          INTEGER,
+        last_status          TEXT,
+        last_error           TEXT,
+        failure_streak       INTEGER NOT NULL DEFAULT 0,
+        created_at           INTEGER NOT NULL,
+        updated_at           INTEGER NOT NULL
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_cron_jobs_user_name ON cron_jobs(user_id, name);
+      CREATE INDEX IF NOT EXISTS idx_cron_jobs_due ON cron_jobs(enabled, next_run_at);
+
+      CREATE TABLE IF NOT EXISTS cron_runs (
+        id                TEXT PRIMARY KEY,
+        job_id            TEXT NOT NULL,
+        session_id        TEXT,
+        fire_at           INTEGER NOT NULL,
+        started_at        INTEGER,
+        finished_at       INTEGER,
+        status            TEXT NOT NULL,
+        iterations        INTEGER,
+        prompt_tokens     INTEGER,
+        completion_tokens INTEGER,
+        error             TEXT,
+        result_excerpt    TEXT
+      );
+      CREATE INDEX IF NOT EXISTS idx_cron_runs_job ON cron_runs(job_id, fire_at);
+      CREATE INDEX IF NOT EXISTS idx_cron_runs_status ON cron_runs(status);
 
       CREATE TABLE IF NOT EXISTS schema_meta (
         key   TEXT PRIMARY KEY,
@@ -295,11 +375,13 @@ export class SQLiteSessionStore implements SessionDriver {
                 COUNT(DISTINCT t.turn_number) AS turn_count,
                 COUNT(*) AS message_count,
                 st.title AS summary,
-                rr.status AS research_status
+                rr.status AS research_status,
+                MAX(cj.name) AS cron_name
          FROM turns t
          JOIN sessions s ON s.session_id = t.session_id
          LEFT JOIN session_titles st ON st.session_id = t.session_id
          LEFT JOIN research_runs rr ON rr.session_id = t.session_id
+         LEFT JOIN cron_jobs cj ON cj.session_id = t.session_id
          WHERE s.user_id = ?
          GROUP BY t.session_id ORDER BY created_at DESC`,
       )
@@ -458,6 +540,280 @@ export class SQLiteSessionStore implements SessionDriver {
       .prepare(`UPDATE research_runs SET status = 'interrupted', finished_at = ? WHERE status = 'running'`)
       .run(new Date().toISOString());
     return Number(res.changes ?? 0);
+  }
+
+  /** Register a session row for the ACTIVE login without appending a turn —
+   *  agent-cron fires create their job session at fire start so the UI can
+   *  open it while the run is still in flight (appendTurn registers only at
+   *  completion). Ownership refusal matches appendTurn. */
+  registerSession(sessionId: string): void {
+    this.ensureSession(sessionId);
+  }
+
+  // --- agent cron (docs/agent-cron-plan.md) ---------------------------------
+  // Epoch-ms timestamps; ownership via user_id on every read. The claim step
+  // is a BEGIN IMMEDIATE transaction: enabled re-check + no running run for
+  // the job + run-row insert + next_run_at advance commit atomically, so a
+  // tick can never double-fire and a long run is never re-fired.
+
+  createCronJob(job: CronJobRow): CronJobRow {
+    this.db
+      .prepare(
+        `INSERT INTO cron_jobs
+           (id, user_id, name, schedule_kind, schedule_expr, payload, session_id,
+            created_from_session, enabled, allow_scheduling, max_iterations, timezone,
+            next_run_at, last_run_at, last_status, last_error, failure_streak,
+            created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        job.id, job.user_id, job.name, job.schedule_kind, job.schedule_expr, job.payload,
+        job.session_id, job.created_from_session, job.enabled, job.allow_scheduling,
+        job.max_iterations, job.timezone, job.next_run_at, job.last_run_at,
+        job.last_status, job.last_error, job.failure_streak, job.created_at, job.updated_at,
+      );
+    return this.getCronJobById(job.id) as CronJobRow;
+  }
+
+  getCronJobById(id: string): CronJobRow | null {
+    return (
+      (this.db.prepare(`SELECT * FROM cron_jobs WHERE id = ?`).get(id) as CronJobRow | undefined) ??
+      null
+    );
+  }
+
+  /** id-or-name lookup scoped to one user (tool + routes share this). */
+  getCronJobForUser(userId: string, idOrName: string): CronJobRow | null {
+    const byId = this.db
+      .prepare(`SELECT * FROM cron_jobs WHERE id = ? AND user_id = ?`)
+      .get(idOrName, userId) as CronJobRow | undefined;
+    if (byId) return byId;
+    return (
+      (this.db
+        .prepare(`SELECT * FROM cron_jobs WHERE user_id = ? AND lower(name) = lower(?)`)
+        .get(userId, idOrName) as CronJobRow | undefined) ?? null
+    );
+  }
+
+  listCronJobs(userId: string): CronJobRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM cron_jobs WHERE user_id = ?
+         ORDER BY (next_run_at IS NULL), next_run_at, created_at`,
+      )
+      .all(userId) as unknown as CronJobRow[];
+  }
+
+  private CRON_UPDATE_FIELDS = [
+    "name", "schedule_kind", "schedule_expr", "payload", "session_id", "enabled",
+    "allow_scheduling", "max_iterations", "timezone", "next_run_at", "last_run_at",
+    "last_status", "last_error", "failure_streak",
+  ] as const;
+
+  updateCronJob(id: string, fields: Partial<CronJobRow>): CronJobRow | null {
+    const sets: string[] = [];
+    const vals: Array<string | number | null> = [];
+    for (const k of this.CRON_UPDATE_FIELDS) {
+      if (k in fields) {
+        sets.push(`${k} = ?`);
+        vals.push(fields[k] as string | number | null);
+      }
+    }
+    if (!sets.length) return this.getCronJobById(id);
+    sets.push("updated_at = ?");
+    vals.push(Date.now(), id);
+    this.db.prepare(`UPDATE cron_jobs SET ${sets.join(", ")} WHERE id = ?`).run(...vals);
+    return this.getCronJobById(id);
+  }
+
+  deleteCronJob(id: string): void {
+    this.db.prepare(`DELETE FROM cron_jobs WHERE id = ?`).run(id);
+  }
+
+  dueCronJobs(nowMs: number, limit: number): CronJobRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM cron_jobs
+         WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at <= ?
+         ORDER BY next_run_at LIMIT ?`,
+      )
+      .all(nowMs, limit) as unknown as CronJobRow[];
+  }
+
+  /** Live scheduled fires across all jobs (claimed or running) — the
+   *  CRON_MAX_PARALLEL budget. */
+  runningCronCount(): number {
+    const row = this.db
+      .prepare(`SELECT COUNT(*) AS n FROM cron_runs WHERE status IN ('running', 'claimed')`)
+      .get() as { n: number };
+    return Number(row.n);
+  }
+
+  /** Any live run for the job — 'claimed' (queued this tick) or 'running' —
+   *  both block a new fire. */
+  hasActiveCronRun(jobId: string): boolean {
+    return Boolean(
+      this.db
+        .prepare(`SELECT 1 AS x FROM cron_runs WHERE job_id = ? AND status IN ('running', 'claimed')`)
+        .get(jobId),
+    );
+  }
+
+  insertCronRun(run: CronRunRow): void {
+    this.db
+      .prepare(
+        `INSERT INTO cron_runs
+           (id, job_id, session_id, fire_at, started_at, finished_at, status,
+            iterations, prompt_tokens, completion_tokens, error, result_excerpt)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        run.id, run.job_id, run.session_id, run.fire_at, run.started_at, run.finished_at,
+        run.status, run.iterations, run.prompt_tokens, run.completion_tokens,
+        run.error, run.result_excerpt,
+      );
+  }
+
+  /** Claim one fire: atomically re-check enabled + not-running, insert the run
+   *  row as 'claimed', advance next_run_at. Returns null when the job may not
+   *  fire (disabled or previous run still active). */
+  claimCronFire(job: CronJobRow, fireAt: number, nextRunAt: number | null, runId: string): CronRunRow | null {
+    this.db.exec("BEGIN IMMEDIATE");
+    try {
+      const current = this.getCronJobById(job.id);
+      if (!current || !current.enabled) {
+        this.db.exec("ROLLBACK");
+        return null;
+      }
+      if (this.hasActiveCronRun(job.id)) {
+        this.db.exec("ROLLBACK");
+        return null;
+      }
+      const run: CronRunRow = {
+        id: runId, job_id: job.id, session_id: current.session_id,
+        fire_at: fireAt, started_at: null, finished_at: null,
+        status: "claimed", iterations: null, prompt_tokens: null,
+        completion_tokens: null, error: null, result_excerpt: null,
+      };
+      this.insertCronRun(run);
+      this.updateCronJob(job.id, { next_run_at: nextRunAt, last_run_at: fireAt });
+      this.db.exec("COMMIT");
+      return run;
+    } catch (e) {
+      try {
+        this.db.exec("ROLLBACK");
+      } catch {
+        /* already rolled back */
+      }
+      throw e;
+    }
+  }
+
+  markCronRunRunning(runId: string): void {
+    this.db
+      .prepare(`UPDATE cron_runs SET status = 'running', started_at = ? WHERE id = ?`)
+      .run(Date.now(), runId);
+  }
+
+  /** Record a fire that was skipped (previous run still active). The caller
+   *  advances next_run_at so the same slot is not re-skipped every tick. */
+  recordCronSkipped(job: CronJobRow, fireAt: number, nextRunAt: number | null, runId: string): void {
+    this.insertCronRun({
+      id: runId, job_id: job.id, session_id: job.session_id, fire_at: fireAt,
+      started_at: Date.now(), finished_at: Date.now(), status: "skipped",
+      iterations: null, prompt_tokens: null, completion_tokens: null,
+      error: "previous run still active", result_excerpt: null,
+    });
+    this.updateCronJob(job.id, { next_run_at: nextRunAt, last_run_at: fireAt, last_status: "skipped" });
+  }
+
+  /** Finalize a run and fold the outcome into the job (status, streak). */
+  finishCronRun(
+    runId: string,
+    patch: {
+      status: "completed" | "failed" | "interrupted";
+      iterations?: number | null;
+      prompt_tokens?: number | null;
+      completion_tokens?: number | null;
+      error?: string | null;
+      result_excerpt?: string | null;
+    },
+  ): CronJobRow | null {
+    const run = this.db.prepare(`SELECT * FROM cron_runs WHERE id = ?`).get(runId) as
+      | CronRunRow
+      | undefined;
+    if (!run) return null;
+    this.db
+      .prepare(
+        `UPDATE cron_runs SET status = ?, finished_at = ?, iterations = ?,
+           prompt_tokens = ?, completion_tokens = ?, error = ?, result_excerpt = ?
+         WHERE id = ?`,
+      )
+      .run(
+        patch.status, Date.now(), patch.iterations ?? null, patch.prompt_tokens ?? null,
+        patch.completion_tokens ?? null, patch.error ?? null, patch.result_excerpt ?? null,
+        runId,
+      );
+    const job = this.getCronJobById(run.job_id);
+    if (!job) return null;
+    const failed = patch.status === "failed";
+    const streak = failed ? job.failure_streak + 1 : 0;
+    return this.updateCronJob(job.id, {
+      last_status: failed ? "error" : "ok",
+      last_error: patch.error ?? null,
+      failure_streak: streak,
+    });
+  }
+
+  listCronRuns(jobId: string, limit: number = 20): CronRunRow[] {
+    return this.db
+      .prepare(
+        `SELECT * FROM cron_runs WHERE job_id = ? ORDER BY fire_at DESC, id DESC LIMIT ?`,
+      )
+      .all(jobId, limit) as unknown as CronRunRow[];
+  }
+
+  /** Boot reconciliation: interrupted runs are audit-only (never rerun); a job
+   *  whose fire time passed while the process was down catches up once when
+   *  recompute is null (fire immediately) or re-anchors to the returned slot. */
+  reconcileCronOnBoot(
+    nowMs: number,
+    graceMs: number,
+    catchUpMissed: boolean,
+    recompute: (job: CronJobRow) => number | null,
+  ): { interrupted: number; catchups: number } {
+    const res = this.db
+      .prepare(
+        `UPDATE cron_runs SET status = 'interrupted', finished_at = ?
+         WHERE status IN ('running', 'claimed')`,
+      )
+      .run(nowMs);
+    const interrupted = Number(res.changes ?? 0);
+    let catchups = 0;
+    const stale = this.db
+      .prepare(
+        `SELECT * FROM cron_jobs
+         WHERE enabled = 1 AND next_run_at IS NOT NULL AND next_run_at < ?`,
+      )
+      .all(nowMs) as unknown as CronJobRow[];
+    for (const job of stale) {
+      const missedBy = nowMs - (job.next_run_at as number);
+      if (job.schedule_kind === "once" && missedBy > graceMs) {
+        this.updateCronJob(job.id, {
+          enabled: 0, last_status: "skipped",
+          last_error: `missed while offline (${Math.round(missedBy / 60000)} min)`,
+        });
+        continue;
+      }
+      if (missedBy > graceMs && !catchUpMissed) {
+        this.updateCronJob(job.id, { next_run_at: recompute(job) });
+        continue;
+      }
+      // Catch up once: fire at the next tick, then the normal advance applies.
+      this.updateCronJob(job.id, { next_run_at: nowMs });
+      catchups++;
+    }
+    return { interrupted, catchups };
   }
 }
 
