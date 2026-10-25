@@ -9,7 +9,7 @@
 import { chat } from "./llm.js";
 import { toWire, buildToolRegistry } from "./tools/index.js";
 import { PromptMemory } from "./memory.js";
-import { MEMORY_CHAR_LIMIT, OPENROUTER_MODEL_MAIN } from "./config.js";
+import { MEMORY_CHAR_LIMIT, OPENROUTER_MODEL_MAIN, BUDGET_WRAPUP_REMAINING } from "./config.js";
 import type { ChatMessage, ToolDef, ToolCall } from "./types.js";
 import type { SessionDriver } from "./driver.js";
 import type { AgentDbMirror } from "./agentdb-mirror.js";
@@ -144,6 +144,7 @@ export class AgentLoop {
     let iterations = 0;
     let fatal: string | undefined;
     let cancelled = false;
+    let wrapupInjected = false;
     const usage = { prompt_tokens: 0, completion_tokens: 0 };
 
     const skillsList = getSkillLibrary().listSkills().map((s) => s.name);
@@ -176,6 +177,22 @@ export class AgentLoop {
         break;
       }
       iterations = i + 1;
+      // Budget wrap-up: with only a few iterations left, tell the model once
+      // to land the turn (persist state, end with a summary) instead of dying
+      // at the hard cap mid-step. Injected into messages only — like the
+      // empty-retry nudge below, it is not part of the persisted slice.
+      const remaining = this.maxIterations - i;
+      if (remaining === BUDGET_WRAPUP_REMAINING && !wrapupInjected) {
+        wrapupInjected = true;
+        messages.push({
+          role: "user",
+          content:
+            `Tool budget: ${remaining} of ${this.maxIterations} iterations left. Wrap up now: ` +
+            "finish or safely stop the current step, persist anything needed to resume in a later " +
+            "turn (files on disk), and end this turn with a brief summary of what was completed " +
+            "and what remains. Do not start new multi-step work.",
+        });
+      }
       const llmRun = trace.create({
         name: `llm:${i + 1}`,
         runType: "llm",

@@ -124,6 +124,9 @@ export const OPENROUTER_REASONING = (process.env.OPENROUTER_REASONING ?? "1") !=
 
 export const MAX_COMPLETION_TOKENS = Number(process.env.MAX_COMPLETION_TOKENS ?? "16384");
 export const BUDGET_TOOL_MAX_ITERATIONS = Number(process.env.BUDGET_TOOL_MAX_ITERATIONS ?? "25");
+// Iterations remaining at which the loop injects the one-time wrap-up nudge
+// (persist state, end the turn) instead of letting the turn die at the hard cap.
+export const BUDGET_WRAPUP_REMAINING = Number(process.env.BUDGET_WRAPUP_REMAINING ?? "5");
 export const EXECUTE_TIMEOUT_MS = Number(process.env.EXECUTE_TIMEOUT_MS ?? "120000");
 
 // Optional session-search condensation (Hermes-style). It is enrichment only:

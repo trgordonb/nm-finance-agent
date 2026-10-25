@@ -104,6 +104,40 @@ test("agent loop: two empty responses fail loudly, no empty assistant row", asyn
   assert.equal(result.messages.length, 0);
 });
 
+test("agent loop: budget wrap-up nudge fires once near the cap, turn lands cleanly", async () => {
+  let call = 0;
+  const nudges: string[] = [];
+  const chatFn: any = async (messages: any[]) => {
+    call++;
+    const last = String(messages.at(-1)?.content ?? "");
+    if (last.startsWith("Tool budget:")) nudges.push(last);
+    if (nudges.length) return textResponse("wrapped up");
+    return { ...textResponse(""), toolCalls: [{ id: `call-${call}`, name: "a", args: {} }] };
+  };
+  const loop = new AgentLoop({
+    memory: { load: () => "", totalChars: () => 0 } as any,
+    store: {} as any,
+    tools: [tool("a")],
+    chatFn,
+    maxIterations: 8,
+  });
+
+  const result = await loop.runTurn([], "hi");
+
+  // Nudge injected exactly once, entering the iteration with 5 of 8 left.
+  assert.equal(nudges.length, 1);
+  assert.match(nudges[0], /Tool budget: 5 of 8 iterations left/);
+  assert.match(nudges[0], /persist anything needed to resume in a later turn/);
+  assert.equal(result.iterations, 4);
+  assert.equal(result.fatal, undefined);
+  assert.equal(result.messages.at(-1)?.content, "wrapped up");
+  // The nudge is a directive, not a persisted chat message.
+  assert.equal(
+    result.messages.some((m) => String(m.content).startsWith("Tool budget:")),
+    false,
+  );
+});
+
 test("agent loop: cancel aborts an in-flight LLM call as cancelled", async () => {
   const ctrl = new AbortController();
   const chatFn = async (_messages: any[], _tools: any, opts: any) => {

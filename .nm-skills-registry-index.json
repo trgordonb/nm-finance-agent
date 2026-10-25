@@ -23,6 +23,14 @@
 "etag": "\"bd70d92b12eb4f0fe47291cc13bd1388\"",
 "size": 3755
 },
+"skills/causal-ts-discovery/SKILL.md": {
+"etag": "\"fb896533af1a4af067888affa31f151c\"",
+"size": 9597
+},
+"skills/causal-ts-discovery/agents/openai.yaml": {
+"etag": "\"4d68fa3d191ee54e3aee386c8f5bbf53\"",
+"size": 128
+},
 "skills/convert-arxiv-to-md/SKILL.md": {
 "etag": "\"1c89065818c79da25fb3bdf63490b929\"",
 "size": 7855
@@ -74,6 +82,10 @@
 "skills/convert-web-article-to-md/references/math-and-code-rules.md": {
 "etag": "\"1f80f5fe7178e1e8a8c71e5afe29d4ab\"",
 "size": 10544
+},
+"skills/convert-web-article-to-md/scripts/building-intuition-for-trading-with-convex-optimisation-with-cvxr/raw.html": {
+"etag": "\"de7272a1abf7b861f438e1559807f3bc\"",
+"size": 756841
 },
 "skills/convert-web-article-to-md/scripts/convert_web_article_to_md.py": {
 "etag": "\"aef254d40f40c9c214e51d4e948b295a\"",
@@ -139,6 +151,10 @@
 "etag": "\"2eb0663e8d95dfcb949744fc5ee5a845\"",
 "size": 2407
 },
+"skills/instabox-sandbox/SKILL.md": {
+"etag": "\"0b7b7bbc092c6b4fcd98c33aca7b7d2b\"",
+"size": 5298
+},
 "skills/llm-wiki/SKILL.md": {
 "etag": "\"14b99b9290ff8566361edaee53a7e1d9\"",
 "size": 15091
@@ -178,6 +194,14 @@
 "skills/scholar-search/scripts/scholar_search.py": {
 "etag": "\"2f443ed4c528e60b60b1ee05d7c44a3c\"",
 "size": 9952
+},
+"skills/stock-price-mover/SKILL.md": {
+"etag": "\"4fbc598a3905af4db49cb1d6fbb5f04e\"",
+"size": 23155
+},
+"skills/stock-price-mover/daily.sh": {
+"etag": "\"b98cd35d31551f0c117fc7da8902431b\"",
+"size": 7207
 },
 "skills/strategy-backtest/README.md": {
 "etag": "\"3a5f18e8aea05040c791511d73d422c8\"",

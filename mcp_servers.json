@@ -91,6 +91,37 @@
       ],
       "enabled": false,
       "description": "FinanceToolkit analytics (FMP-backed; dormant since 2026-09; streamable_http binding implemented)"
+    },
+    "vibe_trading": {
+      "transport": "stdio",
+      "command": "vibe-trading-mcp",
+      "args": [],
+      "keep_tools": [
+        "list_skills",
+        "load_skill",
+        "get_institutional_holdings",
+        "etf_holdings",
+        "get_market_data",
+        "search_symbol",
+        "get_fundamentals",
+        "get_stock_profile",
+        "get_stock_news",
+        "get_sec_filings",
+        "get_research_reports",
+        "search_broker_reports",
+        "get_financial_statements",
+        "get_options_chain",
+        "technical_indicators",
+        "screen_market",
+        "get_macro_series",
+        "sentiment",
+        "backtest",
+        "factor_analysis",
+        "alpha_zoo",
+        "alpha_bench"
+      ],
+      "enabled": true,
+      "description": "Vibe-Trading (HKUDS, PyPI vibe-trading-ai, uv tool, py3.12): read-only research — 13F/ETF holdings, market data, news/filings, options, macro, backtest/factors — plus its skill docs (list_skills/load_skill, e.g. backtest-diagnose) so agents can read the SignalEngine contract before coding; trading_*/paper_trade/swarm/file-IO/web tools filtered out via keep_tools; shell tools left off (RCE surface)"
     }
   }
 }
