@@ -13,6 +13,9 @@ import type {
   WikiGist,
   WikiSearchHit,
 } from "./types";
+import { consumeSseStream, type SseHandler } from "./sse";
+
+export type { SseHandler };
 
 /** A 401 from a protected API means the server session is gone. The app shell
  *  registers a handler that drops back to the login screen. */
@@ -166,12 +169,10 @@ export async function uploadWikiPdf(file: File): Promise<WikiUpload> {
   return (await res.json()) as WikiUpload;
 }
 
-export type SseHandler = (event: string, data: Record<string, unknown>) => void;
-
 /**
  * POST /api/chat and consume the SSE stream. EventSource cannot issue POST,
- * so the stream is parsed manually from the fetch body: blocks separated by
- * blank lines, each an `event:` line plus one or more `data:` lines.
+ * so the stream is parsed manually from the fetch body; the wire parsing and
+ * the post-`done` error tolerance live in ./sse (shared with backend tests).
  */
 export async function streamChat(
   message: string,
@@ -188,34 +189,7 @@ export async function streamChat(
   if (!res.ok || !res.body) {
     throw new Error(`chat failed: HTTP ${res.status}`);
   }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-
-    let sep: number;
-    while ((sep = buffer.indexOf("\n\n")) !== -1) {
-      const block = buffer.slice(0, sep);
-      buffer = buffer.slice(sep + 2);
-      let event = "message";
-      const data: string[] = [];
-      for (const line of block.split("\n")) {
-        if (line.startsWith("event:")) event = line.slice(6).trim();
-        else if (line.startsWith("data:")) data.push(line.slice(5).trimStart());
-      }
-      if (data.length === 0) continue;
-      try {
-        onEvent(event, JSON.parse(data.join("\n")));
-      } catch {
-        onEvent("error", { error: "unparseable SSE event" });
-      }
-    }
-  }
+  await consumeSseStream(res.body, onEvent);
 }
 
 /* --- Wiki tab (read-only llmwiki passthrough via /api/wiki/*) --------------- */

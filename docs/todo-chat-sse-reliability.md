@@ -1,7 +1,7 @@
 # TODO — harden normal chat SSE against idle/client disconnects
 
-**Status:** handoff from the cloud VM, 2026-10-25  
-**Owner:** coding agent on the other side  
+**Status:** implemented on the dev box, 2026-10-25 — heartbeat + disconnect-abort in `src/index.ts` (`/api/chat`), wire parsing + post-`done` tolerance extracted to `frontend/src/sse.ts` (used by `streamChat`), tests in `src/tests/chat-sse.test.ts` (5). `npm run check`, `npm test` (168) and `npm --prefix frontend run build` all green. Deploy: git pull + `npm ci` + `npm --prefix frontend run build` + restart `nm-finance-agent`.
+**Owner:** coding agent on the other side
 **Context commit:** `c75ee4d` (`main`)
 
 ## Symptom

@@ -477,6 +477,26 @@ app.post("/api/chat", (req, res) => {
   };
   controller.signal.addEventListener("abort", abortListener);
 
+  // Client went away mid-turn (idle cut, tab closed): stop the upstream work
+  // and let the loop's cancelled path persist the provider-valid prefix.
+  // res "close" also fires after a normal res.end() — writableEnded tells
+  // the two apart, so a completed turn is never marked cancelled.
+  res.on("close", () => {
+    if (!res.writableEnded && !controller.signal.aborted) {
+      abandoned = true;
+      controller.abort();
+    }
+  });
+
+  // Keep the SSE connection warm during silent LLM/tool work — idle proxies
+  // and readers cut long gaps ("Error in input stream"). SSE comment blocks
+  // carry no `data:` line, so the frontend parser ignores them.
+  const ping = () => {
+    if (!abandoned && !res.writableEnded && !res.destroyed) res.write(": ping\n\n");
+  };
+  const heartbeat = setInterval(ping, 15000);
+  heartbeat.unref();
+
   const write = (event: string, payload: unknown) => {
     if (!abandoned || event === "cancelled") res.write(sse(event, payload));
   };
@@ -604,6 +624,7 @@ app.post("/api/chat", (req, res) => {
         write("done", { session_id: sessionId, messages: -1 });
       }
     } finally {
+      clearInterval(heartbeat);
       controller.signal.removeEventListener("abort", abortListener);
       ACTIVE_TURNS.delete(turnId);
       res.end();
