@@ -3,6 +3,7 @@ node_modules/
 sessions.db
 sessions.db-*
 sessions.db*.bak
+runs/
 # BFF auth sessions (refresh tokens) + the pinned SSO certificate
 auth.db
 auth.db-*

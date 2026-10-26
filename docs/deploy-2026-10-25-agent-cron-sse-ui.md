@@ -121,11 +121,38 @@ no model download happens on the VM. Free-tier runtime cap is 480 min/machine.
 | `CRON_CATCH_UP_MISSED` | `1` | after a restart, a missed fire catches up once |
 | `CRON_FAILURE_PAUSE_STREAK` | `5` | consecutive failures → job auto-pauses |
 | `CRON_WRAPUP_REMAINING` | `10` | scheduled runs get the "persist and land" nudge with this many iterations left (chat turns use 5) |
+| `LLM_KEY_POLICY` | `prefer_user` | user-scoped OpenRouter keys (see §5b): `prefer_user` / `require_user` / `server_only` |
+| `LLM_KEY_REQUIRE_USER_AFTER` | — | with `require_user`: ISO date until which the server key still backs turns (warn-only window). **Recommended here: set to deploy date + 7 days** |
+| `USER_LLM_KEY_SECRET` | — | AES-256-GCM master secret for user LLM keys at rest — generate with `openssl rand -hex 32`. **Required** for encrypted storage; unset = plaintext fallback + boot warning |
 | `INSTABOX_API_KEY` | — | only for §4 |
 
 Add keys to `/etc/nm-finance-agent.env` (systemd `EnvironmentFile` syntax:
 plain `KEY=value`, no `export`). Do not invent keys; do not duplicate secrets
 elsewhere.
+
+### 5b. User-scoped OpenRouter keys (ships in this deploy)
+
+Each SSO user can add their own OpenRouter key in **Settings → Model & key**
+(validated against `GET /api/v1/key` without token spend, encrypted at rest
+with `USER_LLM_KEY_SECRET`, stored per user under
+`/var/lib/nm-finance-agent/state/users/<id>/llm.json` at mode 0600). chat()
+resolves the caller's key per call: user key first, server key per policy.
+Every successful LLM call is recorded into a per-user `llm_usage` table
+(auto-migrated); `GET /api/user/llm-usage?days=30` returns the per-user
+summary shown in the settings tab.
+
+Recommended env additions for this VM (owner decision: warn-only week):
+
+```bash
+echo "LLM_KEY_POLICY=require_user" | sudo tee -a /etc/nm-finance-agent.env
+echo "LLM_KEY_REQUIRE_USER_AFTER=$(date -u -d '+7 days' +%Y-%m-%dT%H:%M:%SZ)" | sudo tee -a /etc/nm-finance-agent.env
+echo "USER_LLM_KEY_SECRET=$(openssl rand -hex 32)" | sudo tee -a /etc/nm-finance-agent.env
+sudo systemctl restart nm-finance-agent   # env file is read per restart
+```
+
+Until the deadline the UI shows a warn banner and the server key still backs
+turns; after it, a signed-in user without their own key gets an actionable
+error instead of a billed server turn.
 
 ## 6. Timezones (important on this VM)
 

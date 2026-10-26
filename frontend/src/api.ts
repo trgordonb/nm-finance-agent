@@ -6,6 +6,8 @@ import type {
   ApiMessage,
   CronJobInfo,
   CronRunInfo,
+  LlmUsageSummary,
+  UserLlmKeyStatus,
   Followups,
   Health,
   McpListResponse,
@@ -178,6 +180,21 @@ export const runCronJobNow = (id: string) =>
 
 export const deleteCronJob = (id: string) =>
   apiFetch(`/api/cron/jobs/${encodeURIComponent(id)}`, { method: "DELETE" });
+
+/** User-scoped OpenRouter key (docs/user-scoped-openrouter-keys-plan.md). */
+export const getUserLlmKeyStatus = () => fetchJSON<UserLlmKeyStatus>("/api/user/llm-key");
+
+export const saveUserLlmKey = (key: string) =>
+  fetchJSON<{ ok: boolean; masked: string; label: string | null; usage_usd: number | null; limit: number | null; is_free_tier: boolean | null }>(
+    "/api/user/llm-key",
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ key }) },
+  );
+
+export const deleteUserLlmKey = () =>
+  apiFetch("/api/user/llm-key", { method: "DELETE" }).then(() => undefined);
+
+export const getLlmUsage = (days = 30) =>
+  fetchJSON<LlmUsageSummary>(`/api/user/llm-usage?days=${days}`);
 
 export async function cancelTurn(turnId: string): Promise<void> {
   await apiFetch("/api/chat/cancel", {

@@ -2169,3 +2169,68 @@ body {
 .cron-form input { flex: 1; }
 .cron-form select { flex: none; }
 .cron-form textarea { width: 100%; box-sizing: border-box; margin-bottom: 8px; resize: vertical; }
+
+/* --- "Model & key" settings tab ---------------------------------------------- */
+
+.key-banner {
+  border: 1px solid var(--warn);
+  border-radius: 8px;
+  background: rgba(210, 153, 34, 0.08);
+  color: var(--warn);
+  font-size: 12px;
+  padding: 8px 12px;
+  margin-bottom: 12px;
+}
+
+.key-banner.err {
+  border-color: var(--err);
+  color: var(--err);
+  background: rgba(248, 81, 73, 0.08);
+}
+
+.key-banner.ok {
+  border-color: var(--ok);
+  color: var(--ok);
+  background: rgba(63, 185, 80, 0.08);
+}
+
+.key-form {
+  display: flex;
+  gap: 8px;
+  margin: 8px 0;
+}
+
+.key-form input {
+  flex: 1;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--text);
+  padding: 6px 8px;
+  font-size: 12px;
+  font-family: var(--mono);
+}
+
+.key-form button {
+  padding: 4px 12px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text);
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.key-form button:hover:not(:disabled) {
+  background: var(--panel);
+}
+
+.key-form button:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.key-days {
+  border-top: 1px solid var(--border);
+  padding-top: 6px;
+}

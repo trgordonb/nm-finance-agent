@@ -3,7 +3,6 @@
 // attempts, exponential backoff on 5xx/429/dial errors, hard-fail otherwise.
 
 import {
-  OPENROUTER_API_KEY,
   OPENROUTER_BASE_URL,
   OPENROUTER_MODEL_MAIN,
   OPENROUTER_PROVIDER_ORDER,
@@ -13,6 +12,8 @@ import {
   MAX_COMPLETION_TOKENS,
 } from "./config.js";
 import type { ChatMessage } from "./types.js";
+import { resolveAuthorizationKey, recordLlmUsage } from "./llm-keys.js";
+import { currentUserId } from "./workspace.js";
 
 const MIN_INTERVAL_MS = Number(process.env.LLM_MIN_INTERVAL_MS ?? "4000");
 const MAX_ATTEMPTS = Number(process.env.LLM_MAX_ATTEMPTS ?? "5");
@@ -65,6 +66,8 @@ interface ChatPart {
 export interface ChatUsage {
   prompt_tokens?: number;
   completion_tokens?: number;
+  /** OpenRouter-reported USD cost for this call (when the model exposes it). */
+  cost?: number;
   /** OpenRouter/OpenAI usage detail; reasoning is the hidden thinking spend. */
   completion_tokens_details?: { reasoning_tokens?: number };
 }
@@ -117,7 +120,11 @@ export async function chat(
   tools?: Array<{ name: string; description: string; parameters: unknown }>,
   opts: ChatOpts = { },
 ): Promise<ChatResponse> {
-  if (!OPENROUTER_API_KEY) throw new Error("OPENROUTER_API_KEY is not set");
+  // Per-user key resolution (docs/user-scoped-openrouter-keys-plan.md): the
+  // caller's ALS scope picks the user's key when configured, else the server
+  // key per LLM_KEY_POLICY. Resolved once per call, not per attempt.
+  const auth = resolveAuthorizationKey();
+  if (!auth.key) throw new Error(auth.error ?? "no OpenRouter API key available");
   const model = opts.model || OPENROUTER_MODEL_MAIN;
   // Provider steering is for the MAIN model only: the summarizer/cheap roles
   // use a different model that may not be served by those providers.
@@ -200,7 +207,7 @@ export async function chat(
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${OPENROUTER_API_KEY}`,
+          Authorization: `Bearer ${auth.key}`,
         },
         body: JSON.stringify(body),
         signal: requestSignal,
@@ -220,6 +227,22 @@ export async function chat(
       const choice = data.choices?.[0];
       const msg = choice?.message;
       if (!msg) throw new Error("Response has no message");
+      // Per-user spend ledger (docs/user-scoped-openrouter-keys-plan.md §10.4)
+      // — bookkeeping only, never breaks the call.
+      try {
+        recordLlmUsage({
+          userId: currentUserId(),
+          model: data.model || model,
+          prompt_tokens: data.usage?.prompt_tokens ?? 0,
+          completion_tokens: data.usage?.completion_tokens ?? 0,
+          cost_usd: typeof data.usage?.cost === "number" ? data.usage.cost : null,
+          // key is non-null here (the null case threw above), so no "none"
+          source: auth.source as "user" | "server",
+          created_at: Date.now(),
+        });
+      } catch {
+        /* ignore */
+      }
       return {
         content: msg.content || "",
         toolCalls: (msg.tool_calls || []).map((tc) => ({

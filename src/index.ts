@@ -16,6 +16,7 @@
 
 import express, { type Request, type Response } from "express";
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import {
   serverHost,
@@ -38,12 +39,13 @@ import {
   RESEARCH_MODE_ENABLED,
   RESEARCH_SAVE_REPORTS,
   CRON_ENABLED,
+  SKILLS_STATE_DIR,
 } from "./config.js";
 import { authConfig } from "./auth/config.js";
 import { createAuthRouter } from "./auth/routes.js";
 import { createOriginGuard, createRequireAuth, type AuthedRequest } from "./auth/middleware.js";
 import { SessionManager } from "./auth/session.js";
-import { currentWorkspaceRoot, currentUserId, runInWorkspace, workspaceUserKey } from "./workspace.js";
+import { currentWorkspaceRoot, currentUserId, runInWorkspace, sanitizeUserId, workspaceUserKey } from "./workspace.js";
 import { certificateDaysRemaining, createSsoClient } from "./auth/sso.js";
 import { AuthStore } from "./auth/store.js";
 import { looksLikePdf, saveWikiUpload } from "./uploads.js";
@@ -81,6 +83,17 @@ import { saveResearchReport } from "./research/reports.js";
 import { createDeepResearchTool } from "./research/tool.js";
 import type { ResearchEvent, ResearchOutcome } from "./research/types.js";
 import { CronScheduler, isScheduledRun } from "./cron/scheduler.js";
+import {
+  clearUserOpenRouterKey,
+  getUserOpenRouterKey,
+  llmKeyPolicy,
+  maskKey,
+  requireUserEnforced,
+  requireUserWarnDeadline,
+  setLlmUsageRecorder,
+  setUserOpenRouterKey,
+  validateOpenRouterKey,
+} from "./llm-keys.js";
 import { createCronManageTool } from "./cron/tool.js";
 import {
   isScheduleKind,
@@ -108,6 +121,24 @@ const mirror = new AgentDbMirror();
 // toggles the cheap-model filter over hybrid recall results (raw fallback).
 const searchSummarizer = createSessionSearchSummarizer();
 const loop = new AgentLoop({ memory, store, mirror, summarizer: searchSummarizer });
+
+// Per-user LLM usage ledger: chat() records every successful call; the writer
+// is injected here so llm.ts stays store-free.
+setLlmUsageRecorder((entry) => {
+  try {
+    store.recordLlmUsage({
+      user_id: entry.userId,
+      model: entry.model,
+      prompt_tokens: entry.prompt_tokens,
+      completion_tokens: entry.completion_tokens,
+      cost_usd: entry.cost_usd ?? null,
+      source: entry.source,
+      created_at: entry.created_at,
+    });
+  } catch (e) {
+    log.warn(`llm usage record failed: ${String((e as Error).message).slice(0, 120)}`);
+  }
+});
 
 // Agent cron (docs/agent-cron-plan.md): per-user scheduled jobs, in-process
 // ticker, fires run as ordinary turns in the owner's ALS context.
@@ -374,6 +405,77 @@ app.get("/api/sessions/:sessionId", (req, res) => {
 
 // Deep-research run state for a session (reconnect / status polling; the live
 // stream carries the same steps as `research` SSE events).
+// --- user-scoped OpenRouter keys (docs/user-scoped-openrouter-keys-plan.md) --
+
+app.get("/api/user/llm-key", (req, res) => {
+  const user = currentUserId();
+  const state = getUserOpenRouterKey(user) !== null;
+  res.json({
+    present: state,
+    policy: llmKeyPolicy(),
+    require_user_enforced: requireUserEnforced(),
+    require_user_warn_deadline: requireUserWarnDeadline(),
+    // masked/status only — the raw key never leaves the server
+    ...(state
+      ? (() => {
+          try {
+            const fsState = JSON.parse(
+              fs.readFileSync(
+                path.join(SKILLS_STATE_DIR, "users", sanitizeUserId(user) || "default", "llm.json"),
+                "utf8",
+              ),
+            ) as { openrouter?: { masked?: string; label?: string; usage_usd?: number; limit?: number | null; is_free_tier?: boolean } };
+            return {
+              masked: fsState.openrouter?.masked ?? null,
+              label: fsState.openrouter?.label ?? null,
+              usage_usd: fsState.openrouter?.usage_usd ?? null,
+              limit: fsState.openrouter?.limit ?? null,
+              is_free_tier: fsState.openrouter?.is_free_tier ?? null,
+            };
+          } catch {
+            return { masked: null, label: null, usage_usd: null, limit: null, is_free_tier: null };
+          }
+        })()
+      : { masked: null, label: null, usage_usd: null, limit: null, is_free_tier: null }),
+  });
+});
+
+app.post("/api/user/llm-key", async (req, res) => {
+  const key = String((req.body ?? {}).key ?? "").trim();
+  if (!key) {
+    res.status(400).json({ detail: "key must be non-empty" });
+    return;
+  }
+  let info;
+  try {
+    info = await validateOpenRouterKey(key);
+  } catch (e) {
+    res.status(502).json({ detail: `OpenRouter validation failed: ${String((e as Error).message).slice(0, 160)}` });
+    return;
+  }
+  if (!info) {
+    res.status(400).json({ detail: "OpenRouter rejected this key (invalid or revoked)" });
+    return;
+  }
+  const entry = setUserOpenRouterKey(currentUserId(), key, {
+    label: info.label ?? undefined,
+    usage_usd: info.usage_usd ?? undefined,
+    limit: info.limit,
+    is_free_tier: info.is_free_tier,
+  });
+  res.json({ ok: true, masked: entry.masked, label: entry.label, usage_usd: entry.usage_usd, limit: entry.limit, is_free_tier: entry.is_free_tier });
+});
+
+app.delete("/api/user/llm-key", (req, res) => {
+  clearUserOpenRouterKey(currentUserId());
+  res.json({ ok: true });
+});
+
+app.get("/api/user/llm-usage", (req, res) => {
+  const days = Math.min(Math.max(Number(req.query.days ?? 30) || 30, 1), 365);
+  res.json(store.llmUsageSummary(currentUserId(), Date.now() - days * 86_400_000));
+});
+
 app.get("/api/research/:sessionId", (req, res) => {
   const row = store.getResearchRun(req.params.sessionId);
   if (!row) {

@@ -203,6 +203,18 @@ export class SQLiteSessionStore implements SessionDriver {
       CREATE INDEX IF NOT EXISTS idx_cron_runs_job ON cron_runs(job_id, fire_at);
       CREATE INDEX IF NOT EXISTS idx_cron_runs_status ON cron_runs(status);
 
+      CREATE TABLE IF NOT EXISTS llm_usage (
+        id                INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id           TEXT NOT NULL,
+        model             TEXT NOT NULL,
+        prompt_tokens     INTEGER NOT NULL DEFAULT 0,
+        completion_tokens INTEGER NOT NULL DEFAULT 0,
+        cost_usd          REAL,
+        source            TEXT NOT NULL DEFAULT 'server',
+        created_at        INTEGER NOT NULL
+      );
+      CREATE INDEX IF NOT EXISTS idx_llm_usage_user ON llm_usage(user_id, created_at);
+
       CREATE TABLE IF NOT EXISTS schema_meta (
         key   TEXT PRIMARY KEY,
         value TEXT NOT NULL
@@ -814,6 +826,51 @@ export class SQLiteSessionStore implements SessionDriver {
       catchups++;
     }
     return { interrupted, catchups };
+  }
+
+  // --- per-user LLM usage ledger (docs/user-scoped-openrouter-keys-plan.md) --
+
+  recordLlmUsage(entry: {
+    user_id: string; model: string; prompt_tokens: number; completion_tokens: number;
+    cost_usd: number | null; source: string; created_at: number;
+  }): void {
+    this.db
+      .prepare(
+        `INSERT INTO llm_usage (user_id, model, prompt_tokens, completion_tokens, cost_usd, source, created_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?)`,
+      )
+      .run(
+        entry.user_id, entry.model, entry.prompt_tokens, entry.completion_tokens,
+        entry.cost_usd, entry.source, entry.created_at,
+      );
+  }
+
+  /** Totals + per-day buckets for one user over the trailing window. */
+  llmUsageSummary(userId: string, sinceMs: number): {
+    totals: { calls: number; prompt_tokens: number; completion_tokens: number; cost_usd: number | null };
+    days: Array<{ day: string; calls: number; prompt_tokens: number; completion_tokens: number; cost_usd: number | null }>;
+  } {
+    const totals = this.db
+      .prepare(
+        `SELECT COUNT(*) AS calls, COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                COALESCE(SUM(cost_usd), 0) AS cost_usd
+         FROM llm_usage WHERE user_id = ? AND created_at >= ?`,
+      )
+      .get(userId, sinceMs) as { calls: number; prompt_tokens: number; completion_tokens: number; cost_usd: number };
+    const days = this.db
+      .prepare(
+        `SELECT date(created_at / 1000, 'unixepoch') AS day, COUNT(*) AS calls,
+                COALESCE(SUM(prompt_tokens), 0) AS prompt_tokens,
+                COALESCE(SUM(completion_tokens), 0) AS completion_tokens,
+                COALESCE(SUM(cost_usd), 0) AS cost_usd
+         FROM llm_usage WHERE user_id = ? AND created_at >= ?
+         GROUP BY day ORDER BY day`,
+      )
+      .all(userId, sinceMs) as Array<{
+        day: string; calls: number; prompt_tokens: number; completion_tokens: number; cost_usd: number | null;
+      }>;
+    return { totals, days };
   }
 }
 

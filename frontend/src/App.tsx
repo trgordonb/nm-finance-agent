@@ -24,6 +24,7 @@ import type { FeedItem, Followups, Health, NewItem, SessionInfo, ToolCall } from
 import Sidebar from "./components/Sidebar";
 import SkillsTab from "./components/SkillsTab";
 import CronTab from "./components/CronTab";
+import KeyTab from "./components/KeyTab";
 import McpTab from "./components/McpTab";
 import WikiTab from "./components/WikiTab";
 import Feed from "./components/Feed";
@@ -47,7 +48,7 @@ interface AgentAppProps {
 function AgentApp({ user, onLogout }: AgentAppProps) {
   const [view, setView] = useState<"chat" | "wiki" | "cron">("chat");
   const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsSection, setSettingsSection] = useState<"skills" | "mcp">("skills");
+  const [settingsSection, setSettingsSection] = useState<"skills" | "mcp" | "key">("skills");
 
   // Close the settings modal with Escape.
   useEffect(() => {
@@ -555,13 +556,27 @@ function AgentApp({ user, onLogout }: AgentAppProps) {
                 >
                   MCP
                 </button>
+                <button
+                  className={`tab${settingsSection === "key" ? " active" : ""}`}
+                  role="tab"
+                  aria-selected={settingsSection === "key"}
+                  onClick={() => setSettingsSection("key")}
+                >
+                  Model &amp; key
+                </button>
               </div>
               <button className="modal-x" aria-label="Close settings" onClick={() => setSettingsOpen(false)}>
                 ✕
               </button>
             </div>
             <div className="modal-body">
-              {settingsSection === "skills" ? <SkillsTab health={health} /> : <McpTab />}
+              {settingsSection === "skills" ? (
+                <SkillsTab health={health} />
+              ) : settingsSection === "mcp" ? (
+                <McpTab />
+              ) : (
+                <KeyTab />
+              )}
             </div>
           </div>
         </div>

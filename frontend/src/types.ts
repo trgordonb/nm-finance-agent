@@ -197,3 +197,22 @@ export interface WikiSearchHit {
   metadata: Record<string, unknown>;
   domain: string;
 }
+
+/** GET /api/user/llm-key — status only; the raw key never leaves the server. */
+export interface UserLlmKeyStatus {
+  present: boolean;
+  policy: string;
+  require_user_enforced: boolean;
+  require_user_warn_deadline: number | null;
+  masked: string | null;
+  label: string | null;
+  usage_usd: number | null;
+  limit: number | null;
+  is_free_tier: boolean | null;
+}
+
+/** GET /api/user/llm-usage — harness-side per-user spend ledger. */
+export interface LlmUsageSummary {
+  totals: { calls: number; prompt_tokens: number; completion_tokens: number; cost_usd: number | null };
+  days: Array<{ day: string; calls: number; prompt_tokens: number; completion_tokens: number; cost_usd: number | null }>;
+}
