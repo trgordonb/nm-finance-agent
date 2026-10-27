@@ -93,6 +93,7 @@ export default function WikiTab({ onAsk }: Props) {
   const [domainFilter, setDomainFilter] = useState<string>(ALL);
   const [concepts, setConcepts] = useState<WikiPageRef[]>([]);
   const [query, setQuery] = useState("");
+  const [askQuery, setAskQuery] = useState("");
   const [results, setResults] = useState<WikiSearchHit[] | null>(null);
   const [current, setCurrent] = useState<WikiPageRef | null>(null);
   const [page, setPage] = useState<string | null>(null);
@@ -279,17 +280,28 @@ export default function WikiTab({ onAsk }: Props) {
   const pageTitle = gist?.title || current?.title || current?.slug || "";
   const pageType = gist?.type || current?.type || "concept";
 
+  const scopePrompt = () =>
+    wikiScope === "common" ? "the shared/common wiki" : "my private wiki";
+
   const askAbout = () => {
     if (!current) return;
-    const where =
-      wikiScope === "common"
-        ? "the shared/common wiki; pass --common to the llm-wiki skill"
-        : "my private wiki";
     onAsk(
-      `About the llmwiki page "${pageTitle}" (wiki: ${where}; domain "${current.domain}", ` +
-        `slug "${current.slug}"): use the llm-wiki skill to read it, summarize the key points, ` +
-        `and explain how it connects to related pages.`,
+      `Search ${scopePrompt()} (scope=${wikiScope}) for the page ${JSON.stringify(pageTitle)} ` +
+        `(domain ${JSON.stringify(current.domain)}, slug ${JSON.stringify(current.slug)}). ` +
+        `Use wiki_search, then summarize the page and its related pages.`,
     );
+  };
+
+  const askWiki = () => {
+    const q = askQuery.trim();
+    if (!q) return;
+    onAsk(
+      `Use wiki_search to search ${scopePrompt()} (scope=${wikiScope}) for:\n` +
+        `${JSON.stringify(q)}.\n\n` +
+        `Search the wiki first. Cite the page/domain and source excerpts. ` +
+        `If the wiki has no relevant page, say so explicitly before using web/scholar search.`,
+    );
+    setAskQuery("");
   };
 
   return (
@@ -318,6 +330,24 @@ export default function WikiTab({ onAsk }: Props) {
               Shared wiki
             </button>
           </div>
+          <form
+            className="wiki-ask-row"
+            onSubmit={(e) => {
+              e.preventDefault();
+              askWiki();
+            }}
+          >
+            <input
+              className="wiki-ask-input"
+              placeholder="Ask your wiki…"
+              aria-label="Ask your wiki"
+              value={askQuery}
+              onChange={(e) => setAskQuery(e.target.value)}
+            />
+            <button className="wiki-ask-submit" type="submit" disabled={!askQuery.trim()}>
+              Ask
+            </button>
+          </form>
           <div className="wiki-side-head">
             <select
               className="wiki-domain"

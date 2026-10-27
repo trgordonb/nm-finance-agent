@@ -1500,6 +1500,51 @@ body {
   text-decoration: underline;
 }
 
+.wiki-ask-row {
+  display: flex;
+  gap: 6px;
+  padding: 10px 12px 0;
+}
+
+.wiki-ask-input {
+  flex: 1;
+  min-width: 0;
+  padding: 7px 10px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 12.5px;
+}
+
+.wiki-ask-input::placeholder {
+  color: var(--text-dim);
+}
+
+.wiki-ask-submit {
+  flex: none;
+  padding: 0 12px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.wiki-ask-submit:hover:not(:disabled) {
+  color: var(--text);
+  border-color: var(--text-dim);
+}
+
+.wiki-ask-submit:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
 .wiki-side-head {
   display: flex;
   gap: 6px;
