@@ -11,7 +11,7 @@
 | 1 | `99eac69` (+ `5091aca` log hardening) | `wiki_search` tool; private scope by default, per-user assertion, compact citations, no admin token |
 | 2 | `ef43c45` | `WIKI-FIRST ROUTING` prompt block + wire/tool/prompt tests |
 | 3 | `f540ecb` | General **Ask Wiki** handoff in `WikiTab`; page-level action now names `wiki_search` and its scope; styles |
-| 4 | working tree | `llm-wiki` skill description includes terms/concepts/claims from ingested notes |
+| 4 | working tree + R2 | `llm-wiki` skill description includes terms/concepts/claims from ingested notes; pushed to `s3://neuralmatrix/skills/` |
 
 The tool is in the always-bound base registry, so scheduled runs see it too;
 the existing per-turn policy only filters MCP servers and `cron_manage`.
@@ -51,16 +51,26 @@ npm --prefix frontend run build
    by an answer citing the private page. Repeat with no matching page and
    confirm the agent says the private wiki is empty before falling back.
 
-## Skill description caveat
+## Skill description registry state
 
 The **working copy** `skills/llm-wiki/SKILL.md` now mentions terms/concepts/
-claims from articles or notes ingested into My Wiki. `skills/` is git-ignored;
-the R2 authority still needs the description pushed.
+claims from articles or notes ingested into My Wiki. `skills/` is git-ignored,
+so the change is not in the commit; it was published to R2 with:
+
+```bash
+uv run --project ~/projects/nm-skills-registry nm-skills push skills
+# push skills/ → s3://neuralmatrix 'skills/': 1 uploaded, 0 pruned
+uv run --project ~/projects/nm-skills-registry nm-skills doctor
+# registry OK: 21 skills indexed; ... drift: 0 file(s)
+```
+
+`nm-skills list` shows the revised `llm-wiki` description. The tracked
+`.nm-skills-registry-index.json` records the new etag/size.
 
 Do **not** blindly push the `~/projects/nm-skills-registry` checkout: it is
 older than the live user-scoped working copy (it predates the private/shared
-scope sections). Reconcile it with the live skill before a registry push, or
-push the working copy through the normal `nm-skills` curation path.
+scope sections). The working-copy push above is the safe path; reconcile the
+checkout before any whole-repo registry push.
 
 ## Deliberately unchanged
 
