@@ -10,6 +10,7 @@ import { web_to_markdown, internet_search } from "./web.js";
 import { memory_manage } from "./memory_manage.js";
 import { skill_manage, load_skill } from "./skill_tools.js";
 import { createSessionSearchTool } from "./session_search.js";
+import { wiki_search } from "./wiki_search.js";
 import type { SessionDriver } from "../driver.js";
 import type { AgentDbMirror } from "../agentdb-mirror.js";
 import type { SearchSummarizer } from "../summarizer.js";
@@ -33,6 +34,7 @@ export function buildToolRegistry(
     skill_manage,
     load_skill,
     createSessionSearchTool(driver, mirror, summarizer),
+    wiki_search,
   ];
 }
 
