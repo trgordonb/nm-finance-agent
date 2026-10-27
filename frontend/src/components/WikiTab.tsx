@@ -1,7 +1,8 @@
 // Native Wiki tab: browse and search the compiled llmwiki knowledge base over
 // the read-only /api/wiki/* proxy. P3 adds a private/shared wiki switch; the
-// cross-domain filter, server-side hybrid search, and the "ask the agent"
-// handoff (composer stays the writer) are unchanged.
+// cross-domain filter and server-side hybrid search are unchanged. The general
+// "Ask your wiki" box and the page-level action both hand a scoped wiki_search
+// prompt to the normal chat loop (the composer stays the writer; no auto-send).
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
