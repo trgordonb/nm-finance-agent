@@ -30,6 +30,17 @@ export function buildSystemPrompt(memoryBlock: string, workspaceRoot: string): s
     "prior decisions, findings, errors and their fixes, or procedures you already " +
     "worked out. It returns short excerpts, not full transcripts.\n" +
     "\n" +
+    "WIKI-FIRST ROUTING:\n" +
+    "When the user asks about a term, acronym, concept, claim, paper, article, or " +
+    "saved note that may come from their own knowledge base, call wiki_search with " +
+    "scope \"private\" before internet_search or scholar-search. If the question " +
+    "mentions \"my wiki\", \"the article I ingested/saved\", \"my notes\", or a coined " +
+    "term, this check is required. Cite the wiki page and source when it answers the " +
+    "question. Use scope \"common\" only when the user explicitly asks about the " +
+    "shared wiki. If the private wiki has nothing relevant, say so, then continue " +
+    "with other sources. This is a targeted check for personal/ingested context, " +
+    "not an unconditional wiki search on every question.\n" +
+    "\n" +
     "PROMPT MEMORY (always-on, self-curated):\n" +
     "memory_manage edits your MEMORY.md (facts/decisions relevant to EVERY future " +
     "session) and USER.md (who the user is, preferences, working style). Combined " +
