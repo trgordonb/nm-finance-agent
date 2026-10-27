@@ -44,7 +44,10 @@ function metaOf(hit: SearchHit): Record<string, unknown> {
 }
 
 function clampK(value: unknown): number {
-  const n = Number(value ?? DEFAULT_K);
+  if (value === undefined || value === null || (typeof value === "string" && !value.trim())) {
+    return DEFAULT_K;
+  }
+  const n = Number(value);
   if (!Number.isFinite(n)) return DEFAULT_K;
   return Math.min(MAX_K, Math.max(1, Math.trunc(n)));
 }

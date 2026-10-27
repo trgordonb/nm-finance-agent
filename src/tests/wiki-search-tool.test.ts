@@ -144,8 +144,10 @@ test("wiki_search clamps k below the minimum and defaults invalid k", async () =
   try {
     await wiki_search.execute({ query: "x", k: 0 });
     await wiki_search.execute({ query: "x", k: "not-a-number" });
+    await wiki_search.execute({ query: "x", k: null });
     assert.equal(new URL(stub.calls[0].url).searchParams.get("k"), "1");
     assert.equal(new URL(stub.calls[1].url).searchParams.get("k"), "8");
+    assert.equal(new URL(stub.calls[2].url).searchParams.get("k"), "8");
   } finally {
     stub.restore();
   }
