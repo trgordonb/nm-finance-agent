@@ -140,10 +140,9 @@ export const wiki_search: ToolDef = {
         signal: AbortSignal.timeout(WIKI_PROXY_TIMEOUT_MS),
       });
     } catch (error) {
-      log.warn(
-        `wiki_search scope=${scope} unreachable ${Date.now() - started}ms: ` +
-          String(error).slice(0, 120),
-      );
+      // Never log the query or URL: only the failure class is safe.
+      const name = error instanceof Error ? error.name : "fetch error";
+      log.warn(`wiki_search scope=${scope} unreachable ${Date.now() - started}ms (${name})`);
       return "Rejected: llmwiki is unreachable/cold; retry once.";
     }
 
