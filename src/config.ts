@@ -80,7 +80,8 @@ export const WIKI_API_URL =
 
 // Bearer for the llmwiki service. Empty is right for the local Docker
 // deployment, whose read routes are open; the Cloudflare Containers Worker
-// gates reads too, so a remote service needs the same INGEST_API_TOKEN here.
+// gates reads too, so a remote service needs either the static admin token
+// (legacy/local) or a per-user assertion minted by wiki-auth.ts.
 export const WIKI_API_TOKEN = (process.env.WIKI_API_TOKEN ?? "").trim();
 
 // The Wiki tab read is synchronous. 15 s was enough for localhost; a cold

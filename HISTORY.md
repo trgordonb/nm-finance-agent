@@ -44,6 +44,74 @@ nm-memory-layer + nm-skills-registry), plus the detours. Headlines:
 Known deferred: full RVF/AgenticDB substrate sweep (agentdb alpha churn),
 offline HTML vendor step, drift doctor in UI, search condensation polish.
 
+## 2026-10-27 — EC2 deployment runbook for coding agents
+
+Added `docs/ec2-deployment-runbook.md`, the current on-host/EC2 contract for a
+new deployment. It treats the coding agent as the operator and covers:
+
+- AL2023 + Node 24, EBS/data-volume layout, IAM/SSM, Security Groups, Caddy +
+  Cloudflare Tunnel (recommended) or public Caddy TLS, and loopback-only app
+  ports.
+- The current environment contract: SSO BFF, per-user OpenRouter keys, R2
+  skills, AgentDB mirror, cron, and the P3 `llmwiki` private/shared Wiki tab.
+- `llmwiki` P3 assertion setup (`WIKI_ASSERTION_SECRET`, no admin token),
+  common-write grants, source quotas, and the private/shared UI.
+- Task IDs, acceptance checks, STOP conditions, secret-handling rules,
+  migration/permissions, systemd hardening, backups/restore, monitoring,
+  update/rollback, troubleshooting, and a handover report template.
+- The current reference host values (SSO endpoint/fingerprint, R2 bucket,
+  `llmwiki` URL) with explicit "verify, do not copy secrets" wording.
+
+`docs/vm-deployment-runbook.md` is now marked historical for the original
+2026-10-23 VM; `README.md` and `CLAUDE.md` point at the new canonical runbook.
+
+## 2026-10-27 — llmwiki P3: Wiki-tab private/shared switch
+
+- **`WikiTab`** now has a separate **My wiki** / **Shared wiki** switch and a
+  domain filter. It defaults to the signed-in user's private wiki; the common
+  wiki is an explicit click, not an implicit read. The empty private state
+  links to the shared wiki.
+- **`api.ts`** (`getWikiDomains`, `getWikiConcepts`, `getWikiPage`,
+  `searchWiki`) takes a `WikiScope` and sends `scope` on every call. Wiki
+  requests use a separate fetch path that does **not** run the app-session
+  401 handler, so a missing/expired llmwiki assertion shows a tab error
+  instead of logging the user out.
+- **`WikiGraph`** receives the scope and reads page bodies from it, so a graph
+  never mixes private and common pages. The "Ask the agent" handoff names the
+  scope and tells the skill to use `--common` for shared pages.
+- **`types.ts`** adds `WikiScope`; **`styles.css`** styles the switch.
+- The proxy's legacy default remains `scope=common` for callers that omit it;
+  the UI always sends a scope. No admin token is introduced into the agent.
+- Tests: `tsc --noEmit` clean, 190 tests pass, and `npm run build` (Vite)
+  succeeds. The live llmwiki P3 image/Worker are recorded in the service
+  repo's `HISTORY.md`; the Wiki tab's private default uses the P2 assertion
+  path and the service's P3 `scope` handling.
+
+## 2026-10-26 — llmwiki P2: per-user wiki assertions + scoped skill
+
+- **`src/wiki-auth.ts`** mints a short-lived HS256 assertion per request /
+  `execute` command (`iss=nm-finance-agent`, `aud=llmwiki`, `sub`, `username`,
+  `iat`, `exp`, `jti`; secret `WIKI_ASSERTION_SECRET`, default TTL 600 s). It
+  reads the secret at call time so tests/local rotation do not need a re-import.
+- **`execute`** injects `LLMWIKI_URL`, `LLMWIKI_ASSERTION` and
+  `LLMWIKI_SCOPE=private`, and strips `WIKI_API_TOKEN` / `INGEST_API_TOKEN` /
+  `LLMWIKI_TOKEN` from the child env. The model can still read `.env`; this is
+  the trusted-user boundary documented in the llm-wiki plan (per-user agent
+  containers are the escalation).
+- **`/api/wiki/*`** mints the assertion for the signed-in user and now forwards
+  the `scope` query key. The existing Wiki tab stays on `scope=common` until the
+  P3 selector; the skill is where private reads happen in P2.
+- **`skills/llm-wiki`**: helper supports `init` (`POST /users/me/wiki`),
+  `whoami`, `--private`/`--common`/`--scope=`, and refuses to fall back to the
+  static admin token on a remote URL. `SKILL.md` documents the two wikis,
+  default-private captures, explicit common reads, and the init workflow.
+- **`.env.example`**: `WIKI_ASSERTION_SECRET`, `WIKI_ASSERTION_TTL_SECONDS`;
+  `WIKI_API_TOKEN` is marked legacy/local-only.
+- Tests: `src/tests/wiki-auth.test.ts` (claims, signature, tamper, disabled),
+  plus the proxy `scope` case; `tsc --noEmit` clean and 190 tests pass.
+  Cross-language check verified a Node-minted assertion against the Python
+  verifier.
+
 ## 2026-10-18 — mirror sidecar: HNSW preallocation bounded (`AGENTDB_MAX_ELEMENTS`)
 
 - **Re-measure of the 2026-10-10 memory note.** The old comment figures
@@ -657,3 +725,98 @@ and keeps `Error output:` for nonzero exits. The Feed heuristic
 (`Feed.tsx`) stays keyed on `Error output:`/`Rejected:`/`Error:`/nonzero
 `Exit code`, so successful progress logs render as success. Added a contract
 test for both branches; suite 107/107.
+
+---
+
+## 2026-10-25 — Agent cron shipped (Phase 1+2+timezones): a scheduled NFLX run completed end-to-end
+
+Per docs/agent-cron-plan.md: `cron_manage` (create/list/get/update/pause/
+resume/remove/runs/run) as the agent's handle over per-user scheduled jobs;
+`cron_jobs`/`cron_runs` tables; an in-process 30 s ticker with a
+BEGIN IMMEDIATE claim (never double-fired, never re-fired while long); fires
+execute as ordinary turns inside `runInWorkspace(owner)` plus a scheduled-run
+ALS flag that hides `cron_manage` (loop prevention); per-job IANA timezones
+(cron-parser `tz`, DST-safe naive-once conversion); "Scheduled" right-pane
+view (job cards, run-now/pause/resume/edit/delete, expandable run histories)
+with the job session tagged `scheduled` in the sidebar. Knobs: CRON_ENABLED,
+CRON_TICK_MS, CRON_MAX_PARALLEL, CRON_CATCH_UP_MISSED,
+CRON_FAILURE_PAUSE_STREAK, CRON_MISFIRE_GRACE_MIN, CRON_WRAPUP_REMAINING.
+
+End-to-end validation (traces `84a7bc2e…` schedule, plus three fires):
+- Schedule from chat: "run the NFLX flow at 22:00 HKT today" → one create call,
+  NL normalized to a timezone-correct `once` instant, self-contained payload
+  (skill auto-run, max_iterations 55), fire time confirmed in the same turn.
+- Attempt 1 **failed at the 60-iteration cap** — found the per-job
+  `max_iterations` never reached `runTurn` (fixed: `meta.maxIterations` +
+  `meta.wrapupRemaining`, wider 10-iteration landing margin for unattended
+  runs), and clicking "Open session" mid-run 404'd (fixed: fires register
+  their session at fire start via `store.registerSession`; the sessions
+  route returns an empty archive for a registered-but-empty session instead
+  of 404).
+- Attempt 2 killed by the owner's restart → boot reconcile marked it
+  `interrupted` (audit-only) exactly as designed.
+- Attempt 3 **completed**: 47/55 iterations, 15.5 min, graceful landing
+  ("Everything is persisted"), resumed from attempt 1's `argusdesk_state.md`
+  checkpoint, wrote `argusdesk_report.md`, and the `once` job auto-disabled
+  itself. Verdict: nothing leads NFLX (fourth straight name).
+- Caught by tests before shipping: bare-minute intervals didn't parse, claim
+  exclusivity missed the `claimed` state, auto-pause dropped the explanatory
+  error. Suite 187/187.
+
+## 2026-10-25 — Chat SSE hardening + UI rework (deploy incident follow-up)
+
+The browser showed `Error in input stream` during long turns (traces
+`c3a5be8b…`, `b0c22d27…` — both succeeded server-side; the SSE reader died on
+an idle cut). Per docs/todo-chat-sse-reliability.md: `/api/chat` now sends
+15 s keepalive comments and aborts the turn on client disconnect (valid-prefix
+persistence); the frontend SSE parser moved to `frontend/src/sse.ts` and
+swallows stream errors after the terminal `done` event. UI rework in the same
+deploy: right pane is Chat/Wiki/Scheduled, Skills|MCP|Model & key moved into a
+settings modal from the sidebar gear, sidebar footer reordered (model+gear
+above user+logout).
+
+## 2026-10-25 — User-scoped OpenRouter keys Phase 1 + session gotchas
+
+Per docs/user-scoped-openrouter-keys-plan.md (owner decisions §10: dedicated
+`USER_LLM_KEY_SECRET`, warn-only `require_user` week, mid-session key deletion
+allowed, harness-side usage ledger): `src/llm-keys.ts` stores per-user keys
+encrypted (AES-256-GCM) under `state/users/<id>/llm.json`; `chat()` resolves
+Authorization per call in the caller's ALS scope (user key → server key per
+`LLM_KEY_POLICY`; cron fires bill their owner); routes
+`POST/GET/DELETE /api/user/llm-key` validate via OpenRouter `GET /api/v1/key`
+(no spend) and mask everywhere; every successful LLM call lands in the
+per-user `llm_usage` ledger (`GET /api/user/llm-usage`); "Model & key" tab in
+the settings modal. 8 tests; suite 187/187.
+
+**Session gotchas worth remembering:**
+- **skills/ direct edits are clobbered by the boot R2 pull** — push after
+  editing: `uv run --directory ~/projects/nm-skills-registry nm-skills push
+  <ABSOLUTE skills path>` (a relative path silently targets the registry's
+  own mirror; `uv run --directory` changes cwd).
+- `config.ts` loads `.env` with `dotenv.config({override: true})` — test env
+  set before import is overridden by .env values; assert config-resolved
+  values.
+- The vibe_trading MCP stays inactive until `vibe-trading-mcp` is installed
+  on the VM (uv, Python ≥3.11) and symlinked into `/usr/local/bin` (the unit
+  pins PATH); its `list_skills`/`load_skill` doc tools are deliberately kept
+  so agents can read the SignalEngine contract before writing backtest code.
+- Kronos on CPU peaks at ~1.27 GiB RSS, ~640 MiB of which is importing the
+  cu130 torch wheel — a CPU-only torch build would roughly halve it
+  (docs/agent-cron-sse-ui… RESULTS addendum; memory re-run in
+  mu-driver/run/kronos_memory.json).
+- InstaBox remote mode (skills/instabox-sandbox) needs the CLI + key on the
+  VM; exec transport gotchas (inline quoting, `&` stripping, binary stdout)
+  are codified in that skill. The stock-price-mover daily.sh scheduler is
+  superseded by agent cron (auto-run mode + checkpoint file work as cron
+  fires); daily.sh remains for external scheduling if wanted.
+
+**What's left — user-scoped keys:** Phase 2 = OAuth PKCE key entry
+(`POST /api/v1/auth/keys/code` + exchange; no copy-paste), credits widget
+(`GET /api/v1/credits`), flip `require_user` enforcement after the warn-only
+week (deadline lives in the VM env), per-model usage breakdown in the
+Model & key tab. Phase 3 = provisioning-key minting (`POST /api/v1/keys`:
+operator mints per-user derived keys with monthly credit limits), BYOK
+multi-provider (`CreateBYOKKeyRequest`), per-user model preference.
+**What's left — cron Phase 3:** live-stream in-flight fires, cancel running
+fires (register in ACTIVE_TURNS), `context_from` chaining, per-job model
+pins, `allow_scheduling` opt-in, cron doctor in /api/health.

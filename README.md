@@ -92,7 +92,7 @@ cp .env.example .env    # then fill in keys
 npm install
 npm run start            # backend  → http://127.0.0.1:3001
 cd frontend && npm install && npm run dev   # web UI → http://localhost:5173 (proxies /api)
-npm test                 # full suite (162 tests at the time of writing)
+npm test                 # full suite (190 tests on 2026-10-27)
 npm run research -- "question"   # deep research CLI (saves under $WORKSPACE_DIR/research/)
 ```
 
@@ -101,6 +101,13 @@ collapsible tool results, Stop = turn cancel, Wiki tab, settings for
 Skills | MCP, deep-research progress strip). Its vite dev server proxies
 `/api` to the Express backend, so no CORS handling is needed in dev (the
 backend no longer sends wildcard CORS headers — see Authentication below).
+
+For a production EC2 host, use the agent-executable
+[`docs/ec2-deployment-runbook.md`](docs/ec2-deployment-runbook.md). It covers
+AL2023, Node 24, EBS, Security Groups, Caddy + Cloudflare Tunnel/public TLS,
+SSO BFF, R2 skills, the AgentDB mirror, the P3 Wiki tab, cron, backups, and the
+handover contract. `docs/vm-deployment-runbook.md` is the 2026-10-23 historical
+runbook for the existing host.
 
 ## Authentication (SSO)
 

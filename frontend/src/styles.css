@@ -1455,6 +1455,51 @@ body {
   background: var(--bg-subtle);
 }
 
+.wiki-scope-switch {
+  display: flex;
+  gap: 4px;
+  padding: 10px 12px 0;
+}
+
+.wiki-scope-btn {
+  flex: 1;
+  padding: 7px 8px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-dim);
+  font-family: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.wiki-scope-btn:hover:not(:disabled) {
+  color: var(--text);
+}
+
+.wiki-scope-btn.active {
+  background: var(--panel);
+  border-color: var(--accent, var(--text-dim));
+  color: var(--text);
+}
+
+.wiki-scope-btn:disabled {
+  opacity: 0.55;
+}
+
+.wiki-scope-link {
+  display: block;
+  margin-top: 8px;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--accent, #58a6ff);
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+}
+
 .wiki-side-head {
   display: flex;
   gap: 6px;

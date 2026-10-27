@@ -1,7 +1,7 @@
 // Native Wiki tab: browse and search the compiled llmwiki knowledge base over
-// the read-only /api/wiki/* proxy. Stage 2 of docs/wiki-tab-plan.md:
-// cross-domain scope ("all domains"), server-side hybrid search, and an
-// "ask the agent" handoff that prefills the composer (chat stays the writer).
+// the read-only /api/wiki/* proxy. P3 adds a private/shared wiki switch; the
+// cross-domain filter, server-side hybrid search, and the "ask the agent"
+// handoff (composer stays the writer) are unchanged.
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { ReactNode } from "react";
@@ -9,7 +9,7 @@ import Markdown, { defaultUrlTransform } from "react-markdown";
 import remarkGfm from "remark-gfm";
 import { BookOpen, LoaderCircle, MessageSquare, Network, RefreshCw, X } from "lucide-react";
 import { getWikiConcepts, getWikiDomains, getWikiPage, searchWiki } from "../api";
-import type { WikiDomain, WikiGist, WikiSearchHit } from "../types";
+import type { WikiDomain, WikiGist, WikiScope, WikiSearchHit } from "../types";
 import WikiGraph from "./WikiGraph";
 
 interface Props {
@@ -87,7 +87,10 @@ function snippet(text: string): string {
 
 export default function WikiTab({ onAsk }: Props) {
   const [domains, setDomains] = useState<WikiDomain[]>([]);
-  const [scope, setScope] = useState<string>(ALL);
+  // Which wiki: the signed-in user's private one (P3 default) or the shared one.
+  const [wikiScope, setWikiScope] = useState<WikiScope>("private");
+  // Which domain within that wiki: ALL, or one registry name.
+  const [domainFilter, setDomainFilter] = useState<string>(ALL);
   const [concepts, setConcepts] = useState<WikiPageRef[]>([]);
   const [query, setQuery] = useState("");
   const [results, setResults] = useState<WikiSearchHit[] | null>(null);
@@ -97,58 +100,82 @@ export default function WikiTab({ onAsk }: Props) {
   const [loadingPage, setLoadingPage] = useState(false);
   const [graphMode, setGraphMode] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  // stale-response guards: only the newest page/search request may win
+  // stale-response guards: only the newest page/search/domain load may win
   const reqRef = useRef(0);
   const searchRef = useRef(0);
+  const loadRef = useRef(0);
+  const bootRef = useRef(0);
 
-  const loadScope = useCallback(async (next: string, list: WikiDomain[]) => {
-    setScope(next);
-    setCurrent(null);
-    setPage(null);
-    setConcepts([]);
-    setError(null);
-    try {
-      let loaded: WikiPageRef[];
-      if (next === ALL) {
-        const per = await Promise.all(
-          list.map(async (d) =>
-            (await getWikiConcepts(d.name)).map((g) => ({ ...g, domain: d.name })),
-          ),
-        );
-        loaded = per.flat().sort(byUpdated);
-      } else {
-        loaded = (await getWikiConcepts(next)).map((g) => ({ ...g, domain: next }));
-      }
-      setConcepts(loaded);
-      if (loaded.length) setCurrent(loaded[0]);
-    } catch (err) {
-      setError(`failed to load pages: ${(err as Error).message}`);
-    }
-  }, []);
-
-  const bootstrap = useCallback(
-    async (nextScope: string) => {
-      setBooting(true);
+  const loadDomain = useCallback(
+    async (next: string, list: WikiDomain[], nextWikiScope: WikiScope) => {
+      const n = ++loadRef.current;
+      setDomainFilter(next);
+      setCurrent(null);
+      setPage(null);
+      setConcepts([]);
       setError(null);
       try {
-        const list = await getWikiDomains();
-        setDomains(list);
-        const target =
-          nextScope === ALL || list.some((d) => d.name === nextScope) ? nextScope : ALL;
-        await loadScope(target, list);
+        let loaded: WikiPageRef[];
+        if (next === ALL) {
+          const per = await Promise.all(
+            list.map(async (d) =>
+              (await getWikiConcepts(d.name, nextWikiScope)).map((g) => ({
+                ...g,
+                domain: d.name,
+              })),
+            ),
+          );
+          loaded = per.flat().sort(byUpdated);
+        } else {
+          loaded = (await getWikiConcepts(next, nextWikiScope)).map((g) => ({
+            ...g,
+            domain: next,
+          }));
+        }
+        if (loadRef.current !== n) return;
+        setConcepts(loaded);
+        if (loaded.length) setCurrent(loaded[0]);
       } catch (err) {
-        setError(
-          `llmwiki unreachable — is the service up at :8010? (${(err as Error).message})`,
-        );
-      } finally {
-        setBooting(false);
+        if (loadRef.current === n) {
+          setError(`failed to load pages: ${(err as Error).message}`);
+        }
       }
     },
-    [loadScope],
+    [],
+  );
+
+  const bootstrap = useCallback(
+    async (nextWikiScope: WikiScope, nextDomain: string = ALL) => {
+      const n = ++bootRef.current;
+      ++loadRef.current; // invalidate any domain load already in flight
+      setBooting(true);
+      setError(null);
+      setCurrent(null);
+      setPage(null);
+      setConcepts([]);
+      try {
+        const list = await getWikiDomains(nextWikiScope);
+        if (bootRef.current !== n) return;
+        setWikiScope(nextWikiScope);
+        setDomains(list);
+        const target =
+          nextDomain === ALL || list.some((d) => d.name === nextDomain) ? nextDomain : ALL;
+        await loadDomain(target, list, nextWikiScope);
+      } catch (err) {
+        if (bootRef.current === n) {
+          setError(
+            `llmwiki unreachable — is the service up at :8010? (${(err as Error).message})`,
+          );
+        }
+      } finally {
+        if (bootRef.current === n) setBooting(false);
+      }
+    },
+    [loadDomain],
   );
 
   useEffect(() => {
-    void bootstrap(ALL);
+    void bootstrap("private");
   }, [bootstrap]);
 
   // Page body for the current selection.
@@ -157,7 +184,7 @@ export default function WikiTab({ onAsk }: Props) {
     const n = ++reqRef.current;
     setLoadingPage(true);
     setPage(null);
-    getWikiPage(current.slug, current.domain)
+    getWikiPage(current.slug, current.domain, wikiScope)
       .then((md) => {
         if (reqRef.current === n) setPage(md);
       })
@@ -167,7 +194,7 @@ export default function WikiTab({ onAsk }: Props) {
       .finally(() => {
         if (reqRef.current === n) setLoadingPage(false);
       });
-  }, [current]);
+  }, [current, wikiScope]);
 
   // Hybrid search (debounced); scoped to the selected domain, or every domain
   // when the scope is "all".
@@ -179,7 +206,7 @@ export default function WikiTab({ onAsk }: Props) {
     }
     const n = ++searchRef.current;
     const handle = window.setTimeout(() => {
-      searchWiki(q, scope === ALL ? null : scope)
+      searchWiki(q, domainFilter === ALL ? null : domainFilter, wikiScope)
         .then((hits) => {
           if (searchRef.current === n) setResults(hits);
         })
@@ -188,7 +215,7 @@ export default function WikiTab({ onAsk }: Props) {
         });
     }, 350);
     return () => window.clearTimeout(handle);
-  }, [query, scope]);
+  }, [query, domainFilter, wikiScope]);
 
   const openRef = useCallback(
     (target: { domain: string; slug: string }, titleHint = "", typeHint = "concept") => {
@@ -254,9 +281,14 @@ export default function WikiTab({ onAsk }: Props) {
 
   const askAbout = () => {
     if (!current) return;
+    const where =
+      wikiScope === "common"
+        ? "the shared/common wiki; pass --common to the llm-wiki skill"
+        : "my private wiki";
     onAsk(
-      `About the llmwiki page "${pageTitle}" (domain "${current.domain}", slug "${current.slug}"): ` +
-        `use the llm-wiki skill to read it, summarize the key points, and explain how it connects to related pages.`,
+      `About the llmwiki page "${pageTitle}" (wiki: ${where}; domain "${current.domain}", ` +
+        `slug "${current.slug}"): use the llm-wiki skill to read it, summarize the key points, ` +
+        `and explain how it connects to related pages.`,
     );
   };
 
@@ -264,11 +296,33 @@ export default function WikiTab({ onAsk }: Props) {
     <div className="wiki-tab">
       <div className="wiki-layout">
         <aside className="wiki-side">
+          <div className="wiki-scope-switch" role="group" aria-label="Wiki">
+            <button
+              className={`wiki-scope-btn${wikiScope === "private" ? " active" : ""}`}
+              aria-pressed={wikiScope === "private"}
+              disabled={booting}
+              onClick={() => {
+                if (wikiScope !== "private") void bootstrap("private");
+              }}
+            >
+              My wiki
+            </button>
+            <button
+              className={`wiki-scope-btn${wikiScope === "common" ? " active" : ""}`}
+              aria-pressed={wikiScope === "common"}
+              disabled={booting}
+              onClick={() => {
+                if (wikiScope !== "common") void bootstrap("common");
+              }}
+            >
+              Shared wiki
+            </button>
+          </div>
           <div className="wiki-side-head">
             <select
               className="wiki-domain"
-              value={scope}
-              onChange={(e) => void loadScope(e.target.value, domains)}
+              value={domainFilter}
+              onChange={(e) => void loadDomain(e.target.value, domains, wikiScope)}
               disabled={booting || domains.length === 0}
             >
               <option value={ALL}>all domains</option>
@@ -281,7 +335,7 @@ export default function WikiTab({ onAsk }: Props) {
             <button
               className="wiki-refresh"
               title="Reload from llmwiki"
-              onClick={() => void bootstrap(scope)}
+              onClick={() => void bootstrap(wikiScope, domainFilter)}
               disabled={booting}
             >
               <RefreshCw size={14} />
@@ -354,7 +408,7 @@ export default function WikiTab({ onAsk }: Props) {
                       <span className="wiki-item-title">{c.title || c.slug}</span>
                       <span className="wiki-item-meta">
                         <span className={`wiki-type t-${c.type}`}>{c.type}</span>
-                        {scope === ALL && <span className="wiki-domain-tag">{c.domain}</span>}
+                        {domainFilter === ALL && <span className="wiki-domain-tag">{c.domain}</span>}
                         <span className="wiki-item-gist">{c.gist}</span>
                       </span>
                     </button>
@@ -362,7 +416,17 @@ export default function WikiTab({ onAsk }: Props) {
                 })}
                 {!booting && !error && concepts.length === 0 && (
                   <div className="wiki-empty">
-                    no pages yet — ingest something with the llm-wiki skill
+                    {wikiScope === "private"
+                      ? "your private wiki is empty — capture something with the llm-wiki skill"
+                      : "the shared wiki has no pages in this domain"}
+                    {wikiScope === "private" && (
+                      <button
+                        className="wiki-scope-link"
+                        onClick={() => void bootstrap("common")}
+                      >
+                        Browse the shared wiki
+                      </button>
+                    )}
                   </div>
                 )}
               </>
@@ -378,6 +442,7 @@ export default function WikiTab({ onAsk }: Props) {
             ) : (
               <WikiGraph
                 refs={concepts}
+                scope={wikiScope}
                 onOpen={(ref) => {
                   openRef(ref);
                   setGraphMode(false);
@@ -394,7 +459,10 @@ export default function WikiTab({ onAsk }: Props) {
           )}
           {!booting && !error && !current && concepts.length === 0 && (
             <div className="wiki-status">
-              <BookOpen size={16} /> nothing to show yet — the wiki grows as the agent ingests
+              <BookOpen size={16} />
+              {wikiScope === "private"
+                ? "your private wiki is empty — ask the agent to ingest something, or open the shared wiki"
+                : "nothing to show yet — the shared wiki grows as the agent ingests"}
             </div>
           )}
           {current && (
@@ -408,6 +476,7 @@ export default function WikiTab({ onAsk }: Props) {
                 </div>
                 <div className="wiki-page-meta">
                   <span className={`wiki-type t-${pageType}`}>{pageType}</span>
+                  <span>{wikiScope === "private" ? "my wiki" : "shared wiki"}</span>
                   <span>{current.domain}</span>
                   {gist?.updated && <span>updated {gist.updated}</span>}
                   {gist && (

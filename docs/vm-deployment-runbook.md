@@ -1,5 +1,12 @@
 # Cloud VM deployment runbook (AWS EC2 · Amazon Linux 2023)
 
+> **Historical status (2026-10-27):** this is the deployment history for the
+> original `agent.neuralmatrix.site` VM (2026-10-23). For a **new** EC2
+> deployment, use [`docs/ec2-deployment-runbook.md`](./ec2-deployment-runbook.md),
+> which covers the current P3 Wiki integration, cron, per-user OpenRouter keys,
+> and the latest environment contract. Keep this file for historical context;
+> do not use it as the current checklist.
+
 **Audience:** an OpenCode agent running **on the target EC2 instance**, inside a
 clone of `https://github.com/trgordonb/nm-finance-agent` (`main`; this runbook
 was added in `bced3ed`).
@@ -8,7 +15,9 @@ in §4; do not mix the two package managers.
 **Goal:** a single-user, internet-reachable deployment with HTTPS/auth, the R2
 skills registry live, the AgentDB mirror remote, and backups.
 
-**Status:** 2026-10-23. The app is single-user; app SSO (`AUTH_MODE=sso`) is
+**Status:** 2026-10-23 (historical; see
+[`docs/ec2-deployment-runbook.md`](./ec2-deployment-runbook.md) for current
+work). The original deployment is single-user; app SSO (`AUTH_MODE=sso`) is
 deployed. Cloudflare Access or Caddy basic auth can be layered in front but are
 optional. Per-user containers are deliberately out of scope — see
 `docs/per-user-workspace-and-r2.md`.

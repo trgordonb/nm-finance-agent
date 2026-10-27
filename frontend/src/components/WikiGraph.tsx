@@ -10,7 +10,7 @@ import { LoaderCircle } from "lucide-react";
 import type Graph from "graphology";
 import type Sigma from "sigma";
 import { getWikiPage } from "../api";
-import type { WikiGist } from "../types";
+import type { WikiGist, WikiScope } from "../types";
 
 export interface GraphPageRef extends WikiGist {
   domain: string;
@@ -18,6 +18,8 @@ export interface GraphPageRef extends WikiGist {
 
 interface Props {
   refs: GraphPageRef[];
+  /** Which wiki the refs came from; page bodies must be read from the same one. */
+  scope: WikiScope;
   onOpen: (ref: GraphPageRef) => void;
 }
 
@@ -50,7 +52,7 @@ function linkTargets(markdown: string): string[] {
   return [...targets];
 }
 
-export default function WikiGraph({ refs, onOpen }: Props) {
+export default function WikiGraph({ refs, scope, onOpen }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sigmaRef = useRef<Sigma | null>(null);
   const hoveredRef = useRef<string | null>(null);
@@ -81,7 +83,7 @@ export default function WikiGraph({ refs, onOpen }: Props) {
             Promise.all(
               refs.map(async (ref) => {
                 try {
-                  return { ref, markdown: await getWikiPage(ref.slug, ref.domain) };
+                  return { ref, markdown: await getWikiPage(ref.slug, ref.domain, scope) };
                 } catch {
                   // an unreadable page is a nodeless entry, not a failed graph
                   return { ref, markdown: "" };
@@ -229,7 +231,7 @@ export default function WikiGraph({ refs, onOpen }: Props) {
       sigmaRef.current?.kill();
       sigmaRef.current = null;
     };
-  }, [refs]);
+  }, [refs, scope]);
 
   return (
     <div className="wiki-graph">

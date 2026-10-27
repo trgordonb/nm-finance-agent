@@ -156,16 +156,16 @@
 "size": 5298
 },
 "skills/llm-wiki/SKILL.md": {
-"etag": "\"14b99b9290ff8566361edaee53a7e1d9\"",
-"size": 15091
+"etag": "\"e192d16481cc0e424b649438772a185c\"",
+"size": 19470
 },
 "skills/llm-wiki/references/revert-ingest.md": {
 "etag": "\"1de70fcdd87a9bfcf4dadf7c0a566361\"",
 "size": 3495
 },
 "skills/llm-wiki/scripts/llmwiki.sh": {
-"etag": "\"52f0c786fdd37411889ea202de9dcded\"",
-"size": 7553
+"etag": "\"51400aeb0555cd9c835df74ab6dff82a\"",
+"size": 9821
 },
 "skills/luxalgo-indicator-writeup/SKILL.md": {
 "etag": "\"49523ab0d3cc6ba5943595360e917c3c\"",

@@ -15,6 +15,7 @@ import type {
   SkillInfo,
   WikiDomain,
   WikiGist,
+  WikiScope,
   WikiSearchHit,
 } from "./types";
 import { consumeSseStream, type SseHandler } from "./sse";
@@ -257,15 +258,40 @@ export async function streamChat(
 
 /* --- Wiki tab (read-only llmwiki passthrough via /api/wiki/*) --------------- */
 
-export const getWikiDomains = () => fetchJSON<WikiDomain[]>("/api/wiki/domains");
+/** A 401 here is the llmwiki credential, not the app session: do not log the
+ *  user out when the wiki assertion is missing or expired. Regular app calls
+ *  still use apiFetch and keep that behavior. */
+async function fetchWikiJSON<T>(path: string): Promise<T> {
+  const res = await fetch(path);
+  if (!res.ok) {
+    let detail = `${res.status}`;
+    try {
+      const body = (await res.json()) as { detail?: string; error?: string };
+      detail = body.detail ?? body.error ?? detail;
+    } catch {
+      /* non-JSON error body */
+    }
+    throw new Error(`GET ${path} failed: ${detail}`);
+  }
+  return (await res.json()) as T;
+}
 
-export const getWikiConcepts = (domain: string) =>
-  fetchJSON<WikiGist[]>(`/api/wiki/concepts?domain=${encodeURIComponent(domain)}`);
+export const getWikiDomains = (scope: WikiScope) =>
+  fetchWikiJSON<WikiDomain[]>(`/api/wiki/domains?scope=${scope}`);
+
+export const getWikiConcepts = (domain: string, scope: WikiScope) =>
+  fetchWikiJSON<WikiGist[]>(
+    `/api/wiki/concepts?domain=${encodeURIComponent(domain)}&scope=${scope}`,
+  );
 
 /** One compiled page as raw markdown (the proxy forwards text/plain, not JSON). */
-export async function getWikiPage(slug: string, domain: string): Promise<string> {
-  const path = `/api/wiki/page/${encodeURIComponent(slug)}?domain=${encodeURIComponent(domain)}`;
-  const res = await apiFetch(path);
+export async function getWikiPage(
+  slug: string,
+  domain: string,
+  scope: WikiScope,
+): Promise<string> {
+  const path = `/api/wiki/page/${encodeURIComponent(slug)}?domain=${encodeURIComponent(domain)}&scope=${scope}`;
+  const res = await fetch(path);
   if (!res.ok) {
     let detail = `${res.status}`;
     try {
@@ -279,10 +305,15 @@ export async function getWikiPage(slug: string, domain: string): Promise<string>
   return res.text();
 }
 
-/** Hybrid wiki-first search; no domain = every registered domain (the
- *  service's QUERY_DOMAIN_POLICY=all), each hit carries its own `domain`. */
-export const searchWiki = (q: string, domain: string | null, k = 8) => {
-  const params = new URLSearchParams({ q, k: String(k) });
+/** Hybrid wiki-first search; no domain = every domain in the selected wiki
+ *  (the service's QUERY_DOMAIN_POLICY=all), each hit carries its own `domain`. */
+export const searchWiki = (
+  q: string,
+  domain: string | null,
+  scope: WikiScope,
+  k = 8,
+) => {
+  const params = new URLSearchParams({ q, k: String(k), scope });
   if (domain) params.set("domain", domain);
-  return fetchJSON<WikiSearchHit[]>(`/api/wiki/search?${params.toString()}`);
+  return fetchWikiJSON<WikiSearchHit[]>(`/api/wiki/search?${params.toString()}`);
 };

@@ -20,6 +20,11 @@ test("wiki-proxy: read roots pass through with filtered query params", () => {
     buildWikiTarget("search", { q: "paged attention", k: "8", domain: "llm" }),
     { path: "/search?domain=llm&q=paged+attention&k=8" },
   );
+  assert.deepEqual(
+    buildWikiTarget("search", { q: "paged attention", scope: "private" }),
+    { path: "/search?q=paged+attention&scope=private" },
+    "the wiki scope is a forwardable query key",
+  );
 });
 
 test("wiki-proxy: page slugs are validated (traversal cannot reach other endpoints)", () => {

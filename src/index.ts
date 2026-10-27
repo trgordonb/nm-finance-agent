@@ -50,6 +50,7 @@ import { certificateDaysRemaining, createSsoClient } from "./auth/sso.js";
 import { AuthStore } from "./auth/store.js";
 import { looksLikePdf, saveWikiUpload } from "./uploads.js";
 import { buildWikiTarget, fetchWiki } from "./wiki-proxy.js";
+import { mintWikiAssertion, wikiAssertionsEnabled } from "./wiki-auth.js";
 import { PromptMemory } from "./memory.js";
 import { SQLiteSessionStore } from "./store.js";
 import { AgentDbMirror } from "./agentdb-mirror.js";
@@ -692,15 +693,26 @@ app.post(
 
 app.get("/api/wiki/*", async (req, res) => {
   const splat = (req.params as { 0?: string })[0] ?? "";
-  const built = buildWikiTarget(splat, req.query as Record<string, unknown>);
+  const query = { ...(req.query as Record<string, unknown>) };
+  // The existing Wiki tab predates the scope selector (P3) and expects the
+  // common wiki; the skill is where private reads happen in P2. A caller that
+  // passes ?scope=private/common gets what it asks for.
+  if (!query.scope) query.scope = "common";
+  const built = buildWikiTarget(splat, query);
   if ("error" in built) {
     res.status(400).json({ detail: built.error });
     return;
   }
+  const auth = (req as AuthedRequest).auth;
+  // A signed-in user gets a short-lived assertion; AUTH_MODE=off/legacy falls
+  // back to the static token. The assertion is never the admin credential.
+  const assertion = auth && wikiAssertionsEnabled()
+    ? mintWikiAssertion({ sub: auth.sub, username: auth.username })
+    : undefined;
   try {
     const upstream = await fetchWiki(WIKI_API_URL, built.path, {
       timeoutMs: WIKI_PROXY_TIMEOUT_MS,
-      token: WIKI_API_TOKEN,
+      token: assertion ?? WIKI_API_TOKEN,
     });
     res.status(upstream.status).type(upstream.contentType).send(upstream.body);
   } catch (err) {

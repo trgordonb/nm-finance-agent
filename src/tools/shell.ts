@@ -1,11 +1,11 @@
 // execute: run a shell command with a hard timeout. Spawns with CWD = the
 // agent workspace, so script outputs/downloads land there by construction.
 import { exec, type ExecOptions } from "node:child_process";
-import { EXECUTE_TIMEOUT_MS } from "../config.js";
+import { EXECUTE_TIMEOUT_MS, SKILLS_DIR, WIKI_API_URL } from "../config.js";
 import fs from "node:fs";
 import pathSvc from "node:path";
-import { resolveInWorkspace } from "../workspace.js";
-import { SKILLS_DIR } from "../config.js";
+import { currentUserId, resolveInWorkspace } from "../workspace.js";
+import { mintWikiAssertion, wikiAssertionsEnabled } from "../wiki-auth.js";
 import type { ToolDef } from "../types.js";
 
 export const execute: ToolDef = {
@@ -25,13 +25,29 @@ export const execute: ToolDef = {
   execute(args, ctx) {
     return new Promise((resolve) => {
       const command = String(args.command ?? "");
+      // The user's shell gets a short-lived, user-scoped wiki assertion — never
+      // the admin/common token. The model can read this env (execute is the
+      // agent's own shell), so the token's TTL and scope are the containment.
+      const childEnv: NodeJS.ProcessEnv = {
+        ...process.env,
+        SKILLS_DIR,
+        WORKSPACE_DIR: resolveInWorkspace(""),
+      };
+      delete childEnv.WIKI_API_TOKEN;
+      delete childEnv.INGEST_API_TOKEN;
+      delete childEnv.LLMWIKI_TOKEN;
+      childEnv.LLMWIKI_URL = WIKI_API_URL;
+      if (wikiAssertionsEnabled()) {
+        childEnv.LLMWIKI_ASSERTION = mintWikiAssertion({ username: currentUserId() });
+        childEnv.LLMWIKI_SCOPE = "private";
+      }
       const opts: ExecOptions = {
         shell: "/bin/bash",
         timeout: EXECUTE_TIMEOUT_MS,
         maxBuffer: 1_000_000,
         cwd: resolveInWorkspace(""),
         // $SKILLS_DIR lets shell commands reach skill scripts regardless of cwd
-        env: { ...process.env, SKILLS_DIR, WORKSPACE_DIR: resolveInWorkspace("") },
+        env: childEnv,
       };
       // Cancel responsiveness: Stop aborts the turn signal, so kill the
       // foreground child instead of waiting for EXECUTE_TIMEOUT_MS.

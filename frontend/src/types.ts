@@ -166,6 +166,9 @@ export interface ApiMessage {
   status?: string;
 }
 
+/** Wiki-tab partition: the signed-in user's private wiki or the shared one. */
+export type WikiScope = "private" | "common";
+
 /** Wiki tab: one registered llmwiki domain (GET /api/wiki/domains). */
 export interface WikiDomain {
   name: string;

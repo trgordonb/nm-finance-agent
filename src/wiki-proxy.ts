@@ -11,7 +11,7 @@
 
 const ALLOWED_ROOTS = new Set(["domains", "concepts", "page", "search", "healthz"]);
 const SLUG_RE = /^[a-z0-9][a-z0-9._-]*$/i;
-const QUERY_KEYS = ["domain", "prefix", "q", "k"] as const;
+const QUERY_KEYS = ["domain", "prefix", "q", "k", "scope"] as const;
 
 export type WikiTarget = { path: string } | { error: string };
 
