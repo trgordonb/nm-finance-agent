@@ -2429,8 +2429,55 @@ body {
 .cron-form select { flex: none; }
 .cron-form textarea { width: 100%; box-sizing: border-box; margin-bottom: 8px; resize: vertical; }
 
-/* --- "Model & key" settings tab ---------------------------------------------- */
+/* --- first-login wiki onboarding (per-user, per-browser localStorage) --------- */
 
+.wiki-onboarding {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 12px 16px 0;
+  padding: 10px 14px;
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.wiki-onboarding-title {
+  font-weight: 700;
+  margin-bottom: 4px;
+}
+
+.wiki-onboarding-steps {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 13px;
+}
+
+.wiki-onboarding-steps li {
+  margin-top: 2px;
+}
+
+.wiki-onboarding-x {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--text-dim);
+  font-size: 14px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 4px 6px;
+  border-radius: 6px;
+  /* auto left margin pins the cross to the right border of the box; the
+     negative right/top margins optically align the glyph with the edge */
+  margin: -2px -4px 0 auto;
+}
+
+.wiki-onboarding-x:hover {
+  color: var(--text);
+  background: var(--panel);
+}
+
+/* --- "Model & key" settings tab ---------------------------------------------- */
 .key-banner {
   border: 1px solid var(--warn);
   border-radius: 8px;

@@ -27,6 +27,7 @@ import CronTab from "./components/CronTab";
 import KeyTab from "./components/KeyTab";
 import McpTab from "./components/McpTab";
 import WikiTab from "./components/WikiTab";
+import WikiOnboarding from "./components/WikiOnboarding";
 import Feed from "./components/Feed";
 import Composer from "./components/Composer";
 
@@ -468,6 +469,7 @@ function AgentApp({ user, onLogout }: AgentAppProps) {
             Scheduled
           </button>
         </div>
+        {user && <WikiOnboarding user={user} />}
         {view === "chat" ? (
         <main className="main">
           <div className="feed" aria-live="polite">
