@@ -69,6 +69,15 @@ function resolveWikilinks(md: string, concepts: WikiGist[]): string {
 const byUpdated = (a: WikiPageRef, b: WikiPageRef) =>
   (b.updated ?? "").localeCompare(a.updated ?? "") || a.title.localeCompare(b.title);
 
+/** Sidebar grouping order: concepts, then entities, then sources; any other
+ *  type keeps its relative order after them (sort is stable). Within a group
+ *  the recency/title order from byUpdated applies. */
+const TYPE_RANK: Record<string, number> = { concept: 0, entity: 1, source: 2 };
+
+const byTypeThenUpdated = (a: WikiPageRef, b: WikiPageRef) =>
+  (TYPE_RANK[a.type] ?? TYPE_RANK.length) - (TYPE_RANK[b.type] ?? TYPE_RANK.length) ||
+  byUpdated(a, b);
+
 function hitLabel(hit: WikiSearchHit): string {
   const title = typeof hit.metadata?.title === "string" ? hit.metadata.title : "";
   return title || hit.slug || hit.source_id || hit.id;
@@ -127,12 +136,11 @@ export default function WikiTab({ onAsk }: Props) {
               })),
             ),
           );
-          loaded = per.flat().sort(byUpdated);
+          loaded = per.flat().sort(byTypeThenUpdated);
         } else {
-          loaded = (await getWikiConcepts(next, nextWikiScope)).map((g) => ({
-            ...g,
-            domain: next,
-          }));
+          loaded = (await getWikiConcepts(next, nextWikiScope))
+            .map((g) => ({ ...g, domain: next }))
+            .sort(byTypeThenUpdated);
         }
         if (loadRef.current !== n) return;
         setConcepts(loaded);
