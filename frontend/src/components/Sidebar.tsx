@@ -2,6 +2,7 @@ import { useState } from "react";
 import { ChevronRight, LogOut, Settings } from "lucide-react";
 import type { AuthUser } from "../auth";
 import type { Health, SessionInfo } from "../types";
+import ThemeSwitch from "./ThemeSwitch";
 
 function relativeTime(iso: string): string {
   const epoch = Date.parse(iso) / 1000;
@@ -180,6 +181,7 @@ export default function Sidebar({
             <span className="user-name" title={user.email ?? user.username}>
               {user.username}
             </span>
+            <ThemeSwitch />
             {onLogout && (
               <button className="signout" onClick={onLogout} title="Sign out" aria-label="Sign out">
                 <LogOut size={14} />

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef } from "react";
 import type { IndicatorHandle, NativeIndicatorInfo, Vela } from "@luxalgo/vela";
 import type { Bar, IndicatorSpec } from "./yahoo";
 import { VELA_TIMEFRAME } from "./yahoo";
+import { useTheme } from "../theme";
 
 type Props = {
   bars: Bar[];
@@ -21,6 +22,7 @@ export function VelaChart({ bars, interval, indicators = [], visible, className,
   const elRef = useRef<HTMLDivElement>(null);
   const chartRef = useRef<Vela | null>(null);
   const handlesRef = useRef(new Map<string, IndicatorHandle>());
+  const { resolved: theme } = useTheme();
   // Latest props for async/late consumers (mount completes after create; the
   // sync effect must see the newest list even if the chart isn't up yet).
   const latestRef = useRef({ indicators, visible });
@@ -63,7 +65,7 @@ export function VelaChart({ bars, interval, indicators = [], visible, className,
       const chart = new Vela(elRef.current, {
         data: bars,
         timeframe: VELA_TIMEFRAME[interval] ?? interval,
-        theme: "dark",
+        theme,
       });
       chartRef.current = chart;
       onApiRef.current?.({ catalog: () => chart.availableNativeIndicators() });
@@ -83,7 +85,7 @@ export function VelaChart({ bars, interval, indicators = [], visible, className,
       chartRef.current?.destroy();
       chartRef.current = null;
     };
-  }, [bars, interval, syncIndicators]);
+  }, [bars, interval, theme, syncIndicators]);
 
   useEffect(() => {
     void syncIndicators();

@@ -5,12 +5,13 @@
 // pattern as the vela charts). Reference: the python-era frontend's
 // WikiGraph.tsx (docs/wiki-tab-plan.md); sigma is pinned to v3 for that API.
 
-import { useEffect, useRef, useState } from "react";
-import { LoaderCircle } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { LoaderCircle, Maximize, ZoomIn, ZoomOut } from "lucide-react";
 import type Graph from "graphology";
 import type Sigma from "sigma";
 import { getWikiPage } from "../api";
 import type { WikiGist, WikiScope } from "../types";
+import { useTheme, type ResolvedTheme } from "../theme";
 
 export interface GraphPageRef extends WikiGist {
   domain: string;
@@ -23,18 +24,54 @@ interface Props {
   onOpen: (ref: GraphPageRef) => void;
 }
 
-const TYPE_COLORS: Record<string, string> = {
-  concept: "#58a6ff",
-  entity: "#3fb950",
-  source: "#39c5cf",
-  overview: "#d29922",
+// Sigma paints to a canvas, so CSS variables don't apply — node/edge colors
+// come from per-theme palettes and are re-applied to the live instance on
+// theme change (no rebuild, so page bodies are never refetched).
+interface GraphPalette {
+  TYPE_COLORS: Record<string, string>;
+  DEFAULT_NODE: string;
+  MISSING_NODE: string;
+  EDGE: string;
+  EDGE_HOVER: string;
+  LABEL: string;
+  DIM: string;
+}
+
+const PALETTES: Record<ResolvedTheme, GraphPalette> = {
+  dark: {
+    TYPE_COLORS: {
+      concept: "#58a6ff",
+      entity: "#3fb950",
+      source: "#39c5cf",
+      overview: "#d29922",
+    },
+    DEFAULT_NODE: "#c4c0cc",
+    MISSING_NODE: "#30363d",
+    EDGE: "rgba(230, 237, 243, 0.10)",
+    EDGE_HOVER: "rgba(133, 185, 201, 0.85)",
+    LABEL: "#8b949e",
+    DIM: "#232a33",
+  },
+  light: {
+    TYPE_COLORS: {
+      concept: "#0969da",
+      entity: "#1a7f37",
+      source: "#0f8f99",
+      overview: "#9a6700",
+    },
+    DEFAULT_NODE: "#8c959f",
+    MISSING_NODE: "#d1d9e0",
+    EDGE: "rgba(31, 35, 40, 0.12)",
+    EDGE_HOVER: "rgba(9, 105, 218, 0.85)",
+    LABEL: "#59636e",
+    DIM: "#d8dee4",
+  },
 };
-const DEFAULT_NODE = "#c4c0cc";
-const MISSING_NODE = "#30363d";
-const EDGE = "rgba(230, 237, 243, 0.10)";
-const EDGE_HOVER = "rgba(133, 185, 201, 0.85)";
-const LABEL = "#8b949e";
-const DIM = "#232a33";
+
+function nodeColor(kind: string, palette: GraphPalette): string {
+  if (kind === "missing") return palette.MISSING_NODE;
+  return palette.TYPE_COLORS[kind] ?? palette.DEFAULT_NODE;
+}
 
 function bodyOf(markdown: string): string {
   return markdown.replace(/^---\n[\s\S]*?\n---[ ]*\n?/, "");
@@ -55,11 +92,50 @@ function linkTargets(markdown: string): string[] {
 export default function WikiGraph({ refs, scope, onOpen }: Props) {
   const containerRef = useRef<HTMLDivElement>(null);
   const sigmaRef = useRef<Sigma | null>(null);
+  const graphRef = useRef<Graph | null>(null);
   const hoveredRef = useRef<string | null>(null);
   const onOpenRef = useRef(onOpen);
   onOpenRef.current = onOpen;
+  const { resolved: theme } = useTheme();
+  // Reducers run on every refresh, so they must always read the current palette.
+  const paletteRef = useRef(PALETTES[theme]);
+  paletteRef.current = PALETTES[theme];
   const [building, setBuilding] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  /** Re-applies the current palette to the mounted instance; no-op pre-mount. */
+  const applyPalette = useCallback(() => {
+    const sigma = sigmaRef.current;
+    const graph = graphRef.current;
+    if (!sigma || !graph) return;
+    const palette = paletteRef.current;
+    sigma.setSetting("labelColor", { color: palette.LABEL });
+    sigma.setSetting("defaultNodeColor", palette.DEFAULT_NODE);
+    sigma.setSetting("defaultEdgeColor", palette.EDGE);
+    graph.forEachNode((node, attrs) => {
+      graph.setNodeAttribute(node, "color", nodeColor(String(attrs.kind ?? ""), palette));
+    });
+    graph.forEachEdge((edge) => {
+      graph.setEdgeAttribute(edge, "color", palette.EDGE);
+    });
+    sigma.refresh();
+  }, []);
+
+  useEffect(() => {
+    applyPalette();
+  }, [theme, applyPalette]);
+
+  // Camera controls for the overlay buttons; no-ops while the graph mounts.
+  const zoomGraph = (direction: 1 | -1) => {
+    const camera = sigmaRef.current?.getCamera();
+    if (!camera) return;
+    const opts = { duration: 200 };
+    void (direction === 1 ? camera.animatedZoom(opts) : camera.animatedUnzoom(opts));
+  };
+
+  const fitGraph = () => {
+    void sigmaRef.current?.getCamera().animatedReset({ duration: 200 });
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -102,7 +178,8 @@ export default function WikiGraph({ refs, scope, onOpen }: Props) {
           graph.addNode(key, {
             label: ref.title || ref.slug,
             size: 4,
-            color: TYPE_COLORS[ref.type] ?? DEFAULT_NODE,
+            color: nodeColor(ref.type, paletteRef.current),
+            kind: ref.type,
             x: Math.random() * 100,
             y: Math.random() * 100,
           });
@@ -115,7 +192,8 @@ export default function WikiGraph({ refs, scope, onOpen }: Props) {
             graph.addNode(key, {
               label: target,
               size: 3,
-              color: MISSING_NODE,
+              color: nodeColor("missing", paletteRef.current),
+              kind: "missing",
               x: Math.random() * 100,
               y: Math.random() * 100,
             });
@@ -136,7 +214,10 @@ export default function WikiGraph({ refs, scope, onOpen }: Props) {
             const edgeKey = `${from}->${to}`;
             if (from !== to && !seenEdges.has(edgeKey)) {
               seenEdges.add(edgeKey);
-              graph.addEdgeWithKey(edgeKey, from, to, { size: 0.5, color: EDGE });
+              graph.addEdgeWithKey(edgeKey, from, to, {
+                size: 0.5,
+                color: paletteRef.current.EDGE,
+              });
             }
           }
         }
@@ -160,12 +241,15 @@ export default function WikiGraph({ refs, scope, onOpen }: Props) {
           allowInvalidContainer: true,
           renderLabels: true,
           renderEdgeLabels: false,
-          labelColor: { color: LABEL },
+          labelColor: { color: paletteRef.current.LABEL },
           labelSize: 11,
           labelRenderedSizeThreshold: 6,
-          defaultEdgeColor: EDGE,
-          defaultNodeColor: DEFAULT_NODE,
+          defaultEdgeColor: paletteRef.current.EDGE,
+          defaultNodeColor: paletteRef.current.DEFAULT_NODE,
           stagePadding: 40,
+          // Keep wheel + button zoom within sane bounds (ratio: smaller = closer).
+          minCameraRatio: 0.05,
+          maxCameraRatio: 10,
           nodeReducer(node, data) {
             const active = hoveredRef.current;
             const res = { ...data };
@@ -178,7 +262,7 @@ export default function WikiGraph({ refs, scope, onOpen }: Props) {
               } else if (isNeighbor) {
                 res.zIndex = 1;
               } else {
-                res.color = DIM;
+                res.color = paletteRef.current.DIM;
                 res.label = "";
               }
             }
@@ -191,7 +275,7 @@ export default function WikiGraph({ refs, scope, onOpen }: Props) {
               const source = graph.source(edge);
               const target = graph.target(edge);
               if (source === active || target === active) {
-                res.color = EDGE_HOVER;
+                res.color = paletteRef.current.EDGE_HOVER;
                 res.size = 1;
               } else {
                 res.hidden = true;
@@ -201,7 +285,10 @@ export default function WikiGraph({ refs, scope, onOpen }: Props) {
           },
         });
         sigmaRef.current = sigma;
+        graphRef.current = graph;
         setBuilding(false);
+        // Enforce the current palette even if the theme flipped mid-build.
+        applyPalette();
 
         sigma.on("enterNode", ({ node }) => {
           hoveredRef.current = node;
@@ -230,12 +317,42 @@ export default function WikiGraph({ refs, scope, onOpen }: Props) {
       hoveredRef.current = null;
       sigmaRef.current?.kill();
       sigmaRef.current = null;
+      graphRef.current = null;
     };
   }, [refs, scope]);
 
   return (
     <div className="wiki-graph">
       <div ref={containerRef} className="wiki-graph-canvas" />
+      <div className="wiki-graph-controls">
+        <button
+          className="wiki-graph-btn"
+          title="Zoom in"
+          aria-label="Zoom in"
+          disabled={building}
+          onClick={() => zoomGraph(1)}
+        >
+          <ZoomIn size={14} />
+        </button>
+        <button
+          className="wiki-graph-btn"
+          title="Zoom out"
+          aria-label="Zoom out"
+          disabled={building}
+          onClick={() => zoomGraph(-1)}
+        >
+          <ZoomOut size={14} />
+        </button>
+        <button
+          className="wiki-graph-btn"
+          title="Fit view"
+          aria-label="Fit view"
+          disabled={building}
+          onClick={fitGraph}
+        >
+          <Maximize size={14} />
+        </button>
+      </div>
       {building && (
         <div className="wiki-status wiki-graph-overlay">
           <LoaderCircle className="wiki-spin" size={16} /> building graph ({refs.length} pages)…
