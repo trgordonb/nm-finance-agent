@@ -180,6 +180,11 @@ nm-finance-agent/
   swallowed client-side. Mid-run cron sessions are registered at fire START
   (`registerSession`) so `GET /api/sessions/:id` returns an empty archive
   instead of 404 while a fire is in flight.
+- **InstaBox sandbox lifecycle**: session-spawned sandboxes are tagged
+  `nm-session=$NM_SESSION_ID` (the shell tool exports it from
+  `ToolContext.sessionId`) and swept at turn end by `src/instabox.ts`
+  (best-effort `ls --meta` → `rm --no-wait`; missing CLI/parse failures are
+  swallowed). Untagged manual warm boxes are never swept.
 - **Skills working copy is R2-mirrored — direct edits do NOT survive a boot
   pull.** After editing `skills/` by hand, push:
   `uv run --directory ~/projects/nm-skills-registry nm-skills push <ABSOLUTE

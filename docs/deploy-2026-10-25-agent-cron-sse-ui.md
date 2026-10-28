@@ -111,6 +111,14 @@ stored; the base image `spm-base-v1` (Debian 13, causal-ts + torch + yfinance +
 gs-quant + Kronos weights + hola-opt) already exists, so jobs start from it and
 no model download happens on the VM. Free-tier runtime cap is 480 min/machine.
 
+Lifecycle: session-spawned sandboxes are created with
+`--meta nm-session=$NM_SESSION_ID` (the shell tool exports the variable) and
+the harness removes tagged sandboxes when the owning turn completes
+(`src/instabox.ts`, best-effort). The CLI must therefore be reachable on the
+**service** PATH (`/usr/local/bin`) for the sweep to work — a `~/.local/bin`-only
+install means the cleanup silently no-ops. Warm boxes created manually without
+the meta tag are never swept.
+
 ## 5. New env knobs (all optional; defaults are sane)
 
 | Var | Default | Meaning |

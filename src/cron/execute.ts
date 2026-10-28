@@ -5,6 +5,7 @@
 // row prepended, semantic mirror recorded, fallback title on the first turn.
 
 import { validPrefixLen } from "../agent.js";
+import { cleanupSessionSandboxes } from "../instabox.js";
 import { fallbackTitle } from "../titler.js";
 import { CRON_WRAPUP_REMAINING } from "../config.js";
 import type { AgentLoop } from "../agent.js";
@@ -74,6 +75,10 @@ export async function executeCronJob(
   const lastAssistant = [...turn.messages]
     .reverse()
     .find((m) => m.role === "assistant" && m.content.trim());
+
+  // Session-spawned sandboxes die with the fire (artifacts were pulled or
+  // remain reproducible from the snapshot).
+  void cleanupSessionSandboxes(sessionId);
 
   return {
     sessionId,

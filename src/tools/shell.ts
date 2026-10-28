@@ -33,6 +33,10 @@ export const execute: ToolDef = {
         SKILLS_DIR,
         WORKSPACE_DIR: resolveInWorkspace(""),
       };
+      // InstaBox sandboxes created by this turn tag themselves with the owning
+      // session (skills/instabox-sandbox); the harness sweeps tagged boxes at
+      // turn end (src/instabox.ts).
+      if (ctx?.sessionId) childEnv.NM_SESSION_ID = ctx.sessionId;
       delete childEnv.WIKI_API_TOKEN;
       delete childEnv.INGEST_API_TOKEN;
       delete childEnv.LLMWIKI_TOKEN;

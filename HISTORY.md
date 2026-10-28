@@ -806,7 +806,10 @@ the settings modal. 8 tests; suite 187/187.
   mu-driver/run/kronos_memory.json).
 - InstaBox remote mode (skills/instabox-sandbox) needs the CLI + key on the
   VM; exec transport gotchas (inline quoting, `&` stripping, binary stdout)
-  are codified in that skill. The stock-price-mover daily.sh scheduler is
+  are codified in that skill. Session-spawned sandboxes are now lifecycle-bound
+  to the owning turn: created with `--meta nm-session=$NM_SESSION_ID`
+  (shell tool exports it via ToolContext.sessionId), swept at turn end by
+  `src/instabox.ts` (`ls --meta` → `rm`, best-effort, 5 tests). The stock-price-mover daily.sh scheduler is
   superseded by agent cron (auto-run mode + checkpoint file work as cron
   fires); daily.sh remains for external scheduling if wanted.
 

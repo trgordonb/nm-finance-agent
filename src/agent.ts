@@ -369,7 +369,10 @@ export class AgentLoop {
           resultStr = unknownToolMessage(call.name, toolNames);
         } else {
           try {
-            resultStr = await tool.execute(call.args ?? {}, { signal: meta?.signal });
+            resultStr = await tool.execute(call.args ?? {}, {
+              signal: meta?.signal,
+              sessionId: meta?.sessionId,
+            });
           } catch (e) {
             resultStr = `Error: tool ${call.name} raised: ${(e as Error).message}`.slice(0, 2000);
           }

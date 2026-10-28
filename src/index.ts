@@ -96,6 +96,7 @@ import {
   validateOpenRouterKey,
 } from "./llm-keys.js";
 import { createCronManageTool } from "./cron/tool.js";
+import { cleanupSessionSandboxes } from "./instabox.js";
 import {
   isScheduleKind,
   isValidTimezone,
@@ -909,6 +910,9 @@ app.post("/api/chat", (req, res) => {
       controller.signal.removeEventListener("abort", abortListener);
       ACTIVE_TURNS.delete(turnId);
       res.end();
+      // Session-spawned InstaBox sandboxes are terminated when the session's
+      // turn completes (best-effort; skill pulls artifacts before this).
+      void cleanupSessionSandboxes(sessionId);
     }
   })();
 });

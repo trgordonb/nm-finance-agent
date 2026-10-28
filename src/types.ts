@@ -18,6 +18,10 @@ export interface ToolParam {
  *  — e.g. the deep_research tool aborts its run on Stop. */
 export interface ToolContext {
   signal?: AbortSignal;
+  /** Owning session id — tools export it to shells ($NM_SESSION_ID) so
+   *  session-spawned resources (InstaBox sandboxes) can be tagged for the
+   *  turn-end lifecycle sweep. */
+  sessionId?: string;
 }
 
 export interface ToolDef {
