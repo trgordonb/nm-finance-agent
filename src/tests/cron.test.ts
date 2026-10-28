@@ -335,6 +335,38 @@ test("cron tool: create/list/get are user-scoped and validate input", async () =
   assert.equal(list.jobs[0].schedule, "every 1h");
 });
 
+test("cron tool: create applies timezone to the stored next_run_at", async () => {
+  const store = tempStore();
+  const scheduler = new CronScheduler({ store, loop: {} as never });
+  const tool = createCronManageTool(store, scheduler);
+
+  const created = JSON.parse(
+    String(
+      await runInWorkspace("alice", () =>
+        tool.execute(
+          {
+            action: "create",
+            name: "hk-midnight",
+            schedule_kind: "cron",
+            schedule_expr: "0 0 * * *",
+            timezone: "Asia/Hong_Kong",
+            payload: "p",
+          },
+          {},
+        ),
+      ),
+    ),
+  );
+
+  assert.equal(created.ok, true);
+  const job = store.getCronJobForUser("alice", "hk-midnight");
+  assert.ok(job?.next_run_at);
+  // 00:00 HKT is 16:00 UTC. The create path must store the same instant it
+  // reports in next_runs, not midnight in the server's UTC timezone.
+  assert.equal(new Date(job.next_run_at as number).getUTCHours(), 16);
+  assert.equal(created.next_runs[0], formatInTz(job.next_run_at as number, "Asia/Hong_Kong"));
+});
+
 test("cron tool: run-now goes through the claim path", async () => {
   const store = tempStore();
   const scheduler = new CronScheduler({

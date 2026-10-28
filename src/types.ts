@@ -28,6 +28,10 @@ export interface ToolDef {
     properties: Record<string, ToolParam>;
     required?: string[];
   };
+  /** Default true. When false, an `Error:` result is still shown to the model
+   *  but does not end the turn. Use for optional side-effect tools such as
+   *  AgentDB learning feedback. */
+  fatalOnError?: boolean;
   execute(args: Record<string, unknown>, ctx?: ToolContext): Promise<string> | string;
 }
 

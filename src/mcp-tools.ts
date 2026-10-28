@@ -241,6 +241,9 @@ function toToolDef(namespaced: string, server: string, raw: RawTool, cfg: McpSer
       raw.inputSchema && typeof raw.inputSchema === "object"
         ? (raw.inputSchema as ToolDef["parameters"])
         : { type: "object" as const, properties: {} },
+    // Learning feedback is an optional post-turn side effect. A missing
+    // learning session must not abort an otherwise completed user turn.
+    fatalOnError: !namespaced.endsWith("learning_feedback"),
     async execute(args: ChatToolCall["args"]) {
       if (!mcpServerEnabledForUser(server)) {
         return `Rejected: MCP server ${JSON.stringify(server)} is disabled for this user`;

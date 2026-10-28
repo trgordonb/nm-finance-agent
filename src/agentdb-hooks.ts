@@ -146,8 +146,8 @@ export function agentdbCognitiveBlock(hasReflexionStore: boolean): string {
   return (
     "\nAGENTDB COGNITIVE MEMORY (experimental, self-learning):\n" +
     "The reflexion_store / reflexion_retrieve / agentdb_pattern_store / " +
-    "agentdb_pattern_search / skill_create / skill_search / reward_signal / " +
-    "learning_feedback tools reach a separate bandit-tuned memory store. " +
+    "agentdb_pattern_search / skill_create / skill_search / reward_signal " +
+    "tools reach a separate bandit-tuned memory store. " +
     "Before starting a task that resembles a past episode (same site, file " +
     "type, or pipeline), call agentdb_reflexion_retrieve(task=<the task>) FIRST — " +
     "with only_failures=true when obstacles are likely — and let its " +
@@ -157,6 +157,8 @@ export function agentdbCognitiveBlock(hasReflexionStore: boolean): string {
     "task phrased as a retrievable query, reward in [0,1], success, " +
     "critique) and score the outcome via reward_signal(success=...); " +
     "consult agentdb_pattern_search before retrying an approach that " +
-    "failed before.\n"
+    "failed before. Do not use a reflexion slug as an AgentDB learning-session " +
+    "ID; learning_feedback requires a learning session and is not part of this " +
+    "reflexion flow.\n"
   );
 }

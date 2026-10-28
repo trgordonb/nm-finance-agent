@@ -387,7 +387,7 @@ export class AgentLoop {
         messages.push(toolMsg);
         newSlice.push(toolMsg);
         onMessage?.(toolMsg);
-        if (resultStr.startsWith("Error:")) {
+        if (resultStr.startsWith("Error:") && tool?.fatalOnError !== false) {
           fatal = `${call.name}: ${resultStr.slice(0, 300)}`;
           break;
         }

@@ -75,6 +75,38 @@ test("agent loop: a disabled tool is rejected if the model emits it anyway", asy
   assert.match(String(toolMsg?.content), /Rejected: tool b is disabled for this user/);
 });
 
+test("agent loop: non-fatal tool error is surfaced but does not end the turn", async () => {
+  let calls = 0;
+  const chatFn: any = async () => {
+    calls++;
+    if (calls === 1) {
+      return {
+        ...textResponse(""),
+        toolCalls: [{ id: "call-1", name: "agentdb_learning_feedback", args: {} }],
+      };
+    }
+    return textResponse("done anyway");
+  };
+  const optionalFeedback = {
+    ...tool("agentdb_learning_feedback"),
+    fatalOnError: false,
+    execute: () => "Error: Session not found: fake-learning-session",
+  };
+  const loop = new AgentLoop({
+    memory: { load: () => "", totalChars: () => 0 } as any,
+    store: {} as any,
+    tools: [optionalFeedback],
+    chatFn,
+  });
+
+  const result = await loop.runTurn([], "hi");
+
+  const toolMsg = result.messages.find((m) => m.role === "tool");
+  assert.match(String(toolMsg?.content), /Session not found/);
+  assert.equal(result.fatal, undefined);
+  assert.equal(result.messages.at(-1)?.content, "done anyway");
+});
+
 test("agent loop: empty assistant response retries once at low effort", async () => {
   const calls: Array<{ opts: any; messages: any[] }> = [];
   const chatFn = async (messages: any[], _tools: any, opts: any) => {

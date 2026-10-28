@@ -101,13 +101,15 @@ export function createCronManageTool(store: SQLiteSessionStore, scheduler: CronS
           return `Rejected: a job named ${JSON.stringify(name)} already exists — pick another name or update it`;
         }
         const now = Date.now();
-        const next = nextFire(kind as ScheduleKind, expr, now);
-        if (next === null) return `Rejected: could not compute the next fire for ${JSON.stringify(expr)}`;
         const maxIt = a.max_iterations != null ? Number(a.max_iterations) : null;
         const timezone = a.timezone != null ? String(a.timezone).trim() || null : null;
         if (!isValidTimezone(timezone)) {
           return `Rejected: invalid timezone ${JSON.stringify(timezone)} — use an IANA name like "Asia/Hong_Kong"`;
         }
+        // Resolve the timezone before the first next-fire calculation: the
+        // stored next_run_at must be the same instant shown in next_runs.
+        const next = nextFire(kind as ScheduleKind, expr, now, timezone);
+        if (next === null) return `Rejected: could not compute the next fire for ${JSON.stringify(expr)}`;
         const nextRuns = nextFires(kind as ScheduleKind, expr, now, 2, timezone);
         const job = store.createCronJob({
           id: randomUUID(),
