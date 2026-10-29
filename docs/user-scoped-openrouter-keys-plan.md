@@ -4,7 +4,7 @@
 `src/llm-keys.ts`, per-user resolution in `chat()`, `LLM_KEY_POLICY` /
 `LLM_KEY_REQUIRE_USER_AFTER` / `USER_LLM_KEY_SECRET` knobs, key + usage routes,
 "Model & key" settings tab, `llm_usage` table with a per-user summary;
-focused tests in `src/tests/llm-keys.test.ts` (suite 208/208). Per-user main/
+focused tests in `src/tests/llm-keys.test.ts` (suite 216/216). Per-user main/
 summarizer model preferences and the free-model risk warning landed 2026-10-29.
 Deployment values decided: the VM ships `require_user` + a 7-day warn window + a generated
 `USER_LLM_KEY_SECRET` (see deploy-2026-10-25-agent-cron-sse-ui.md §5b).
@@ -213,7 +213,7 @@ together: the new UI expects the `models` object from `GET /api/user/llm-key`.
       `state/users/<login-id>/llm.json`.
 - [ ] Confirm the frontend build is included in the deploy
       (`npm --prefix frontend ci && npm --prefix frontend run build`).
-- [ ] `npm run check && npm test` pass; current suite is **208 tests**.
+- [ ] `npm run check && npm test` pass; current suite is **216 tests**.
 - [ ] The existing key files need no migration: `models` is optional, so a file
       containing only `openrouter` is valid.
 - [ ] `USER_LLM_KEY_SECRET` is still required only for encrypting the key. Model
