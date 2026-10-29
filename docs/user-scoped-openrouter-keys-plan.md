@@ -199,3 +199,140 @@ on policy. The sidebar model row can show a subtle ⚠ when
    tokens, cost) + a summary endpoint and a usage block in the settings tab —
    the operator wants central reporting. OpenRouter-side limits remain the
    hard spend control.
+
+## 11. Deployment-agent checklist — per-user model preferences
+
+Implemented in `0a9f9eb` (backend + UI). No database migration and no new
+environment variables are required. The frontend and backend must be deployed
+together: the new UI expects the `models` object from `GET /api/user/llm-key`.
+
+### Before restart
+
+- [ ] Confirm `SKILLS_STATE_DIR` is the persistent data volume (normally
+      `/var/lib/nm-finance-agent/state`). Model preferences live at
+      `state/users/<login-id>/llm.json`.
+- [ ] Confirm the frontend build is included in the deploy
+      (`npm --prefix frontend ci && npm --prefix frontend run build`).
+- [ ] `npm run check && npm test` pass; current suite is **208 tests**.
+- [ ] The existing key files need no migration: `models` is optional, so a file
+      containing only `openrouter` is valid.
+- [ ] `USER_LLM_KEY_SECRET` is still required only for encrypting the key. Model
+      IDs are not secrets and are stored as plain JSON.
+- [ ] `OPENROUTER_MODEL_MAIN` / `OPENROUTER_MODEL_SUMMARIZER` remain the
+      workspace defaults; a user override takes precedence.
+
+### After restart + hard refresh
+
+Check the UI path **Settings → Model & key → Model preferences**:
+
+- [ ] Both inputs show the stored overrides, or are blank with the workspace
+      defaults as placeholders.
+- [ ] Effective main and summarizer values are displayed.
+- [ ] Saving a known main/summarizer ID returns success and survives a page
+      reload.
+- [ ] Clearing both fields and saving restores the workspace defaults.
+- [ ] A `:free` ID shows the dismissible free-model risk banner; **Dismiss**
+      hides it, and Save still succeeds.
+- [ ] The old **Ask/Key** flows still work; the key remains encrypted and is
+      never shown again.
+
+### API contract (authenticated browser session)
+
+Use the signed-in app UI/DevTools; do not paste cookies or keys into logs.
+
+```http
+GET /api/user/llm-key
+```
+
+The response now includes, alongside the existing key status:
+
+```json
+{
+  "models": {
+    "main": "z-ai/glm-5.3-flash",
+    "summarizer": "poolside/laguna-xs-2.1:free",
+    "default_main": "z-ai/glm-5.3-flash",
+    "default_summarizer": "poolside/laguna-xs-2.1:free",
+    "effective_main": "z-ai/glm-5.3-flash",
+    "effective_summarizer": "poolside/laguna-xs-2.1:free",
+    "main_free": false,
+    "summarizer_free": true
+  }
+}
+```
+
+`main` / `summarizer` are `null` when the user has not set an override.
+`*_free` describes the effective model, not necessarily a user override.
+
+```http
+PUT /api/user/llm-models
+Content-Type: application/json
+
+{"main_model":"z-ai/glm-5.3-flash","summarizer_model":"poolside/laguna-xs-2.1:free"}
+```
+
+- Blank strings clear the corresponding override.
+- Invalid IDs (whitespace/control characters or format violations) return
+  `400` with an actionable `detail`.
+- Model IDs are **format-validated only**, not checked against OpenRouter's
+  entire catalog. Use exact IDs from `openrouter.ai/models`; a well-formed but
+  nonexistent ID fails on the next call.
+
+### Verify the model actually used
+
+Use one test user at a time so the process-wide log line is attributable:
+
+```bash
+sudo journalctl -u nm-finance-agent -f | grep --line-buffered '\[llm\] POST'
+```
+
+- Start a chat turn. The main call should log
+  `model=<effective_main>`.
+- The first-turn title refinement is a summarizer call; it should log
+  `model=<effective_summarizer>`.
+- In LangSmith, inspect the `agent-turn` / `llm:*` metadata and
+  `session-title` / `session-search-summarize` metadata; they should carry the
+  effective model.
+- If enabled, run one scheduled job owned by the test user and one research
+  turn: cron inherits the owner's ALS scope, and research roles use the same
+  effective main/summarizer values.
+
+### State-file spot check
+
+Models are not secret, but do not print `key_enc`/`key_plain`:
+
+```bash
+sudo -u nmagent jq '.models' \
+  /var/lib/nm-finance-agent/state/users/<login-id>/llm.json
+```
+
+Expected after a save:
+
+```json
+{"main":"<model-id>","summarizer":"<model-id>"}
+```
+
+The file/dir permissions should remain `0600`/`0700`; the key entry must remain
+unchanged.
+
+### Isolation and failure checks
+
+- [ ] Save different model IDs for two test logins; confirm each
+      `state/users/<id>/llm.json` has its own `models` and the other user's
+      chat logs/traces show their own selection.
+- [ ] Under `LLM_KEY_POLICY=require_user`, a user with no key still gets the
+      existing key-required error (model selection does not bypass it).
+- [ ] A bad-but-well-formed model ID fails at OpenRouter with a visible error;
+      correct it in the UI and confirm the next turn recovers.
+- [ ] A free model may return 429/timeouts; the warning is advisory, not an
+      availability guarantee.
+
+### Rollback
+
+- No schema migration is involved. Reverting the app code is safe; old code
+  ignores the `models` field.
+- Deploying **new frontend against old backend** is not safe: the UI expects
+  `models` in the key-status response. Roll back both together, or leave the
+  model UI hidden during a staggered rollback.
+- To reset a user without reverting code, save two blank fields via the UI (or
+  remove `models` from their `llm.json` while the service is stopped).
