@@ -140,18 +140,33 @@ export const execute: ToolDef = {
   },
 };
 
-// Detects the "python3 skills/x/scripts/y.py" miss: bash's ENOENT stderr names
-// a path resolved under the WORKSPACE; when the same skills/-relative tail
-// exists under the repo's actual skills root, return its absolute path.
-function redirectToSkillsRoot(stderr: string): string | null {
-  const matches = stderr.matchAll(/(?:No such file or directory[^\s\S]*?)?['"]?([^\s'"]*?skills[\\/][^\s'"]+)['"]?/g);
+// Detects the "python3 skills/x/scripts/y.py" miss: bash/Python ENOENT
+// stderr names a path resolved under the WORKSPACE; when the same
+// skills/-relative tail exists under the repo's actual skills root, return
+// its absolute path.
+//
+// Do not rewrite a genuine failure whose path is already under SKILLS_DIR:
+// an absolute path such as `/var/lib/.../skills/...` is not a cwd miss, and
+// pretending it is makes the model repeat the same command (live trace
+// 20902c5f: five redirect loops while a script error was hidden).
+export function redirectToSkillsRoot(stderr: string): string | null {
+  if (!/(?:no such file or directory|enoent)/i.test(stderr)) return null;
+  const matches = stderr.matchAll(/['"]?([^\s'"]*?skills[\\/][^\s'"]+)['"]?/gi);
+  const skillsRoot = pathSvc.resolve(SKILLS_DIR);
   for (const m of matches) {
-    const attempted = m[1];
-    const idx = attempted.search(/skills[\\/]/);
+    const attempted = m[1].replace(/[),.;:]+$/, "");
+    const idx = attempted.search(/skills[\\/]/i);
     if (idx === -1) continue;
-    const rel = attempted.slice(idx).replace(/\\/g, "/");
-    const skillsRoot = SKILLS_DIR.replace(/[\/\\](skills)[\/\\]?$/i, "");
-    const abs = pathSvc.join(skillsRoot, rel);
+    const resolved = pathSvc.resolve(attempted);
+    if (
+      pathSvc.isAbsolute(attempted) &&
+      (resolved === skillsRoot || resolved.startsWith(`${skillsRoot}${pathSvc.sep}`))
+    ) {
+      continue;
+    }
+    const tail = attempted.slice(idx).replace(/\\/g, "/");
+    const withoutSkills = tail.replace(/^skills\//i, "");
+    const abs = pathSvc.join(skillsRoot, withoutSkills);
     try {
       if (fs.existsSync(abs)) return abs;
     } catch {
