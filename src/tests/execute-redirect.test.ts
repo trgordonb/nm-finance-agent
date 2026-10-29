@@ -4,14 +4,21 @@
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 
-process.env.SKILLS_DIR = process.env.SKILLS_DIR ?? new URL("../../skills", import.meta.url).pathname;
+// Build a readable fixture instead of assuming a repo-local skills/ checkout.
+// In production, SKILLS_DIR points at a 700 nmagent data directory that the
+// deploy user cannot traverse; the redirect behavior itself is path-based.
+const skillsRoot = fs.mkdtempSync(path.join(os.tmpdir(), "nm-execute-redirect-"));
+const script = "convert-arxiv-to-md/scripts/convert_arxiv_to_md.py";
+const actual = path.join(skillsRoot, script);
+fs.mkdirSync(path.dirname(actual), { recursive: true });
+fs.writeFileSync(actual, "fixture\n");
+process.env.SKILLS_DIR = skillsRoot;
 
 const { redirectToSkillsRoot } = await import("../tools/shell.js");
-const { SKILLS_DIR } = await import("../config.js");
-
-const script = "convert-arxiv-to-md/scripts/convert_arxiv_to_md.py";
-const actual = `${SKILLS_DIR}/${script}`;
 
 test("execute redirect: maps a workspace-relative skills path to the real skills root", () => {
   const stderr =
