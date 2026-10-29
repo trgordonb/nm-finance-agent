@@ -227,6 +227,11 @@ export class AgentLoop {
       });
       const isAbort = (e: unknown): boolean =>
         Boolean(meta?.signal?.aborted) || (e as Error)?.name === "AbortError";
+      const traceFailure = (runId: string, error: unknown): void => {
+        const message = String((error as Error)?.message ?? error).slice(0, 500);
+        trace.update(runId, { error: message });
+        trace.update(turnRun, { outputs: { error: message }, error: message });
+      };
       let response: Awaited<ReturnType<typeof chat>>;
       try {
         response = await this.chatFn(
@@ -239,6 +244,7 @@ export class AgentLoop {
           cancelled = true;
           break;
         }
+        traceFailure(llmRun, e);
         throw e;
       }
       if (response.usage) {
@@ -295,6 +301,7 @@ export class AgentLoop {
             cancelled = true;
             break;
           }
+          traceFailure(retryRun, e);
           throw e;
         }
         if (retry.usage) {

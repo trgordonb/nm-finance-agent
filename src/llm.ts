@@ -210,6 +210,7 @@ export async function chat(
   const rawTimeout = opts.timeoutMs ?? Number(process.env.LLM_TIMEOUT_MS ?? "300000");
   const timeoutMs = Number.isFinite(rawTimeout) ? Math.max(1_000, Math.floor(rawTimeout)) : 300_000;
   let lastErr: Error | null = null;
+  let emptyResponseRetries = 0;
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
     try {
       const providerLabel = isMainModel
@@ -242,14 +243,29 @@ export async function chat(
         throw Object.assign(new Error(`HTTP ${res.status}: ${text.slice(0, 300)}`), { fatal: true });
       }
       const data = (await res.json()) as {
-        model: string;
+        model?: string;
         provider?: string;
         usage?: ChatUsage;
-        choices: Array<{ message: ChatPart; finish_reason?: string }>;
+        choices?: Array<{ message?: ChatPart; finish_reason?: string }>;
+        error?: { code?: number | string; message?: string };
       };
+      if (data.error) {
+        const code = data.error.code ?? "unknown";
+        const detail = data.error.message ?? "OpenRouter returned an error payload";
+        const err = new Error(`OpenRouter error ${code}: ${String(detail).slice(0, 220)}`);
+        if (!retryable(`${code} ${detail}`)) Object.assign(err, { fatal: true });
+        throw err;
+      }
       const choice = data.choices?.[0];
       const msg = choice?.message;
-      if (!msg) throw new Error("Response has no message");
+      if (!msg) {
+        const finish = choice?.finish_reason ? `, finish_reason=${choice.finish_reason}` : "";
+        const err = new Error(
+          `OpenRouter returned no message (model=${model}, choices=${data.choices?.length ?? 0}${finish})`,
+        );
+        err.name = "EmptyResponseError";
+        throw err;
+      }
       // Per-user spend ledger (docs/user-scoped-openrouter-keys-plan.md §10.4)
       // — bookkeeping only, never breaks the call.
       try {
@@ -288,6 +304,19 @@ export async function chat(
       if (isTimeout && opts.retryOnTimeout === false) {
         console.error(`[llm] timeout after ${timeoutMs}ms — not retrying (retryOnTimeout=false)`);
         break;
+      }
+      if (err.name === "EmptyResponseError") {
+        emptyResponseRetries++;
+        // A 200 with no choices is usually a transient provider/moderator
+        // glitch; retry once before surfacing it. Do not burn the full
+        // five-attempt budget or the turn budget on a broken free model.
+        if (emptyResponseRetries >= 2 || attempt >= maxAttempts) break;
+        const wait = 1000;
+        console.error(
+          `[llm] empty response from ${model}; retrying once in ${wait / 1000}s (${err.message.slice(0, 160)})`,
+        );
+        await sleep(wait);
+        continue;
       }
       if (!retryable(err.message || String(e))) break;
       const wait = 2000 * Math.pow(2, attempt - 1);
