@@ -29,7 +29,12 @@ function fmtTokens(n: number): string {
   return String(n);
 }
 
-export default function KeyTab() {
+interface Props {
+  /** Notify the shell that the effective main model changed. */
+  onModelsChanged?: () => void;
+}
+
+export default function KeyTab({ onModelsChanged }: Props) {
   const [status, setStatus] = useState<UserLlmKeyStatus | null>(null);
   const [usage, setUsage] = useState<LlmUsageSummary | null>(null);
   const [keyInput, setKeyInput] = useState("");
@@ -83,6 +88,7 @@ export default function KeyTab() {
       setModelsSaved(true);
       setSaved(false);
       load();
+      onModelsChanged?.();
     } catch (e) {
       setErr(String(e instanceof Error ? e.message : e).slice(0, 200));
     } finally {

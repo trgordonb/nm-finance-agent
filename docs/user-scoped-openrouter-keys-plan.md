@@ -227,7 +227,8 @@ Check the UI path **Settings → Model & key → Model preferences**:
 
 - [ ] Both inputs show the stored overrides, or are blank with the workspace
       defaults as placeholders.
-- [ ] Effective main and summarizer values are displayed.
+- [ ] Effective main and summarizer values are displayed, and the sidebar
+      footer shows the effective **main** model (not the old workspace default).
 - [ ] Saving a known main/summarizer ID returns success and survives a page
       reload.
 - [ ] Clearing both fields and saving restores the workspace defaults.

@@ -10,6 +10,7 @@ import {
   getFollowupCounts,
   getFollowups,
   getHealth,
+  getUserLlmKeyStatus,
   getResearchRun,
   getSessionMessages,
   getSessions,
@@ -61,6 +62,7 @@ function AgentApp({ user, onLogout }: AgentAppProps) {
     return () => window.removeEventListener("keydown", onKey);
   }, [settingsOpen]);
   const [health, setHealth] = useState<Health | null>(null);
+  const [effectiveMainModel, setEffectiveMainModel] = useState<string | null>(null);
   const [sessions, setSessions] = useState<SessionInfo[]>([]);
   const [sessionId, setSessionId] = useState<string | null>(null);
   const [items, setItems] = useState<FeedItem[]>([]);
@@ -121,13 +123,20 @@ function AgentApp({ user, onLogout }: AgentAppProps) {
       .catch(() => undefined);
   }, []);
 
+  const refreshEffectiveModel = useCallback(() => {
+    getUserLlmKeyStatus()
+      .then((status) => setEffectiveMainModel(status.models.effective_main))
+      .catch(() => undefined);
+  }, []);
+
   useEffect(() => {
     getHealth()
       .then(setHealth)
       .catch(() => undefined);
+    refreshEffectiveModel();
     refreshSessions();
     refreshFollowupCounts();
-  }, [refreshSessions, refreshFollowupCounts]);
+  }, [refreshEffectiveModel, refreshSessions, refreshFollowupCounts]);
 
   // ticking clock while a deep-research run is live (or recovered from reload)
   useEffect(() => {
@@ -431,6 +440,7 @@ function AgentApp({ user, onLogout }: AgentAppProps) {
     <div className="app">
       <Sidebar
         health={health}
+        model={effectiveMainModel}
         sessions={sessions}
         activeId={sessionId}
         streaming={streaming}
@@ -577,7 +587,7 @@ function AgentApp({ user, onLogout }: AgentAppProps) {
               ) : settingsSection === "mcp" ? (
                 <McpTab />
               ) : (
-                <KeyTab />
+                <KeyTab onModelsChanged={refreshEffectiveModel} />
               )}
             </div>
           </div>

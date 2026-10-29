@@ -47,6 +47,8 @@ const DEFAULT_COLLAPSED: Record<string, boolean> = {
 
 interface Props {
   health: Health | null;
+  /** Current login's effective main model; falls back to health.model. */
+  model?: string | null;
   sessions: SessionInfo[];
   activeId: string | null;
   streaming: boolean;
@@ -63,6 +65,7 @@ interface Props {
 
 export default function Sidebar({
   health,
+  model,
   sessions,
   activeId,
   streaming,
@@ -156,7 +159,7 @@ export default function Sidebar({
         {health ? (
           <>
             <div className="footer-row">
-              <span className="dot ok" /> {health.model}
+              <span className="dot ok" /> {model || health.model}
               <button
                 className={`gear${settingsOpen ? " active" : ""}`}
                 aria-label="Settings — skills and MCP servers"
