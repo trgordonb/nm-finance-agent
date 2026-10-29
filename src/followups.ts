@@ -5,7 +5,7 @@
 // them so the web UI can show a to-do strip above the composer.
 //
 // Mirrors the session-titler pattern: a free regex pre-filter on the closing
-// message, then one cheap secondary-LLM call (OPENROUTER_MODEL_SUMMARIZER)
+// message, then one cheap secondary-LLM call (the per-user summarizer model)
 // — never blocks the turn and never raises; unconfigured → inactive.
 //
 // Storage deviation (documented): python kept this OUT of sessions.db
@@ -19,7 +19,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { chat } from "./llm.js";
 import { trace, llmRunMetadata, llmRunOutputs } from "./tracing.js";
-import { OPENROUTER_MODEL_SUMMARIZER } from "./config.js";
+import { resolveUserModel } from "./llm-keys.js";
 import { DB_PATH } from "./config.js";
 import { log } from "./logger.js";
 import type { ChatMessage } from "./types.js";
@@ -209,7 +209,12 @@ export function looksLikeFollowups(closingText: string): boolean {
   return TIP_MARKER_RE.test(text.slice(-2000));
 }
 
-async function invokeExtractor(closingText: string, instruction: string, parentRun?: string): Promise<string[]> {
+async function invokeExtractor(
+  closingText: string,
+  instruction: string,
+  summarizerModel: string,
+  parentRun?: string,
+): Promise<string[]> {
   const payload = [
     { role: "system" as const, content: EXTRACTION_SYSTEM_PROMPT },
     { role: "user" as const, content: `FINAL ASSISTANT MESSAGE:\n${closingText.trim().slice(-2000)}\n\n${instruction}` },
@@ -221,7 +226,7 @@ async function invokeExtractor(closingText: string, instruction: string, parentR
         inputs: { messages: payload },
         parent: parentRun,
         tags: ["nm-finance-agent", "followups"],
-        metadata: llmRunMetadata(OPENROUTER_MODEL_SUMMARIZER),
+        metadata: llmRunMetadata(summarizerModel),
       })
     : undefined;
   try {
@@ -231,7 +236,12 @@ async function invokeExtractor(closingText: string, instruction: string, parentR
     // empty or truncated mid-JSON (measured live 2026-10-16: 512 →
     // finish_reason=length, content "", reasoning_tokens 512/512;
     // 2048 → complete answer, 186-629 reasoning tokens).
-    const response = await chat(payload, undefined, { model: OPENROUTER_MODEL_SUMMARIZER, noReasoning: true, maxTokens: 2048 });
+    const response = await chat(payload, undefined, {
+      model: summarizerModel,
+      modelRole: "summarizer",
+      noReasoning: true,
+      maxTokens: 2048,
+    });
     if (llmRun) {
       trace.update(llmRun, {
         outputs: llmRunOutputs(response.content, {
@@ -248,14 +258,14 @@ async function invokeExtractor(closingText: string, instruction: string, parentR
   }
 }
 
-async function extractFollowups(closingText: string): Promise<string[]> {
+async function extractFollowups(closingText: string, summarizerModel = resolveUserModel("summarizer")): Promise<string[]> {
   const rootRun = trace.create({
     name: "followups-extract",
     runType: "chain",
     inputs: { closing_chars: closingText.length },
     tags: ["nm-finance-agent", "followups"],
   });
-  const items = await invokeExtractor(closingText, "JSON array:", rootRun);
+  const items = await invokeExtractor(closingText, "JSON array:", summarizerModel, rootRun);
   if (items.length) { trace.update(rootRun, { outputs: { items: items.length } }); return items;
   }
   // Small models sometimes answer [] lazily even when the pre-filter saw
@@ -265,6 +275,7 @@ async function extractFollowups(closingText: string): Promise<string[]> {
     "The message above ends with suggestions or offers to the user. " +
       "List them as a JSON array of short imperative sentences. " +
       "Reply [] only if there is truly nothing actionable.",
+    summarizerModel,
     rootRun,
   );
   trace.update(rootRun, { outputs: { items: retry.length }, error: retry.length ? undefined : "no items extracted" });
@@ -284,11 +295,12 @@ export function maybeExtractFollowups(sessionId: string, newMessages: ChatMessag
     if (!closing || !looksLikeFollowups(closing.content)) return;
     const closingText = closing.content;
     log.info(`followups prefilter hit [${sessionId.slice(0, 8)}]: ${closingText.slice(-60).replace(/\s+/g, " ")}`);
-    void extractFollowups(closingText)
+    const summarizerModel = resolveUserModel("summarizer");
+    void extractFollowups(closingText, summarizerModel)
       .then((items) => {
         log.info(`followups extract [${sessionId.slice(0, 8)}]: ${items.length} item(s)`);
         if (!items.length) return;
-        setFollowups(sessionId, items, `openrouter:${OPENROUTER_MODEL_SUMMARIZER}`);
+        setFollowups(sessionId, items, `openrouter:${summarizerModel}`);
         log.info(`followups [${sessionId.slice(0, 8)}]: ${items.length} item(s) stored`);
       })
       .catch((e) => log.warn(`Followups extraction failed: ${String(e).slice(0, 160)}`));

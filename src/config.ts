@@ -158,11 +158,12 @@ export const SEARCH_SUMMARIZER_MAX_ATTEMPTS = Number(
 );
 
 // --- Deep research mode (/research) ------------------------------------------
-// Port of thinkdepth-ai's research mode (docs/deep-research-plan.md). All
-// research LLM roles run on the single OPENROUTER_MODEL_MAIN (glm-5.3-flash)
-// through the existing chat() client — no per-role models, no multi-provider
-// fan-out for now. The page-summary LLM fallback uses the existing summarizer
-// model; Exa (EXA_API_KEY) is the first-choice summarizer.
+// Port of thinkdepth-ai's research mode (docs/deep-research-plan.md). Research
+// LLM roles use the per-user main model (workspace default
+// OPENROUTER_MODEL_MAIN) through the existing chat() client — no per-role
+// models, no multi-provider fan-out for now. The page-summary LLM fallback
+// uses the per-user summarizer model; Exa (EXA_API_KEY) is the first-choice
+// summarizer.
 export const RESEARCH_MODE_ENABLED = (process.env.RESEARCH_MODE_ENABLED ?? "1") !== "0";
 export const RESEARCH_MAX_CONCURRENT = Number(process.env.RESEARCH_MAX_CONCURRENT ?? "3");
 export const RESEARCH_MAX_SUPERVISOR_ITERATIONS = Number(process.env.RESEARCH_MAX_SUPERVISOR_ITERATIONS ?? "10");

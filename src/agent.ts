@@ -9,7 +9,8 @@
 import { chat } from "./llm.js";
 import { toWire, buildToolRegistry } from "./tools/index.js";
 import { PromptMemory } from "./memory.js";
-import { MEMORY_CHAR_LIMIT, OPENROUTER_MODEL_MAIN, BUDGET_WRAPUP_REMAINING } from "./config.js";
+import { MEMORY_CHAR_LIMIT, BUDGET_WRAPUP_REMAINING } from "./config.js";
+import { resolveUserModel } from "./llm-keys.js";
 import type { ChatMessage, ToolDef, ToolCall } from "./types.js";
 import type { SessionDriver } from "./driver.js";
 import type { AgentDbMirror } from "./agentdb-mirror.js";
@@ -158,6 +159,7 @@ export class AgentLoop {
       buildSystemPrompt(this.memory.load(), currentWorkspaceRoot()) +
       agentdbCognitiveBlock(hasReflexion) +
       (episodeContext ? `\n${episodeContext}` : "");
+    const mainModel = resolveUserModel("main");
     const wire = toWire(enabledTools);
     const toolNames = enabledTools.map((t) => t.name);
     const newSlice: ChatMessage[] = [];
@@ -221,7 +223,7 @@ export class AgentLoop {
         inputs: { messages: [{ role: "system", content: systemPrompt }, ...messages], tools: toolNames },
         parent: turnRun,
         tags: ["nm-finance-agent"],
-        metadata: llmRunMetadata(OPENROUTER_MODEL_MAIN),
+        metadata: llmRunMetadata(mainModel),
       });
       const isAbort = (e: unknown): boolean =>
         Boolean(meta?.signal?.aborted) || (e as Error)?.name === "AbortError";
@@ -230,7 +232,7 @@ export class AgentLoop {
         response = await this.chatFn(
           [{ role: "system", content: systemPrompt }, ...messages],
           wire,
-          meta?.signal ? { signal: meta.signal } : undefined,
+          { modelRole: "main", ...(meta?.signal ? { signal: meta.signal } : {}) },
         );
       } catch (e) {
         if (isAbort(e)) {
@@ -279,14 +281,14 @@ export class AgentLoop {
           },
           parent: turnRun,
           tags: ["nm-finance-agent"],
-          metadata: llmRunMetadata(OPENROUTER_MODEL_MAIN),
+          metadata: llmRunMetadata(mainModel),
         });
         let retry: Awaited<ReturnType<typeof chat>>;
         try {
           retry = await this.chatFn(
             [{ role: "system", content: systemPrompt }, ...messages, retryNudge],
             wire,
-            { reasoningEffort: "low", ...(meta?.signal ? { signal: meta.signal } : {}) },
+            { modelRole: "main", reasoningEffort: "low", ...(meta?.signal ? { signal: meta.signal } : {}) },
           );
         } catch (e) {
           if (isAbort(e)) {

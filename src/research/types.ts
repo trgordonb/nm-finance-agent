@@ -76,9 +76,10 @@ export interface ResearchLimits {
   llmMaxAttempts: number;
 }
 
-/** Model roles. Single-model for now (user decision: one glm-5.3-flash for
- *  everything) — all fields default to OPENROUTER_MODEL_MAIN; the seam stays
- *  so a future role split is a config change, not a refactor. */
+/** Model roles. Main roles default to the per-user main model (workspace
+ *  default OPENROUTER_MODEL_MAIN); the summarizer role defaults to the
+ *  per-user summarizer model. The seam stays so a future role split is a
+ *  config change, not a refactor. */
 export interface ResearchRoles {
   toolLoop: string;
   writer: string;

@@ -4,15 +4,13 @@
 // + research_agent_scope.py (docs/deep-research-plan.md).
 //
 // Latency/API notes:
-// - Research LLM calls use the single OPENROUTER_MODEL_MAIN and a tighter
+// - Research LLM calls use the per-user main model and a tighter
 //   min-interval (RESEARCH_LLM_MIN_INTERVAL_MS) — the 4s global guard would
 //   serialize the parallel researcher loops.
 // - The whole engine is dependency-injected (deps.chat, deps.runSupervisor,
 //   deps.runResearcher) so the contract tests run fully offline.
 
 import {
-  OPENROUTER_MODEL_MAIN,
-  OPENROUTER_MODEL_SUMMARIZER,
   RESEARCH_DEADLINE_MINUTES,
   RESEARCH_LLM_MAX_ATTEMPTS,
   RESEARCH_LLM_MIN_INTERVAL_MS,
@@ -28,6 +26,7 @@ import {
   RESEARCH_TOKEN_BUDGET,
 } from "../config.js";
 import { chat } from "../llm.js";
+import { resolveUserModel } from "../llm-keys.js";
 import { flattenTranscript } from "../nudge.js";
 import { trace, llmRunMetadata, llmRunOutputs } from "../tracing.js";
 import type { ChatMessage } from "../types.js";
@@ -72,9 +71,9 @@ export function buildResearchDeps(overrides: Partial<ResearchDeps> = {}): Resear
   // Single-model decision: every research role runs on the main model; the
   // summarizer fallback keeps the repo's existing cheap summarizer role.
   const roles = {
-    toolLoop: OPENROUTER_MODEL_MAIN,
-    writer: OPENROUTER_MODEL_MAIN,
-    summarizer: OPENROUTER_MODEL_SUMMARIZER,
+    toolLoop: resolveUserModel("main"),
+    writer: resolveUserModel("main"),
+    summarizer: resolveUserModel("summarizer"),
   };
   const base: ResearchDeps = {
     chat,

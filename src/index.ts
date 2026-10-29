@@ -16,12 +16,12 @@
 
 import express, { type Request, type Response } from "express";
 import { randomUUID } from "node:crypto";
-import fs from "node:fs";
 import path from "node:path";
 import {
   serverHost,
   serverPort,
   OPENROUTER_MODEL_MAIN,
+  OPENROUTER_MODEL_SUMMARIZER,
   OPENROUTER_BASE_URL,
   OPENROUTER_PROVIDER_ORDER,
   OPENROUTER_PROVIDER_FALLBACKS,
@@ -39,13 +39,12 @@ import {
   RESEARCH_MODE_ENABLED,
   RESEARCH_SAVE_REPORTS,
   CRON_ENABLED,
-  SKILLS_STATE_DIR,
 } from "./config.js";
 import { authConfig } from "./auth/config.js";
 import { createAuthRouter } from "./auth/routes.js";
 import { createOriginGuard, createRequireAuth, type AuthedRequest } from "./auth/middleware.js";
 import { SessionManager } from "./auth/session.js";
-import { currentWorkspaceRoot, currentUserId, runInWorkspace, sanitizeUserId, workspaceUserKey } from "./workspace.js";
+import { currentWorkspaceRoot, currentUserId, runInWorkspace, workspaceUserKey } from "./workspace.js";
 import { certificateDaysRemaining, createSsoClient } from "./auth/sso.js";
 import { AuthStore } from "./auth/store.js";
 import { looksLikePdf, saveWikiUpload } from "./uploads.js";
@@ -86,12 +85,17 @@ import type { ResearchEvent, ResearchOutcome } from "./research/types.js";
 import { CronScheduler, isScheduledRun } from "./cron/scheduler.js";
 import {
   clearUserOpenRouterKey,
+  getUserLlmKeyEntry,
+  getUserModelPreferences,
   getUserOpenRouterKey,
+  isFreeModelId,
+  isValidModelId,
   llmKeyPolicy,
-  maskKey,
   requireUserEnforced,
   requireUserWarnDeadline,
+  resolveModelSelection,
   setLlmUsageRecorder,
+  setUserModelPreferences,
   setUserOpenRouterKey,
   validateOpenRouterKey,
 } from "./llm-keys.js";
@@ -409,36 +413,39 @@ app.get("/api/sessions/:sessionId", (req, res) => {
 // stream carries the same steps as `research` SSE events).
 // --- user-scoped OpenRouter keys (docs/user-scoped-openrouter-keys-plan.md) --
 
-app.get("/api/user/llm-key", (req, res) => {
+/** Stored model overrides + the effective workspace defaults for this login. */
+function llmModelsPayload(user: string) {
+  const stored = getUserModelPreferences(user);
+  const main = resolveModelSelection("main", user);
+  const summarizer = resolveModelSelection("summarizer", user);
+  return {
+    main: stored.main,
+    summarizer: stored.summarizer,
+    default_main: OPENROUTER_MODEL_MAIN,
+    default_summarizer: OPENROUTER_MODEL_SUMMARIZER,
+    effective_main: main.model,
+    effective_summarizer: summarizer.model,
+    main_free: isFreeModelId(main.model),
+    summarizer_free: isFreeModelId(summarizer.model),
+  };
+}
+
+app.get("/api/user/llm-key", (_req, res) => {
   const user = currentUserId();
-  const state = getUserOpenRouterKey(user) !== null;
+  const present = getUserOpenRouterKey(user) !== null;
+  const entry = getUserLlmKeyEntry(user);
   res.json({
-    present: state,
+    present,
     policy: llmKeyPolicy(),
     require_user_enforced: requireUserEnforced(),
     require_user_warn_deadline: requireUserWarnDeadline(),
     // masked/status only — the raw key never leaves the server
-    ...(state
-      ? (() => {
-          try {
-            const fsState = JSON.parse(
-              fs.readFileSync(
-                path.join(SKILLS_STATE_DIR, "users", sanitizeUserId(user) || "default", "llm.json"),
-                "utf8",
-              ),
-            ) as { openrouter?: { masked?: string; label?: string; usage_usd?: number; limit?: number | null; is_free_tier?: boolean } };
-            return {
-              masked: fsState.openrouter?.masked ?? null,
-              label: fsState.openrouter?.label ?? null,
-              usage_usd: fsState.openrouter?.usage_usd ?? null,
-              limit: fsState.openrouter?.limit ?? null,
-              is_free_tier: fsState.openrouter?.is_free_tier ?? null,
-            };
-          } catch {
-            return { masked: null, label: null, usage_usd: null, limit: null, is_free_tier: null };
-          }
-        })()
-      : { masked: null, label: null, usage_usd: null, limit: null, is_free_tier: null }),
+    masked: present ? entry?.masked ?? null : null,
+    label: present ? entry?.label ?? null : null,
+    usage_usd: present ? entry?.usage_usd ?? null : null,
+    limit: present ? entry?.limit ?? null : null,
+    is_free_tier: present ? entry?.is_free_tier ?? null : null,
+    models: llmModelsPayload(user),
   });
 });
 
@@ -466,6 +473,31 @@ app.post("/api/user/llm-key", async (req, res) => {
     is_free_tier: info.is_free_tier,
   });
   res.json({ ok: true, masked: entry.masked, label: entry.label, usage_usd: entry.usage_usd, limit: entry.limit, is_free_tier: entry.is_free_tier });
+});
+
+app.put("/api/user/llm-models", (req, res) => {
+  const body = (req.body ?? {}) as { main_model?: unknown; summarizer_model?: unknown };
+  const readModel = (value: unknown, field: string): string | null => {
+    if (value === undefined || value === null) return null;
+    if (typeof value !== "string") {
+      throw new Error(`${field} must be a string`);
+    }
+    const id = value.trim();
+    if (!id) return null;
+    if (!isValidModelId(id)) {
+      throw new Error(`${field} is not a valid OpenRouter model id`);
+    }
+    return id;
+  };
+  try {
+    const main = readModel(body.main_model, "main_model");
+    const summarizer = readModel(body.summarizer_model, "summarizer_model");
+    const user = currentUserId();
+    setUserModelPreferences(user, { main, summarizer });
+    res.json({ ok: true, models: llmModelsPayload(user) });
+  } catch (e) {
+    res.status(400).json({ detail: String((e as Error).message).slice(0, 200) });
+  }
 });
 
 app.delete("/api/user/llm-key", (req, res) => {

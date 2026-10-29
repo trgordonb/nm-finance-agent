@@ -8,6 +8,7 @@ import type {
   CronRunInfo,
   LlmUsageSummary,
   UserLlmKeyStatus,
+  UserLlmModelsStatus,
   Followups,
   Health,
   McpListResponse,
@@ -193,6 +194,14 @@ export const saveUserLlmKey = (key: string) =>
 
 export const deleteUserLlmKey = () =>
   apiFetch("/api/user/llm-key", { method: "DELETE" }).then(() => undefined);
+
+/** Replace this user's main/summarizer model overrides; empty strings clear them. */
+export const saveUserLlmModels = (mainModel: string, summarizerModel: string) =>
+  fetchJSON<{ ok: boolean; models: UserLlmModelsStatus }>("/api/user/llm-models", {
+    method: "PUT",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ main_model: mainModel, summarizer_model: summarizerModel }),
+  });
 
 export const getLlmUsage = (days = 30) =>
   fetchJSON<LlmUsageSummary>(`/api/user/llm-usage?days=${days}`);

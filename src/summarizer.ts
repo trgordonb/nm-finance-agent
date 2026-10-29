@@ -1,7 +1,8 @@
 // Secondary-LLM summarization of hybrid session-search results (Hermes-style,
 // python summarizer.py port). Raw keyword+dense recall is cheap but noisy;
 // with a summarizer attached, session_search passes the fused excerpts through
-// ONE secondary-LLM call (the cheap OPENROUTER_MODEL_SUMMARIZER model) which
+// ONE secondary-LLM call (the per-user summarizer model, workspace default
+// OPENROUTER_MODEL_SUMMARIZER) which
 // condenses them to only what is relevant to the current query before they
 // enter the agent's context.
 //
@@ -17,13 +18,13 @@
 import { chat } from "./llm.js";
 import type { ChatMessage } from "./types.js";
 import {
-  OPENROUTER_MODEL_SUMMARIZER,
   SEARCH_SUMMARIZER_MAX_ATTEMPTS,
   SEARCH_SUMMARIZER_TIMEOUT_MS,
 } from "./config.js";
 import type { SessionHit } from "./driver.js";
 import { log } from "./logger.js";
 import { trace, llmRunMetadata, llmRunOutputs } from "./tracing.js";
+import { resolveUserModel } from "./llm-keys.js";
 
 const SPECIAL_TOKEN_RE = /<\|[^|>]*\|>/g;
 const PSEUDO_TOOL_CALL_RE = /\[\s*(summarize|answer|condense|search)\s*\(/i;
@@ -45,13 +46,13 @@ export interface SummarizedSearch {
 }
 
 export class SearchSummarizer {
-  readonly label: string;
-
-  constructor() {
-    this.label = `openrouter/${OPENROUTER_MODEL_SUMMARIZER}`;
+  /** Dynamic: the summarizer is shared across users, while the model is not. */
+  get label(): string {
+    return `openrouter/${resolveUserModel("summarizer")}`;
   }
 
   summarize(query: string, hits: SessionHit[], signal?: AbortSignal): Promise<SummarizedSearch> {
+    const summarizerModel = resolveUserModel("summarizer");
     const excerpts = hits
       .map(
         (hit, i) =>
@@ -74,11 +75,12 @@ export class SearchSummarizer {
       inputs: { messages },
       parent: rootId,
       tags: ["nm-finance-agent", "search-summarizer"],
-      metadata: llmRunMetadata(OPENROUTER_MODEL_SUMMARIZER),
+      metadata: llmRunMetadata(summarizerModel),
     });
     const start = Date.now();
     const run = chat(messages, undefined, {
-      model: OPENROUTER_MODEL_SUMMARIZER,
+      model: summarizerModel,
+      modelRole: "summarizer",
       noReasoning: true,
       // 2048, not 1024: same reasoning-budget drift as followups (2026-10-16)
       // — this model spends hundreds of output tokens thinking before the

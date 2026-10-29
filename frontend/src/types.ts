@@ -201,6 +201,18 @@ export interface WikiSearchHit {
   domain: string;
 }
 
+/** Per-user model overrides plus the effective workspace defaults. */
+export interface UserLlmModelsStatus {
+  main: string | null;
+  summarizer: string | null;
+  default_main: string;
+  default_summarizer: string;
+  effective_main: string;
+  effective_summarizer: string;
+  main_free: boolean;
+  summarizer_free: boolean;
+}
+
 /** GET /api/user/llm-key — status only; the raw key never leaves the server. */
 export interface UserLlmKeyStatus {
   present: boolean;
@@ -212,6 +224,7 @@ export interface UserLlmKeyStatus {
   usage_usd: number | null;
   limit: number | null;
   is_free_tier: boolean | null;
+  models: UserLlmModelsStatus;
 }
 
 /** GET /api/user/llm-usage — harness-side per-user spend ledger. */

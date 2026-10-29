@@ -18,17 +18,26 @@ process.env.SKILLS_STATE_DIR = fs.mkdtempSync(path.join(os.tmpdir(), "llmkeys-te
 const { SQLiteSessionStore } = await import("../store.js");
 const {
   clearUserOpenRouterKey,
+  getUserModelPreferences,
   getUserOpenRouterKey,
+  isFreeModelId,
+  isValidModelId,
   keyEncryptionActive,
   maskKey,
   resolveAuthorizationKey,
+  resolveUserModel,
   setLlmUsageRecorder,
+  setUserModelPreferences,
   setUserOpenRouterKey,
 } = await import("../llm-keys.js");
 const { chat } = await import("../llm.js");
 // config.ts loads the repo .env via dotenv (override: true), so the resolved
 // server key comes from there — assert against it, not the literal test env.
-const { OPENROUTER_API_KEY: SERVER_KEY } = await import("../config.js");
+const {
+  OPENROUTER_API_KEY: SERVER_KEY,
+  OPENROUTER_MODEL_MAIN,
+  OPENROUTER_MODEL_SUMMARIZER,
+} = await import("../config.js");
 const { runInWorkspace } = await import("../workspace.js");
 
 const ALICE_KEY = "sk-or-v1-alice-aaaaaaaaaaaaaaaaaaaa1111";
@@ -170,4 +179,70 @@ test("llm keys: clear falls back to the server key mid-session", async () => {
   const afterClear = await runInWorkspace("carol", () => resolveAuthorizationKey());
   assert.equal(afterClear.source, "server"); // prefer_user fallback, documented
   assert.equal(afterClear.key, SERVER_KEY);
+});
+
+test("llm models: per-user main/summarizer overrides reach chat", async () => {
+  const key = "sk-or-v1-dave-aaaaaaaaaaaaaaaaaaaa2222";
+  await runInWorkspace("dave", () => setUserOpenRouterKey("dave", key, {}));
+  await runInWorkspace("dave", () =>
+    setUserModelPreferences("dave", {
+      main: "acme/main-model-1",
+      summarizer: "acme/summarizer-model-1:free",
+    }),
+  );
+
+  const prefs = getUserModelPreferences("dave");
+  assert.deepEqual(prefs, {
+    main: "acme/main-model-1",
+    summarizer: "acme/summarizer-model-1:free",
+  });
+  assert.equal(getUserOpenRouterKey("dave"), key, "model preferences preserve the key");
+  assert.equal(isFreeModelId("acme/summarizer-model-1:free"), true);
+  assert.equal(isFreeModelId("acme/main-model-1"), false);
+  assert.equal(isValidModelId("openrouter/auto"), true);
+  assert.equal(isValidModelId("not a model"), false);
+
+  const bodies: Array<Record<string, unknown>> = [];
+  const realFetch = globalThis.fetch;
+  globalThis.fetch = (async (_url: unknown, init?: RequestInit) => {
+    bodies.push(JSON.parse(String(init?.body)) as Record<string, unknown>);
+    return chatResponse();
+  }) as typeof fetch;
+  try {
+    await runInWorkspace("dave", () =>
+      chat([{ role: "user", content: "main" }], undefined, { minIntervalMs: 0 }),
+    );
+    await runInWorkspace("dave", () =>
+      chat([{ role: "user", content: "summary" }], undefined, {
+        model: OPENROUTER_MODEL_SUMMARIZER,
+        minIntervalMs: 0,
+      }),
+    );
+    await runInWorkspace("dave", () =>
+      chat([{ role: "user", content: "summary role" }], undefined, {
+        modelRole: "summarizer",
+        minIntervalMs: 0,
+      }),
+    );
+  } finally {
+    globalThis.fetch = realFetch;
+  }
+
+  assert.equal(bodies[0].model, "acme/main-model-1");
+  assert.equal(bodies[1].model, "acme/summarizer-model-1:free");
+  assert.equal(bodies[2].model, "acme/summarizer-model-1:free");
+
+  await runInWorkspace("dave", () =>
+    setUserModelPreferences("dave", { main: null, summarizer: null }),
+  );
+  assert.equal(resolveUserModel("main", "dave"), OPENROUTER_MODEL_MAIN);
+  assert.equal(resolveUserModel("summarizer", "dave"), OPENROUTER_MODEL_SUMMARIZER);
+});
+
+test("llm models: invalid ids are rejected without writing", async () => {
+  assert.throws(
+    () => setUserModelPreferences("erin", { main: "not a model", summarizer: null }),
+    /invalid OpenRouter model id/,
+  );
+  assert.deepEqual(getUserModelPreferences("erin"), { main: null, summarizer: null });
 });

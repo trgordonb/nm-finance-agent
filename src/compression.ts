@@ -26,7 +26,7 @@
 
 import type { ChatMessage } from "./types.js";
 import { chat } from "./llm.js";
-import { OPENROUTER_MODEL_MAIN } from "./config.js";
+import { resolveUserModel } from "./llm-keys.js";
 import { log } from "./logger.js";
 import { flattenTranscript } from "./nudge.js";
 import { trace, llmRunMetadata, llmRunOutputs } from "./tracing.js";
@@ -121,7 +121,11 @@ export interface CompressorOpts {
 export class ConversationCompressor {
   readonly tokenThreshold: number;
   readonly keepRecentTurns: number;
-  readonly label = `openrouter/${OPENROUTER_MODEL_MAIN}`;
+
+  /** Dynamic: the summarizer is shared across users, while the model is not. */
+  get label(): string {
+    return `openrouter/${resolveUserModel("main")}`;
+  }
 
   constructor(opts: CompressorOpts = {}) {
     this.tokenThreshold = Math.max(1, opts.tokenThreshold ?? DEFAULT_COMPRESSION_TOKEN_THRESHOLD);
@@ -180,16 +184,18 @@ export class ConversationCompressor {
       { role: "system", content: SUMMARY_SYSTEM_PROMPT },
       { role: "user", content: `TRANSCRIPT SLICE (${middle.length} turns):\n\n${transcript}\n\nSummarize now.` },
     ];
+    const mainModel = resolveUserModel("main");
+    const label = `openrouter/${mainModel}`;
     const llmRun = trace.create({
-      name: `summarize[${this.label}]`,
+      name: `summarize[${label}]`,
       runType: "llm",
       inputs: { messages: payload },
       parent: rootRun,
       tags: ["nm-finance-agent", "compression"],
-      metadata: llmRunMetadata(OPENROUTER_MODEL_MAIN),
+      metadata: llmRunMetadata(mainModel),
     });
     try {
-      const response = await chat(payload, undefined, { noReasoning: true });
+      const response = await chat(payload, undefined, { modelRole: "main", noReasoning: true });
       const elapsedMs = Date.now() - start;
       trace.update(llmRun, {
         outputs: llmRunOutputs(response.content, {
@@ -220,7 +226,7 @@ export class ConversationCompressor {
       };
       const compressed = [...keptFirst, summaryMessage, ...keptRecent.flat()];
       log.info(
-        `context compression [${this.label}]: ${elapsedMs}ms, turns ${firstTurn}-${lastTurn} summarized, ` +
+        `context compression [${label}]: ${elapsedMs}ms, turns ${firstTurn}-${lastTurn} summarized, ` +
           `${messages.length} -> ${compressed.length} messages, summary ${summary.length} chars`,
       );
       trace.update(rootRun, {
@@ -243,7 +249,7 @@ export class ConversationCompressor {
         originalCount: messages.length,
         compressedCount: compressed.length,
         elapsedMs,
-        modelLabel: this.label,
+        modelLabel: label,
       };
     } catch (e) {
       const msg = String(e).slice(0, 200);

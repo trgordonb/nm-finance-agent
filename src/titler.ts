@@ -11,7 +11,7 @@
 
 import { chat } from "./llm.js";
 import { trace, llmRunMetadata, llmRunOutputs } from "./tracing.js";
-import { OPENROUTER_MODEL_SUMMARIZER } from "./config.js";
+import { resolveUserModel } from "./llm-keys.js";
 export function fallbackTitle(text: string, limit: number = 60): string {
   const cleaned = String(text ?? "").replace(/\s+/g, " ").trim();
   if (cleaned.length <= limit) return cleaned;
@@ -28,6 +28,7 @@ export async function refineSessionTitle(
   firstUserMessage: string,
   firstAssistantReply: string,
 ): Promise<{ title: string; model: string }> {
+  const summarizerModel = resolveUserModel("summarizer");
   const prompt: Array<{ role: "system" | "user"; content: string }> = [
     { role: "system", content: TITLE_SYSTEM },
     {
@@ -54,11 +55,12 @@ export async function refineSessionTitle(
       inputs: { messages: prompt },
       parent: rootRun,
       tags: ["nm-finance-agent", "titler"],
-      metadata: llmRunMetadata(OPENROUTER_MODEL_SUMMARIZER),
+      metadata: llmRunMetadata(summarizerModel),
     });
     try {
       const response = await chat(prompt, undefined, {
-        model: OPENROUTER_MODEL_SUMMARIZER,
+        model: summarizerModel,
+        modelRole: "summarizer",
         noReasoning: true,
       });
       trace.update(llmRun, {
@@ -76,7 +78,7 @@ export async function refineSessionTitle(
         .trim();
       if (!title || title.length < 4) throw new Error("empty title response");
       trace.update(rootRun, { outputs: { title, model: response.model } });
-      return { title, model: `openrouter/${OPENROUTER_MODEL_SUMMARIZER}` };
+      return { title, model: `openrouter/${summarizerModel}` };
     } catch (e) {
       const msg = String(e).slice(0, 160);
       trace.update(llmRun, { error: msg });

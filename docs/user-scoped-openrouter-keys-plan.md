@@ -4,8 +4,9 @@
 `src/llm-keys.ts`, per-user resolution in `chat()`, `LLM_KEY_POLICY` /
 `LLM_KEY_REQUIRE_USER_AFTER` / `USER_LLM_KEY_SECRET` knobs, key + usage routes,
 "Model & key" settings tab, `llm_usage` table with a per-user summary;
-8 focused tests in `src/tests/llm-keys.test.ts` (suite 187/187). Deployment
-values decided: the VM ships `require_user` + a 7-day warn window + a generated
+focused tests in `src/tests/llm-keys.test.ts` (suite 208/208). Per-user main/
+summarizer model preferences and the free-model risk warning landed 2026-10-29.
+Deployment values decided: the VM ships `require_user` + a 7-day warn window + a generated
 `USER_LLM_KEY_SECRET` (see deploy-2026-10-25-agent-cron-sse-ui.md §5b).
 **Date:** 2026-10-25
 **Ask:** each SSO user provides their own OpenRouter API key in the UI; the
@@ -68,9 +69,16 @@ Onboarding keys default to a $100 credit limit and expire after 180 days;
     "key_enc": "<base64 iv|tag|ciphertext>",
     "label": "gordon's key", "masked": "sk-or-v1-…e4f2",
     "added_at": 1793…, "last_checked": 1793…, "last_usage_usd": 0.42
+  },
+  "models": {
+    "main": "z-ai/glm-5.3-flash",
+    "summarizer": "poolside/laguna-xs-2.1:free"
   }
 }
 ```
+
+`models` is optional; blank fields clear the override and fall back to the
+workspace defaults.
 
 - Encryption at rest: AES-256-GCM with a master secret from env
   `USER_LLM_KEY_SECRET`; if unset, fall back to plaintext `0600` + a boot
@@ -98,7 +106,9 @@ uses the server key):
 POST   /api/user/llm-key   { key }  → validate via GET /api/v1/key, store,
                                       return { masked, label, usage_usd, limit }
 GET    /api/user/llm-key            → { present, masked, label, usage_usd, limit,
-                                      last_checked } — never the key itself
+                                      last_checked, models } — never the key itself
+PUT    /api/user/llm-models         { main_model, summarizer_model } → replace
+                                      per-user overrides; blank clears
 DELETE /api/user/llm-key            → remove
 ```
 
@@ -139,8 +149,9 @@ on policy. The sidebar model row can show a subtle ⚠ when
   per-user fair queueing conceivable but unnecessary in v1 (single-tenant
   reality).
 - **Free models**: the summarizer/titler already run on a `:free` model; a user
-  key with zero credits can still serve those roles, and free-model main
-  turns are possible later via a per-user model preference (out of scope).
+  key with zero credits can still serve those roles. Per-user model
+  preferences are now supported; the UI shows a dismissible risk warning when
+  an entered/selected model carries the `:free` variant.
 
 ## 7. Security notes
 
@@ -172,8 +183,8 @@ on policy. The sidebar model row can show a subtle ⚠ when
    the fallback.
 2. **Phase 2**: credits widget (`/api/v1/credits`), `require_user`
    enforcement, OAuth PKCE entry.
-3. **Phase 3**: provisioning-key minting with per-user credit limits, BYOK
-   multi-provider, per-user model preference.
+3. **Phase 3**: provisioning-key minting with per-user credit limits and BYOK
+   multi-provider; per-user model preference is implemented.
 
 ## 10. Decisions (owner, 2026-10-25)
 

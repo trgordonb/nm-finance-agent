@@ -5,6 +5,7 @@
 import {
   OPENROUTER_BASE_URL,
   OPENROUTER_MODEL_MAIN,
+  OPENROUTER_MODEL_SUMMARIZER,
   OPENROUTER_PROVIDER_ORDER,
   OPENROUTER_PROVIDER_IGNORE,
   OPENROUTER_PROVIDER_FALLBACKS,
@@ -12,7 +13,12 @@ import {
   MAX_COMPLETION_TOKENS,
 } from "./config.js";
 import type { ChatMessage } from "./types.js";
-import { resolveAuthorizationKey, recordLlmUsage } from "./llm-keys.js";
+import {
+  resolveAuthorizationKey,
+  resolveUserModel,
+  recordLlmUsage,
+  type LlmModelRole,
+} from "./llm-keys.js";
 import { currentUserId } from "./workspace.js";
 
 const MIN_INTERVAL_MS = Number(process.env.LLM_MIN_INTERVAL_MS ?? "4000");
@@ -85,9 +91,13 @@ export interface ChatResponse {
 }
 
 export interface ChatOpts {
-  /** Override model — secondary calls (titler, future summarizer) use the
-   *  cheap OPENROUTER_MODEL_SUMMARIZER model. */
+  /** Explicit model override. Callers normally pass the workspace constants;
+   *  the per-user model preference is applied by `modelRole` below. */
   model?: string;
+  /** Which per-user model preference this call belongs to. Defaults to
+   *  `summarizer` when `model` is the workspace summarizer constant, otherwise
+   *  `main`. A custom explicit `model` still wins. */
+  modelRole?: LlmModelRole;
   /** Omit the reasoning block (tiny free models bill/deduplicate badly). */
   noReasoning?: boolean;
   /** Lower max_tokens for short-extraction calls (OpenRouter reasoning
@@ -125,9 +135,22 @@ export async function chat(
   // key per LLM_KEY_POLICY. Resolved once per call, not per attempt.
   const auth = resolveAuthorizationKey();
   if (!auth.key) throw new Error(auth.error ?? "no OpenRouter API key available");
-  const model = opts.model || OPENROUTER_MODEL_MAIN;
-  // Provider steering is for the MAIN model only: the summarizer/cheap roles
-  // use a different model that may not be served by those providers.
+  const requestedModel = opts.model?.trim();
+  const modelRole: LlmModelRole =
+    opts.modelRole ??
+    (requestedModel === OPENROUTER_MODEL_SUMMARIZER ? "summarizer" : "main");
+  // Per-user model preference: default/global role constants are replaced by
+  // the caller's choice. A genuinely custom explicit model still wins.
+  const roleModel = resolveUserModel(modelRole);
+  const model =
+    requestedModel &&
+    requestedModel !== OPENROUTER_MODEL_MAIN &&
+    requestedModel !== OPENROUTER_MODEL_SUMMARIZER
+      ? requestedModel
+      : roleModel;
+  // Provider steering is for the default MAIN model only: a user-selected
+  // custom model may not be served by the configured providers, and the
+  // summarizer/cheap roles use a different model entirely.
   const isMainModel = model === OPENROUTER_MODEL_MAIN;
   const reasoning = OPENROUTER_REASONING && !opts.noReasoning;
   // Rate limit: enforce minimum interval between calls (shared across turns).

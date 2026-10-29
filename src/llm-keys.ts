@@ -4,7 +4,8 @@
 // mcp-user-state (0700 dir, 0600 file, atomic tmp+rename). The key is
 // encrypted at rest (AES-256-GCM with USER_LLM_KEY_SECRET); when that env is
 // unset the state degrades to plaintext 0600 with the flag visible to callers
-// so the boot log can warn.
+// so the boot log can warn. The same file carries the optional per-user
+// `models` overrides (main/summarizer); they are independent of the key.
 //
 // The three knobs (LLM_KEY_POLICY, LLM_KEY_REQUIRE_USER_AFTER,
 // USER_LLM_KEY_SECRET) are read lazily from process.env rather than config.ts
@@ -18,7 +19,13 @@
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
-import { OPENROUTER_API_KEY, OPENROUTER_BASE_URL, SKILLS_STATE_DIR } from "./config.js";
+import {
+  OPENROUTER_API_KEY,
+  OPENROUTER_BASE_URL,
+  OPENROUTER_MODEL_MAIN,
+  OPENROUTER_MODEL_SUMMARIZER,
+  SKILLS_STATE_DIR,
+} from "./config.js";
 import { currentUserId, sanitizeUserId } from "./workspace.js";
 
 const OPENROUTER_KEY_URL = `${OPENROUTER_BASE_URL.replace(/\/$/, "")}/key`;
@@ -106,8 +113,45 @@ export interface UserLlmKeyEntry {
   last_checked: number;
 }
 
+export interface UserLlmModels {
+  main?: string;
+  summarizer?: string;
+}
+
 export interface UserLlmKeyState {
   openrouter?: UserLlmKeyEntry;
+  /** Per-user model overrides; absent means the workspace defaults. */
+  models?: UserLlmModels;
+}
+
+export type LlmModelRole = "main" | "summarizer";
+
+export interface ResolvedModel {
+  model: string;
+  source: "user" | "default";
+}
+
+const MODEL_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._~:/-]{0,199}$/;
+
+/** OpenRouter model IDs are `vendor/model[:variant]`; keep the check narrow
+ *  enough to catch whitespace/typos without rejecting legitimate variants. */
+export function isValidModelId(value: string): boolean {
+  return MODEL_ID_RE.test(String(value ?? "").trim());
+}
+
+/** Free tiers are conventionally suffixed `:free` (e.g. `...:free`). Used for
+ *  the UI risk warning; it is a label, not a spend guarantee. */
+export function isFreeModelId(value: string): boolean {
+  return /:free(?::|$)/i.test(String(value ?? "").trim());
+}
+
+function cleanModelId(value: unknown): string | null {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "string") throw new Error("model id must be a string");
+  const id = value.trim();
+  if (!id) return null;
+  if (!isValidModelId(id)) throw new Error(`invalid OpenRouter model id: ${id}`);
+  return id;
 }
 
 export function llmKeyStatePath(userId: string = currentUserId()): string {
@@ -130,16 +174,78 @@ function writeState(state: UserLlmKeyState, userId: string): void {
   fs.renameSync(tmp, file);
 }
 
+/** Key metadata only; never returns the encrypted/plaintext key material. */
+export function getUserLlmKeyEntry(userId: string = currentUserId()): UserLlmKeyEntry | null {
+  try {
+    return readState(userId).openrouter ?? null;
+  } catch {
+    return null;
+  }
+}
+
+/** Stored model overrides for a user; null means "use the workspace default". */
+export function getUserModelPreferences(
+  userId: string = currentUserId(),
+): { main: string | null; summarizer: string | null } {
+  try {
+    const models = readState(userId).models;
+    const clean = (value: unknown): string | null => {
+      const id = typeof value === "string" ? value.trim() : "";
+      return id && isValidModelId(id) ? id : null;
+    };
+    return { main: clean(models?.main), summarizer: clean(models?.summarizer) };
+  } catch {
+    return { main: null, summarizer: null };
+  }
+}
+
+/** Replace this user's model overrides. Empty/null clears an override.
+ *  The key entry is preserved; models are independent of the key. */
+export function setUserModelPreferences(
+  userId: string,
+  models: { main?: string | null; summarizer?: string | null },
+): { main: string | null; summarizer: string | null } {
+  const state = readState(userId);
+  const nextMain = cleanModelId(models.main);
+  const nextSummarizer = cleanModelId(models.summarizer);
+  if (nextMain || nextSummarizer) {
+    state.models = {
+      ...(nextMain ? { main: nextMain } : {}),
+      ...(nextSummarizer ? { summarizer: nextSummarizer } : {}),
+    };
+  } else {
+    delete state.models;
+  }
+  writeState(state, userId);
+  return { main: nextMain, summarizer: nextSummarizer };
+}
+
+/** Resolve one role to the effective model and whether it came from the user. */
+export function resolveModelSelection(
+  role: LlmModelRole,
+  userId: string = currentUserId(),
+): ResolvedModel {
+  const prefs = getUserModelPreferences(userId);
+  const chosen = prefs[role];
+  if (chosen) return { model: chosen, source: "user" };
+  return {
+    model: role === "main" ? OPENROUTER_MODEL_MAIN : OPENROUTER_MODEL_SUMMARIZER,
+    source: "default",
+  };
+}
+
+export function resolveUserModel(
+  role: LlmModelRole,
+  userId: string = currentUserId(),
+): string {
+  return resolveModelSelection(role, userId).model;
+}
+
 /** The user's OpenRouter key, decrypted — one small file read per LLM call
  *  (microseconds against seconds of LLM latency), no cache: mid-session
  *  save/clear must take effect on the very next call. */
 export function getUserOpenRouterKey(userId: string = currentUserId()): string | null {
-  let entry: UserLlmKeyEntry | undefined;
-  try {
-    entry = readState(userId).openrouter;
-  } catch {
-    return null;
-  }
+  const entry = getUserLlmKeyEntry(userId);
   if (!entry) return null;
   return entry.key_enc ? decryptKey(entry.key_enc) : entry.key_plain ?? null;
 }
