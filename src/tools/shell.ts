@@ -24,7 +24,14 @@ export const execute: ToolDef = {
   },
   execute(args, ctx) {
     return new Promise((resolve) => {
-      const command = String(args.command ?? "");
+      const command = String(args.command ?? "").trim();
+      // An empty command (model tool-args slip — live cron miss 2026-10-30:
+      // exec("") threw "file cannot be empty" and ended a scheduled run) is a
+      // recoverable args failure, not a system error: Rejected, per contract.
+      if (!command) {
+        resolve("Rejected: empty command — pass the shell command to run, or skip the tool call if you only meant to reason.");
+        return;
+      }
       // The user's shell gets a short-lived, user-scoped wiki assertion — never
       // the admin/common token. The model can read this env (execute is the
       // agent's own shell), so the token's TTL and scope are the containment.
@@ -58,7 +65,8 @@ export const execute: ToolDef = {
       let child: ReturnType<typeof exec>;
       let onAbort: (() => void) | undefined;
       let aborted = false;
-      child = exec(command, opts, (err, stdout, stderr) => {
+      try {
+        child = exec(command, opts, (err, stdout, stderr) => {
         if (ctx?.signal && onAbort) ctx.signal.removeEventListener("abort", onAbort);
         if (err && err.killed && aborted) {
           resolve("Rejected: cancelled by user; the foreground command was killed.");
@@ -135,6 +143,11 @@ export const execute: ToolDef = {
       if (ctx?.signal) {
         if (ctx.signal.aborted) onAbort();
         else ctx.signal.addEventListener("abort", onAbort, { once: true });
+      }
+      } catch (e) {
+        // Synchronous spawn throws (empty file, bad args) are args-driven —
+        // recoverable, never a fatal turn-ender.
+        resolve(`Rejected: could not spawn: ${String((e as Error).message).slice(0, 200)}`);
       }
     });
   },
