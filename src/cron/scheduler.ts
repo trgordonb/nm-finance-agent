@@ -35,7 +35,9 @@ export function isScheduledRun(): boolean {
 export function advanceAfter(job: CronJobRow, fromMs: number): number | null {
   const kind = job.schedule_kind as ScheduleKind;
   if (kind === "once") return null;
-  return nextFire(kind, job.schedule_expr, fromMs);
+  // Advance in the job's timezone; otherwise a midnight-HKT job advances to
+  // midnight UTC (08:00 HKT) and fires twice per local day.
+  return nextFire(kind, job.schedule_expr, fromMs, job.timezone);
 }
 
 export interface CronDeps {
