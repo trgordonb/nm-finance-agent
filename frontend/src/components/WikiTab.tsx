@@ -490,7 +490,14 @@ export default function WikiTab({ onAsk }: Props) {
             )
           ) : (
             <>
-          {error && <div className="wiki-error">{error}</div>}
+          {error && page === null && !loadingPage && (
+            <div className="wiki-error">{error}</div>
+          )}
+          {error && page !== null && (
+            <div className="wiki-error wiki-error-soft">
+              {error} — showing the previously loaded content
+            </div>
+          )}
           {booting && (
             <div className="wiki-status">
               <LoaderCircle className="wiki-spin" size={16} /> loading the wiki…

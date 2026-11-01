@@ -759,6 +759,10 @@ app.get("/api/wiki/*", async (req, res) => {
     });
     res.status(upstream.status).type(upstream.contentType).send(upstream.body);
   } catch (err) {
+    // A 502 means the proxy couldn't reach the wiki service at all —
+    // distinct from a 500 from the wiki service itself (which passes through
+    // with its own error body above).
+    log.warn(`wiki proxy ${built.path}: ${String(err).slice(0, 200)}`);
     res.status(502).json({
       detail: `llmwiki unreachable at ${WIKI_API_URL}: ${String(err).slice(0, 160)}`,
     });
