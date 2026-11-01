@@ -2710,3 +2710,45 @@ body {
 :root[data-theme="light"] .hljs-built_in {
   color: #953800;
 }
+
+/* --- inline TFT forecast card ------------------------------------------------ */
+
+.tft-card .tft-summary {
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 6px 0 10px;
+}
+
+.tft-card .tft-mount {
+  height: 320px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.tft-card.expanded .tft-mount {
+  height: 60vh;
+}
+
+.tft-table {
+  border-collapse: collapse;
+  margin-top: 12px;
+  width: 100%;
+  font-size: 12px;
+}
+
+.tft-table td {
+  border-top: 1px solid var(--border);
+  padding: 4px 12px;
+}
+
+.tft-err {
+  color: var(--err);
+  font-size: 12px;
+}
+
+.tft-loading {
+  color: var(--text-dim);
+  font-size: 12px;
+  padding: 8px 0;
+}

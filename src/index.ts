@@ -16,6 +16,7 @@
 
 import express, { type Request, type Response } from "express";
 import { randomUUID } from "node:crypto";
+import fs from "node:fs";
 import path from "node:path";
 import {
   serverHost,
@@ -44,7 +45,13 @@ import { authConfig } from "./auth/config.js";
 import { createAuthRouter } from "./auth/routes.js";
 import { createOriginGuard, createRequireAuth, type AuthedRequest } from "./auth/middleware.js";
 import { SessionManager } from "./auth/session.js";
-import { currentWorkspaceRoot, currentUserId, runInWorkspace, workspaceUserKey } from "./workspace.js";
+import {
+  currentWorkspaceRoot,
+  currentUserId,
+  resolveInWorkspace,
+  runInWorkspace,
+  workspaceUserKey,
+} from "./workspace.js";
 import { certificateDaysRemaining, createSsoClient } from "./auth/sso.js";
 import { AuthStore } from "./auth/store.js";
 import { looksLikePdf, saveWikiUpload } from "./uploads.js";
@@ -1265,6 +1272,37 @@ const yahoo_upstream = async (upstream: string) => {
   }
   throw lastError ?? new Error("no yahoo host reachable");
 };
+
+// Scoped artifact read for inline chart cards (tft-forecast fences): resolves
+// under the caller's workspace root, .json only, traversal-guarded, size-capped.
+app.get("/api/workspace/json", (req, res) => {
+  const rel = String((req.query as Record<string, unknown>).path ?? "").trim();
+  if (!rel || !rel.endsWith(".json") || rel.includes("..")) {
+    res.status(400).json({ detail: "path must be a workspace-relative .json file" });
+    return;
+  }
+  const abs = path.resolve(resolveInWorkspace(rel));
+  if (abs !== currentWorkspaceRoot() && !abs.startsWith(currentWorkspaceRoot() + path.sep)) {
+    res.status(400).json({ detail: "path escapes the workspace" });
+    return;
+  }
+  let raw: string;
+  try {
+    raw = fs.readFileSync(abs, "utf8");
+  } catch {
+    res.status(404).json({ detail: `no artifact at ${JSON.stringify(rel)}` });
+    return;
+  }
+  if (raw.length > 2_000_000) {
+    res.status(413).json({ detail: "artifact too large to render inline" });
+    return;
+  }
+  try {
+    res.json(JSON.parse(raw));
+  } catch {
+    res.status(422).json({ detail: "artifact is not valid JSON" });
+  }
+});
 
 app.get("/api/yahoo/*", async (req, res) => {
   const basePath = (req.params as { 0?: string })[0] ?? "";

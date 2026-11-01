@@ -823,3 +823,67 @@ multi-provider (`CreateBYOKKeyRequest`), per-user model preference.
 **What's left — cron Phase 3:** live-stream in-flight fires, cancel running
 fires (register in ACTIVE_TURNS), `context_from` chaining, per-job model
 pins, `allow_scheduling` opt-in, cron doctor in /api/health.
+
+---
+
+## 2026-11-01 — tft-price-prediction skill + tft-base-v1 snapshot
+
+New InstaBox workload: the backend of zadescoxp/TFT-Finance (Temporal Fusion
+Transformer, one 252-day quantile forecast per ticker, 6-horizon walk-forward
+backtests baked into `python -m model.train`). New snapshot **`tft-base-v1`**
+(3/5 slots): repo at `~/tft`, Python 3.12 venv with **CPU-only torch 2.15** +
+lightning + pytorch-forecasting + yfinance + ta (CPU wheel first, then
+requirements.txt — avoids the multi-GB CUDA download), a trained AAPL example
+shipped in `backend/models/aapl/`. Build validated live on 4 vCPU / 8 GiB:
+`--smoke` (1 epoch / 2 batches) green, full 30-epoch run + 6-horizon
+backtests **completed in ~10-15 min** (TRAIN_EXIT=0, 75 batches @ ~2.2 it/s
+per epoch, early stopping available; peak RSS well under the 5.5 GB the
+owner measured elsewhere), snapshot verified by launching a fresh sandbox and
+smoke-training MSFT. New skill `tft-price-prediction` (pushed to R2): create
+from tft-base-v1 → run `python -m model.train --ticker X --accelerator cpu`
+with OMP/MKL pinned to 4 threads (measured sweet spot; more degrades) → dump
+the 252-day forecast path → pull EVERY artifact (`backend/models/<ticker>/`:
+tft.ckpt, dataset.pt, evaluation.json with the in/out-of-sample walk-forward,
+interpretability.json, meta.json, forecast.json — plus the train log) into the
+**user-scoped workspace** (`$WORKSPACE_DIR/tft-<ticker>/`) via tar+base64+files
+→ summarize evaluation.json and render the Vela forecast chart for the user.
+The nm-session tag means the harness terminates the sandbox at turn end even
+if the explicit rm is forgotten. instabox-sandbox base-images section lists
+both images.
+
+---
+
+## 2026-11-01 — TFT forecast path + Vela chart artifact (skill v2)
+
+The tft-price-prediction skill gained the display half: `scripts/dump_forecast.py`
+(transferred to the sandbox, run with the venv python) composes the same payload
+as the repo's `POST /api/predict` without the API — `forecast_payload` from
+`app.services.forecast_service` plus a 180-bar OHLCV history — and writes
+`backend/models/<ticker>/forecast.json` (252 dated points, prices at
+q10/q50/q90). Pulled back via the `files` API (plain JSON — no base64), it
+feeds `scripts/build_forecast_chart.py`, which renders an offline Vela HTML:
+history candles + forecast bars (body = median q50 path, wick = the 10–90%
+band) with the walk-forward evaluation table underneath, vendoring
+`@luxalgo/vela` from frontend/node_modules. Verified in a live browser: Vela
+mounted, main canvas 1236×518, 12-row walk-forward table (AAPL in-sample 1-day
+52.6% directional / 77.4% coverage). The inline vela-chart chat card cannot
+render forecast bars (it draws Yahoo data by symbol only) — the offline
+artifact is the supported display path.
+
+---
+
+## 2026-11-01 — Inline TFT forecast cards in the session feed
+
+The scheduled NVDA fire (trace 75898472…, 53 iterations, no errors, 2.1M
+prompt tokens) completed the whole remote workflow — sandbox from tft-base-v1,
+training to TRAIN_EXIT=0, 252-day quantile dump, md5-verified artifact pull,
+chart built and screenshot-verified by the fire itself, sandbox swept at turn
+end. To display the result inline at the session message (the owner's ask):
+`GET /api/workspace/json?path=…` (scoped to the caller's workspace, .json
+only, traversal-guarded, 2 MB cap) + a `tft-forecast` fenced block in the
+feed — the card merges history candles with forecast bars (close tracks the
+median q50 path, wick spans the 10–90% band, volume optional in the Vela bar
+contract) and renders the walk-forward table, re-fetching on session reload.
+The inline vela-chart card remains Yahoo-by-symbol only; forecast display is
+the new fence's job. Verified end-to-end against the AAPL artifacts from the
+image build. Bar.volume made optional to match the documented contract.

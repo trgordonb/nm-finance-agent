@@ -8,7 +8,9 @@ export type Bar = {
   high: number;
   low: number;
   close: number;
-  volume: number;
+  /** Forecast bars (tft-forecast cards) omit volume — optional in the Vela
+   *  bar contract. */
+  volume?: number;
 };
 
 const RANGE_DAYS: Record<string, number> = {

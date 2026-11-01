@@ -5,34 +5,59 @@ import { isValidElement, type ReactNode } from "react";
 import { Bot, Check, LoaderCircle, SquareTerminal, UserRound, X } from "lucide-react";
 import { ChartCard } from "../charts/ChartCard";
 import { parseChartSpec } from "../charts/yahoo";
+import { TftForecastCard } from "./TftForecastCard";
 import type { FeedItem, MessageItem, ToolCall } from "../types";
 
-// ```vela-chart fenced blocks render as live chart cards (the agent emits
-// them; pasting one into the composer renders it too). Everything else keeps
-// the default markdown rendering.
+// ```vela-chart and ```tft-forecast fenced blocks render as live cards (the
+// agent emits them; pasting one into the composer renders it too). Everything
+// else keeps the default markdown rendering.
 const MD_COMPONENTS = {
   pre: ({ children }: { children?: ReactNode }) => {
     const child = Array.isArray(children) ? children[0] : children;
-    const isChart =
-      isValidElement(child) &&
-      (child.props as { className?: string }).className === "language-vela-chart";
-    return isChart ? <>{children}</> : <pre>{children}</pre>;
+    const className =
+      isValidElement(child) && (child.props as { className?: string }).className;
+    return className === "language-vela-chart" || className === "language-tft-forecast" ? (
+      <>{children}</>
+    ) : (
+      <pre>{children}</pre>
+    );
   },
   code: ({ className, children }: { className?: string; children?: ReactNode }) => {
     if (className === "language-vela-chart") {
       const spec = parseChartSpec(String(children));
       if (spec) return <ChartCard spec={spec} />;
     }
+    if (className === "language-tft-forecast") {
+      const spec = parseTftSpec(String(children));
+      if (spec) return <TftForecastCard spec={spec} />;
+    }
     return <code className={className}>{children}</code>;
   },
 };
+
+function parseTftSpec(raw: string): { path: string; evalPath?: string; ticker?: string } | null {
+  const tokens = raw.trim().split(/\s+/).filter(Boolean);
+  let path = "";
+  let evalPath: string | undefined;
+  let ticker: string | undefined;
+  for (const token of tokens) {
+    const eq = token.indexOf("=");
+    if (eq <= 0) continue;
+    const key = token.slice(0, eq);
+    const value = token.slice(eq + 1);
+    if (key === "path") path = value;
+    else if (key === "eval") evalPath = value;
+    else if (key === "ticker") ticker = value;
+  }
+  return path ? { path, evalPath, ticker } : null;
+}
 
 // User messages keep their plain pre-wrap rendering except for pasted
 // ```vela-chart blocks, which render as cards too.
 // User messages keep their plain pre-wrap rendering except for pasted
 // vela-chart blocks, which render as cards too.
 function UserContent({ content }: { content: string }) {
-  const parts = content.split(/```vela-chart\s*\n([\s\S]*?)```/g);
+  const parts = content.split(/```(?:vela-chart|tft-forecast)\s*\n([\s\S]*?)```/g);
   if (parts.length === 1) return <div className="user-content">{content}</div>;
   return (
     <div className="user-content">
@@ -41,8 +66,10 @@ function UserContent({ content }: { content: string }) {
           part && <span key={i}>{part}</span>
         ) : (
           (() => {
-            const spec = parseChartSpec(part);
-            return spec ? <ChartCard key={i} spec={spec} /> : <span key={i}>{part}</span>;
+            const velaSpec = parseChartSpec(part);
+            if (velaSpec) return <ChartCard key={i} spec={velaSpec} />;
+            const tftSpec = parseTftSpec(part);
+            return tftSpec ? <TftForecastCard key={i} spec={tftSpec} /> : <span key={i}>{part}</span>;
           })()
         )
       )}
