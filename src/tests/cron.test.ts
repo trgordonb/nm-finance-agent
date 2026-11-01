@@ -25,7 +25,7 @@ const {
   isValidTimezone,
   formatInTz,
 } = await import("../cron/parse.js");
-const { createCronManageTool } = await import("../cron/tool.js");
+const { createCronManageTool, createCronScheduleTool } = await import("../cron/tool.js");
 const { executeCronJob } = await import("../cron/execute.js");
 const { runInWorkspace } = await import("../workspace.js");
 
@@ -312,53 +312,57 @@ test("cron execute: per-job max_iterations and scheduled wrap-up margin reach ru
   assert.equal(midTurnRegistered, true);
 });
 
-test("cron tool: create/list/get are user-scoped and validate input", async () => {
+test("cron_schedule: create validates, scopes per user, rejects duplicates", async () => {
   const store = tempStore();
   const scheduler = new CronScheduler({ store, loop: {} as never });
-  const tool = createCronManageTool(store, scheduler);
+  const schedule = createCronScheduleTool(store, scheduler);
+  const manage = createCronManageTool(store, scheduler);
 
   const created = JSON.parse(
     String(
       await runInWorkspace("alice", () =>
-        tool.execute({ action: "create", name: "brief", schedule_kind: "interval", schedule_expr: "1h", payload: "do the thing" }, {}),
+        schedule.execute({ name: "brief", schedule_kind: "interval", schedule_expr: "1h", payload: "do the thing" }, {}),
       ),
     ),
   );
   assert.equal(created.ok, true);
   assert.equal(created.next_runs.length, 2);
 
-  // duplicate name is rejected; so is a bad schedule
+  // duplicate name is rejected; so is a bad schedule; bad tz too
   const dup = await runInWorkspace("alice", () =>
-    tool.execute({ action: "create", name: "brief", schedule_kind: "interval", schedule_expr: "1h", payload: "x" }, {}),
+    schedule.execute({ name: "brief", schedule_kind: "interval", schedule_expr: "1h", payload: "x" }, {}),
   );
   assert.match(String(dup), /already exists/);
   const bad = await runInWorkspace("alice", () =>
-    tool.execute({ action: "create", name: "bad", schedule_kind: "cron", schedule_expr: "99 * * * *", payload: "x" }, {}),
+    schedule.execute({ name: "bad", schedule_kind: "cron", schedule_expr: "99 * * * *", payload: "x" }, {}),
   );
   assert.match(String(bad), /invalid cron expression/);
+  const badTz = await runInWorkspace("alice", () =>
+    schedule.execute({ name: "bad-tz", schedule_kind: "once", schedule_expr: "2027-01-01T00:00:00Z", payload: "x", timezone: "Mars/Olympus" }, {}),
+  );
+  assert.match(String(badTz), /invalid timezone/);
 
   // bob has an empty list; name addressing is per user
-  const bobList = JSON.parse(String(await runInWorkspace("bob", () => tool.execute({ action: "list" }, {}))));
+  const bobList = JSON.parse(String(await runInWorkspace("bob", () => manage.execute({ action: "list" }, {}))));
   assert.deepEqual(bobList.jobs, []);
-  const bobGet = await runInWorkspace("bob", () => tool.execute({ action: "get", name: "brief" }, {}));
+  const bobGet = await runInWorkspace("bob", () => manage.execute({ action: "get", name: "brief" }, {}));
   assert.match(String(bobGet), /no scheduled job/);
 
-  const list = JSON.parse(String(await runInWorkspace("alice", () => tool.execute({ action: "list" }, {}))));
+  const list = JSON.parse(String(await runInWorkspace("alice", () => manage.execute({ action: "list" }, {}))));
   assert.equal(list.jobs.length, 1);
   assert.equal(list.jobs[0].schedule, "every 1h");
 });
 
-test("cron tool: create applies timezone to the stored next_run_at", async () => {
+test("cron_schedule: create applies timezone to the stored next_run_at", async () => {
   const store = tempStore();
   const scheduler = new CronScheduler({ store, loop: {} as never });
-  const tool = createCronManageTool(store, scheduler);
+  const schedule = createCronScheduleTool(store, scheduler);
 
   const created = JSON.parse(
     String(
       await runInWorkspace("alice", () =>
-        tool.execute(
+        schedule.execute(
           {
-            action: "create",
             name: "hk-midnight",
             schedule_kind: "cron",
             schedule_expr: "0 0 * * *",
@@ -380,39 +384,36 @@ test("cron tool: create applies timezone to the stored next_run_at", async () =>
   assert.equal(created.next_runs[0], formatInTz(job.next_run_at as number, "Asia/Hong_Kong"));
 });
 
-test("cron tool: create rejects ONCE listing every missing field + template", async () => {
+test("cron_schedule: incomplete schedule rejects once, listing the fields", async () => {
   const store = tempStore();
   const scheduler = new CronScheduler({ store, loop: {} as never });
-  const tool = createCronManageTool(store, scheduler);
+  const schedule = createCronScheduleTool(store, scheduler);
   const out = String(
-    await runInWorkspace("alice", () => tool.execute({ action: "create", limit: 5 }, {})),
+    await runInWorkspace("alice", () => schedule.execute({ name: "nvda" }, {})),
   );
-  assert.match(out, /create is incomplete/);
-  assert.match(out, /missing 3 fields/); // schedule_expr is skipped while its kind is absent
-  assert.match(out, /name \(unique job name/);
+  assert.match(out, /schedule is incomplete/);
   assert.match(out, /schedule_kind/);
-  assert.match(out, /payload/);
-  assert.match(out, /Send ALL of them in ONE call/);
   // nothing was created by the rejected call
   assert.equal(store.listCronJobs("alice").length, 0);
 });
 
-test("cron tool: payload_file supplies the payload (long-prompt path)", async () => {
+test("cron_schedule: payload_file supplies the payload (long-prompt path)", async () => {
   const store = tempStore();
   const scheduler = new CronScheduler({ store, loop: {} as never });
-  const tool = createCronManageTool(store, scheduler);
+  const schedule = createCronScheduleTool(store, scheduler);
   await runInWorkspace("alice", async () => {
     const { currentWorkspaceRoot } = await import("../workspace.js");
-    fs.writeFileSync(path.join(currentWorkspaceRoot(), "prompt.md"), "train NVDA end to end");
+    fs.mkdirSync(path.join(currentWorkspaceRoot(), "jobs"), { recursive: true });
+    fs.writeFileSync(path.join(currentWorkspaceRoot(), "jobs", "prompt.md"), "train NVDA end to end");
   });
   const out = JSON.parse(
     String(
       await runInWorkspace("alice", () =>
-        tool.execute(
+        schedule.execute(
           {
-            action: "create", name: "nvda", schedule_kind: "once",
+            name: "nvda", schedule_kind: "once",
             schedule_expr: new Date(Date.now() + 3_600_000).toISOString(),
-            payload_file: "prompt.md",
+            payload_file: "jobs/prompt.md",
           },
           {},
         ),
@@ -430,8 +431,9 @@ test("cron tool: run-now goes through the claim path", async () => {
     execute: async () => ({ sessionId: "s", failed: false, iterations: 0, usage: { prompt_tokens: 0, completion_tokens: 0 }, excerpt: "" }),
   });
   const tool = createCronManageTool(store, scheduler);
+  const schedule = createCronScheduleTool(store, scheduler);
   await runInWorkspace("alice", () =>
-    tool.execute({ action: "create", name: "j", schedule_kind: "once", schedule_expr: "in 1h", payload: "p" }, {}),
+    schedule.execute({ name: "j", schedule_kind: "once", schedule_expr: "in 1h", payload: "p" }, {}),
   );
   const out = JSON.parse(String(await runInWorkspace("alice", () => tool.execute({ action: "run", name: "j" }, {}))));
   assert.equal(out.ok, true);

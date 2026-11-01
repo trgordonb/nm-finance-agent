@@ -99,7 +99,7 @@ import {
   setUserOpenRouterKey,
   validateOpenRouterKey,
 } from "./llm-keys.js";
-import { createCronManageTool } from "./cron/tool.js";
+import { createCronManageTool, createCronScheduleTool } from "./cron/tool.js";
 import { cleanupSessionSandboxes } from "./instabox.js";
 import {
   isScheduleKind,
@@ -246,7 +246,10 @@ function buildBaseRegistry() {
   // Optional integration: expose the research engine to the main agent
   // (RESEARCH_AS_TOOL, default off — a run takes 20-40 min and real spend).
   if (RESEARCH_MODE_ENABLED && RESEARCH_AS_TOOL) tools.push(createDeepResearchTool());
-  if (CRON_ENABLED) tools.push(createCronManageTool(store, cronScheduler));
+  if (CRON_ENABLED) {
+    tools.push(createCronManageTool(store, cronScheduler));
+    tools.push(createCronScheduleTool(store, cronScheduler));
+  }
   return tools;
 }
 

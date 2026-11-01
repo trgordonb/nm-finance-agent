@@ -41,6 +41,121 @@ function jobPublic(job: CronJobRow, opts?: { withPayload?: boolean }) {
     : { ...base, payload_preview: job.payload.slice(0, 160) };
 }
 
+function resolvePayload(a: Record<string, unknown>, user: string): { payload?: string; error?: string } {
+  let payload = String(a.payload ?? "").trim();
+  const payloadFile = String(a.payload_file ?? "").trim();
+  if (!payload && payloadFile) {
+    const file = path.resolve(currentWorkspaceRoot(), payloadFile);
+    if (!file.startsWith(currentWorkspaceRoot())) {
+      return { error: `payload_file must be inside the workspace (${currentWorkspaceRoot()})` };
+    }
+    try {
+      payload = fs.readFileSync(file, "utf8").trim();
+    } catch {
+      return { error: `payload_file ${JSON.stringify(payloadFile)} is not readable — write it with write_file first` };
+    }
+  }
+  return { payload };
+}
+
+/** Dedicated create tool: a small, all-but-two-required schema. Live evidence
+ *  (traces 0f452948…, ce1871e4…) shows flash-class models drop fields across
+ *  retries on the 9-action dispatch schema — a flat required-everything tool
+ *  is what they execute reliably. */
+export function createCronScheduleTool(store: SQLiteSessionStore, scheduler: CronScheduler): ToolDef {
+  return {
+    name: "cron_schedule",
+    description:
+      "Schedule one of the user's recurring or one-shot agent jobs. Provide ALL of: name (unique), " +
+      "schedule_kind ('cron' 5-field expression | 'interval' like '6h' | 'once' ISO timestamp or 'in 90m'), " +
+      "schedule_expr for that kind, and payload — the self-contained prompt each fire executes (fresh session, " +
+      "no memory of this chat; reference skills by name). For long prompts write the prompt to a workspace file " +
+      "with write_file and pass payload_file instead. Times are interpreted in `timezone` (IANA, e.g. " +
+      "'Asia/Hong_Kong' — set it whenever the user names a clock time; default is the server's). " +
+      "The result includes the computed next fire times — confirm them to the user.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Unique job name (<= 80 chars)." },
+        schedule_kind: { type: "string", enum: ["cron", "interval", "once"], description: "Schedule kind." },
+        schedule_expr: { type: "string", description: "The expression for that kind." },
+        payload: { type: "string", description: "The self-contained prompt each fire executes (short prompts)." },
+        payload_file: { type: "string", description: "Workspace-relative path of a file with the prompt — use for long prompts instead of payload." },
+        timezone: { type: "string", description: "IANA timezone for the schedule times (e.g. 'Asia/Hong_Kong'). Default: server timezone." },
+        max_iterations: { type: "number", description: "Optional per-run tool-call budget override." },
+      },
+      required: ["name", "schedule_kind", "schedule_expr"],
+    },
+    async execute(args) {
+      const a = args as Record<string, unknown>;
+      const user = currentUserId();
+      const name = String(a.name ?? "").trim();
+      const kindInput = typeof a.schedule_kind === "string" ? a.schedule_kind.trim().toLowerCase() : "";
+      const kind = isScheduleKind(kindInput) ? (kindInput as ScheduleKind) : null;
+      const expr = String(a.schedule_expr ?? "").trim();
+      const timezone = a.timezone != null ? String(a.timezone).trim() || null : null;
+      const problems: string[] = [];
+      if (!name) problems.push("name (unique job name, <= 80 chars)");
+      else if (name.length > 80) problems.push("name must be 80 characters or fewer");
+      if (!kind) problems.push('schedule_kind ("cron" | "interval" | "once")');
+      if (kind && !expr) problems.push("schedule_expr (the expression for that kind)");
+      if (kind && expr) {
+        const invalid = validateSchedule(kind, expr, timezone);
+        if (invalid) problems.push(invalid);
+      }
+      const resolved = resolvePayload(a, user);
+      if (resolved.error) return `Rejected: ${resolved.error}`;
+      const payload = resolved.payload ?? "";
+      if (!payload) problems.push("payload (the self-contained prompt each fire executes — or payload_file)");
+      if (timezone && !isValidTimezone(timezone)) {
+        problems.push(`invalid timezone ${JSON.stringify(timezone)} — use an IANA name like "Asia/Hong_Kong"`);
+      }
+      if (problems.length) {
+        return (
+          `Rejected: schedule is incomplete — ${problems.length === 1 ? "missing " + problems[0] : "missing " + problems.length + " fields: " + problems.join("; ")}. ` +
+          `Re-send with all of: name, schedule_kind, schedule_expr, payload (or payload_file).`
+        );
+      }
+      if (store.getCronJobForUser(user, name)) {
+        return `Rejected: a job named ${JSON.stringify(name)} already exists — pick another name or update it with cron_manage`;
+      }
+      const now = Date.now();
+      const maxIt = a.max_iterations != null ? Number(a.max_iterations) : null;
+      const next = nextFire(kind as ScheduleKind, expr, now, timezone);
+      if (next === null) return `Rejected: could not compute the next fire for ${JSON.stringify(expr)}`;
+      const nextRuns = nextFires(kind as ScheduleKind, expr, now, 2, timezone);
+      const job = store.createCronJob({
+        id: randomUUID(),
+        user_id: user,
+        name,
+        schedule_kind: kind as ScheduleKind,
+        schedule_expr: expr,
+        payload,
+        session_id: null,
+        created_from_session: null,
+        enabled: 1,
+        allow_scheduling: 0,
+        max_iterations: maxIt != null && Number.isFinite(maxIt) ? Math.floor(maxIt) : null,
+        timezone,
+        next_run_at: next,
+        last_run_at: null,
+        last_status: null,
+        last_error: null,
+        failure_streak: 0,
+        created_at: now,
+        updated_at: now,
+      });
+      return JSON.stringify({
+        ok: true,
+        job: jobPublic(job, { withPayload: true }),
+        next_runs: nextRuns.map((t) => formatInTz(t, timezone)),
+        server_timezone: serverTimezone(),
+        note: "Scheduled. Each fire lands in the job's own session; runs and statuses are visible in the Scheduled view.",
+      });
+    },
+  };
+}
+
 export function createCronManageTool(store: SQLiteSessionStore, scheduler: CronScheduler): ToolDef {
   return {
     name: "cron_manage",
@@ -59,11 +174,10 @@ export function createCronManageTool(store: SQLiteSessionStore, scheduler: CronS
       properties: {
         action: {
           type: "string",
-          enum: ["create", "list", "get", "update", "pause", "resume", "remove", "runs", "run"],
+          enum: ["list", "get", "update", "pause", "resume", "remove", "runs", "run"],
           description:
-            "Operation on the user's scheduled jobs. create requires name + schedule_kind + schedule_expr + " +
-            "payload (or payload_file) IN ONE CALL — never send a partial create; the tool lists every " +
-            "missing field if you do. list takes no other parameter.",
+            "Operation on the user's scheduled jobs. To CREATE a job use the dedicated cron_schedule tool. " +
+            "Every operation here except list needs the job's name-or-id.",
         },
         name: { type: "string", description: "Job name (create: required, unique per user; every other action except list: name-or-id)." },
         schedule_kind: { type: "string", enum: ["cron", "interval", "once"], description: "create/update ONLY: schedule kind." },
@@ -99,86 +213,10 @@ export function createCronManageTool(store: SQLiteSessionStore, scheduler: CronS
       }
 
       if (action === "create") {
-        const name = String(a.name ?? "").trim();
-        const kindInput = typeof a.schedule_kind === "string" ? a.schedule_kind.trim().toLowerCase() : "";
-        const kind = isScheduleKind(kindInput) ? (kindInput as ScheduleKind) : null;
-        const expr = String(a.schedule_expr ?? "").trim();
-        const timezone = a.timezone != null ? String(a.timezone).trim() || null : null;
-        let payload = String(a.payload ?? "").trim();
-        // Long prompts ride in a file (write_file first): tool-args generation
-        // degrades on ~KB-length payloads (live miss 2026-11-01, trace
-        // 0f452948…: 30 create retries, each dropping different fields).
-        const payloadFile = String(a.payload_file ?? "").trim();
-        if (!payload && payloadFile) {
-          const file = path.resolve(currentWorkspaceRoot(), payloadFile);
-          if (!file.startsWith(currentWorkspaceRoot())) {
-            return `Rejected: payload_file must be inside the workspace (${currentWorkspaceRoot()})`;
-          }
-          try {
-            payload = fs.readFileSync(file, "utf8").trim();
-          } catch {
-            return `Rejected: payload_file ${JSON.stringify(payloadFile)} is not readable — write it with write_file first`;
-          }
-        }
-        // ONE rejection listing EVERY problem — single-field errors sent the
-        // model into a 30-round fix-one-lose-another loop (same trace).
-        const problems: string[] = [];
-        if (!name) problems.push("name (unique job name, <= 80 chars)");
-        else if (name.length > 80) problems.push("name must be 80 characters or fewer");
-        if (!kind) problems.push('schedule_kind ("cron" | "interval" | "once")');
-        if (kind && !expr) problems.push("schedule_expr (the expression for that kind)");
-        if (kind && expr) {
-          const invalid = validateSchedule(kind, expr, timezone);
-          if (invalid) problems.push(invalid);
-        }
-        if (!payload) problems.push("payload (the self-contained prompt each fire executes — or payload_file)");
-        if (timezone && !isValidTimezone(timezone)) {
-          problems.push(`invalid timezone ${JSON.stringify(timezone)} — use an IANA name like "Asia/Hong_Kong"`);
-        }
-        if (problems.length) {
-          return (
-            `Rejected: create is incomplete — ${problems.length === 1 ? "missing " + problems[0] : "missing " + problems.length + " fields: " + problems.join("; ")}. ` +
-            `Send ALL of them in ONE call: {"action":"create","name":"…","schedule_kind":"once","schedule_expr":"2026-12-01T18:00:00+08:00","payload_file":"jobs/prompt.md","timezone":"Asia/Hong_Kong"}`
-          );
-        }
-        if (store.getCronJobForUser(user, name)) {
-          return `Rejected: a job named ${JSON.stringify(name)} already exists — pick another name or update it`;
-        }
-        const now = Date.now();
-        const maxIt = a.max_iterations != null ? Number(a.max_iterations) : null;
-        // Resolve the timezone before the first next-fire calculation: the
-        // stored next_run_at must be the same instant shown in next_runs.
-        const next = nextFire(kind as ScheduleKind, expr, now, timezone);
-        if (next === null) return `Rejected: could not compute the next fire for ${JSON.stringify(expr)}`;
-        const nextRuns = nextFires(kind as ScheduleKind, expr, now, 2, timezone);
-        const job = store.createCronJob({
-          id: randomUUID(),
-          user_id: user,
-          name,
-          schedule_kind: kind as ScheduleKind,
-          schedule_expr: expr,
-          payload,
-          session_id: null,
-          created_from_session: null,
-          enabled: 1,
-          allow_scheduling: 0,
-          max_iterations: maxIt != null && Number.isFinite(maxIt) ? Math.floor(maxIt) : null,
-          timezone,
-          next_run_at: next,
-          last_run_at: null,
-          last_status: null,
-          last_error: null,
-          failure_streak: 0,
-          created_at: now,
-          updated_at: now,
-        });
-        return JSON.stringify({
-          ok: true,
-          job: jobPublic(job, { withPayload: true }),
-          next_runs: nextRuns.map((t) => formatInTz(t, timezone)),
-          server_timezone: serverTimezone(),
-          note: "Scheduled. Each fire lands in the job's own session; runs and statuses are visible in the Scheduled view.",
-        });
+        // Moved to the dedicated cron_schedule tool (live miss 2026-11-01,
+        // traces 0f452948…/ce1871e4…: models degrade on the 9-action dispatch
+        // schema and drop fields across retries).
+        return "Rejected: create moved to the cron_schedule tool — call it with {name, schedule_kind, schedule_expr, payload_file | payload, timezone?}.";
       }
 
       // Everything below addresses an existing job.
