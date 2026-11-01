@@ -41,7 +41,7 @@ function jobPublic(job: CronJobRow, opts?: { withPayload?: boolean }) {
     : { ...base, payload_preview: job.payload.slice(0, 160) };
 }
 
-function resolvePayload(a: Record<string, unknown>, user: string): { payload?: string; error?: string } {
+function resolvePayload(a: Record<string, unknown>, user: string): { payload?: string; error?: string; auto_note?: string } {
   let payload = String(a.payload ?? "").trim();
   const payloadFile = String(a.payload_file ?? "").trim();
   if (!payload && payloadFile) {
@@ -106,6 +106,7 @@ export function createCronScheduleTool(store: SQLiteSessionStore, scheduler: Cro
       const resolved = resolvePayload(a, user);
       if (resolved.error) return `Rejected: ${resolved.error}`;
       const payload = resolved.payload ?? "";
+      const autoNote = resolved.auto_note;
       if (!payload) problems.push("payload (the self-contained prompt each fire executes — or payload_file)");
       if (timezone && !isValidTimezone(timezone)) {
         problems.push(`invalid timezone ${JSON.stringify(timezone)} — use an IANA name like "Asia/Hong_Kong"`);
@@ -150,6 +151,7 @@ export function createCronScheduleTool(store: SQLiteSessionStore, scheduler: Cro
         job: jobPublic(job, { withPayload: true }),
         next_runs: nextRuns.map((t) => formatInTz(t, timezone)),
         server_timezone: serverTimezone(),
+        ...(autoNote ? { auto_note: autoNote } : {}),
         note: "Scheduled. Each fire lands in the job's own session; runs and statuses are visible in the Scheduled view.",
       });
     },
