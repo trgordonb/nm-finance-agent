@@ -367,6 +367,49 @@ test("cron tool: create applies timezone to the stored next_run_at", async () =>
   assert.equal(created.next_runs[0], formatInTz(job.next_run_at as number, "Asia/Hong_Kong"));
 });
 
+test("cron tool: create rejects ONCE listing every missing field + template", async () => {
+  const store = tempStore();
+  const scheduler = new CronScheduler({ store, loop: {} as never });
+  const tool = createCronManageTool(store, scheduler);
+  const out = String(
+    await runInWorkspace("alice", () => tool.execute({ action: "create", limit: 5 }, {})),
+  );
+  assert.match(out, /create is incomplete/);
+  assert.match(out, /missing 3 fields/); // schedule_expr is skipped while its kind is absent
+  assert.match(out, /name \(unique job name/);
+  assert.match(out, /schedule_kind/);
+  assert.match(out, /payload/);
+  assert.match(out, /Send ALL of them in ONE call/);
+  // nothing was created by the rejected call
+  assert.equal(store.listCronJobs("alice").length, 0);
+});
+
+test("cron tool: payload_file supplies the payload (long-prompt path)", async () => {
+  const store = tempStore();
+  const scheduler = new CronScheduler({ store, loop: {} as never });
+  const tool = createCronManageTool(store, scheduler);
+  await runInWorkspace("alice", async () => {
+    const { currentWorkspaceRoot } = await import("../workspace.js");
+    fs.writeFileSync(path.join(currentWorkspaceRoot(), "prompt.md"), "train NVDA end to end");
+  });
+  const out = JSON.parse(
+    String(
+      await runInWorkspace("alice", () =>
+        tool.execute(
+          {
+            action: "create", name: "nvda", schedule_kind: "once",
+            schedule_expr: new Date(Date.now() + 3_600_000).toISOString(),
+            payload_file: "prompt.md",
+          },
+          {},
+        ),
+      ),
+    ),
+  );
+  assert.equal(out.ok, true);
+  assert.equal(out.job.payload, "train NVDA end to end");
+});
+
 test("cron tool: run-now goes through the claim path", async () => {
   const store = tempStore();
   const scheduler = new CronScheduler({
