@@ -148,7 +148,7 @@ test("cron scheduler: due job fires, persists a session, advances the slot", asy
     store,
     loop: {} as never,
     now: () => Date.now(),
-    execute: async (_store, _loop, _mirror, j) => {
+    execute: async (_store, _loop, _mirror, j, _run) => {
       fired.push(j.name);
       // simulate the real persistence contract
       const sid = j.session_id ?? store.newSessionId();
@@ -159,7 +159,8 @@ test("cron scheduler: due job fires, persists a session, advances the slot", asy
       ]);
       return {
         sessionId: sid, failed: false, iterations: 1,
-        usage: { prompt_tokens: 10, completion_tokens: 5 }, excerpt: "brief done",
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+        excerpt: "brief done", response: "brief done",
       };
     },
   });
@@ -197,7 +198,7 @@ test("cron scheduler: fire while previous run is active records a skip", async (
   let executed = 0;
   const scheduler = new CronScheduler({
     store, loop: {} as never, now: () => Date.now(),
-    execute: async () => { executed++; return { sessionId: "s", failed: false, iterations: 0, usage: { prompt_tokens: 0, completion_tokens: 0 }, excerpt: "" }; },
+    execute: async () => { executed++; return { sessionId: "s", failed: false, iterations: 0, usage: { prompt_tokens: 0, completion_tokens: 0 }, excerpt: "", response: "" }; },
   });
   scheduler.tick();
   const runs = store.listCronRuns(job.id, 5);
@@ -229,7 +230,7 @@ test("cron scheduler: one-shot jobs disable themselves after the fire", async ()
   const job = store.createCronJob(makeJob({ schedule_kind: "once", schedule_expr: new Date(Date.now() - 1000).toISOString() }));
   const scheduler = new CronScheduler({
     store, loop: {} as never, now: () => Date.now(),
-    execute: async () => ({ sessionId: "s", failed: false, iterations: 0, usage: { prompt_tokens: 0, completion_tokens: 0 }, excerpt: "one-shot done" }),
+    execute: async () => ({ sessionId: "s", failed: false, iterations: 0, usage: { prompt_tokens: 0, completion_tokens: 0 }, excerpt: "one-shot done", response: "one-shot done" }),
   });
   const run = store.claimCronFire(job, Date.now(), null, randomUUID());
   assert.ok(run);
@@ -270,7 +271,7 @@ test("cron scheduler: fires run inside the scheduled-run scope (loop guard)", as
     store, loop: {} as never, now: () => Date.now(),
     execute: async () => {
       inScope = isScheduledRun();
-      return { sessionId: "s", failed: false, iterations: 0, usage: { prompt_tokens: 0, completion_tokens: 0 }, excerpt: "" };
+      return { sessionId: "s", failed: false, iterations: 0, usage: { prompt_tokens: 0, completion_tokens: 0 }, excerpt: "", response: "" };
     },
   });
   const run = store.claimCronFire(job, Date.now(), null, randomUUID());
@@ -311,6 +312,70 @@ test("cron execute: per-job max_iterations and scheduled wrap-up margin reach ru
   assert.equal(store.getCronJobById(job.id)?.session_id, captured!.sessionId);
   assert.equal(midTurnRegistered, true);
 });
+
+test("cron fire: logistics payload + report.md with response and artifact pointers", async () => {
+  const store = tempStore();
+  const job = store.createCronJob(makeJob({ name: "wiki-feed" }));
+  const run = store.claimCronFire(job, job.next_run_at as number, null, randomUUID());
+  if (!run) throw new Error("claim failed");
+  // Stub the LOOP, not execute: the real executeCronJob runs — logistics
+  // payload, persistence, report.md, artifact pointers.
+  const stubLoop = {
+    runTurn: async (_history: unknown[], input: string) => {
+      const { currentWorkspaceRoot } = await import("../workspace.js");
+      const artifacts = path.join(currentWorkspaceRoot(), "cron", job.name, `${new Date(run.fire_at).toISOString().slice(0, 10)}-${run.id.slice(0, 8)}`, "artifacts");
+      fs.mkdirSync(artifacts, { recursive: true });
+      fs.writeFileSync(path.join(artifacts, "chart.html"), "<html>band</html>");
+      seenPayload = input;
+      // TurnResult shape — the real executeCronJob reads turn.messages
+      return {
+        messages: [{ role: "assistant", content: "# Digest\n\nAll 6 horizons evaluated. Chart at artifacts/chart.html." }],
+        iterations: 1,
+        usage: { prompt_tokens: 100, completion_tokens: 20 },
+      };
+    },
+  } as never;
+  let seenPayload = "";
+  const scheduler = new CronScheduler({ store, loop: stubLoop, mirror: null, now: () => Date.now() });
+  await scheduler.fire(job, run);
+
+  // the persisted user turn carries the logistics block (what the fire saw)
+  const freshJob = store.getCronJobById(job.id) as CronJobRow;
+  const session = freshJob.session_id
+    ? runInWorkspace("alice", () => store.loadSession(freshJob.session_id as string))
+    : [];
+  assert.equal(session[0].role, "user");
+  assert.match(session[0].content, /## Run logistics \(appended by the harness\)/);
+  assert.match(session[0].content, /Save every artifact under the workspace folder/);
+  assert.match(seenPayload, /## Run logistics/);
+
+  // report.md: full response + artifact pointers + metadata — under the
+  // owner's workspace cron folder (the fire ran in runInWorkspace("alice"))
+  const { currentWorkspaceRoot } = await import("../workspace.js");
+  const aliceRoot = runInWorkspace("alice", () => currentWorkspaceRoot());
+  const found = findFile(path.join(aliceRoot, "cron", "wiki-feed"), "report.md");
+  assert.ok(found, "report.md written under the owner workspace");
+  const report = fs.readFileSync(found, "utf8");
+  assert.match(report, /# Run response/);
+  assert.match(report, /# Digest/);
+  assert.match(report, /All 6 horizons evaluated/);
+  assert.match(report, /artifacts\/chart\.html/);
+  assert.match(report, /job: wiki-feed/);
+  assert.match(report, /status: completed/);
+});
+
+function findFile(dir: string, name: string): string | null {
+  try {
+    for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+      const p2 = path.join(dir, e.name);
+      if (e.isDirectory()) {
+        const hit = findFile(p2, name);
+        if (hit) return hit;
+      } else if (e.name === name) return p2;
+    }
+  } catch { /* gone */ }
+  return null;
+}
 
 test("cron_schedule: create validates, scopes per user, rejects duplicates", async () => {
   const store = tempStore();
@@ -428,7 +493,7 @@ test("cron tool: run-now goes through the claim path", async () => {
   const store = tempStore();
   const scheduler = new CronScheduler({
     store, loop: {} as never, now: () => Date.now(),
-    execute: async () => ({ sessionId: "s", failed: false, iterations: 0, usage: { prompt_tokens: 0, completion_tokens: 0 }, excerpt: "" }),
+    execute: async () => ({ sessionId: "s", failed: false, iterations: 0, usage: { prompt_tokens: 0, completion_tokens: 0 }, excerpt: "", response: "" }),
   });
   const tool = createCronManageTool(store, scheduler);
   const schedule = createCronScheduleTool(store, scheduler);
