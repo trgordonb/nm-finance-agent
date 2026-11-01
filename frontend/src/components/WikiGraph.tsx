@@ -271,14 +271,14 @@ export default function WikiGraph({ refs, scope, onOpen }: Props) {
           edgeReducer(edge, data) {
             const active = hoveredRef.current;
             const res = { ...data };
+            // Edges always stay visible; hovering a node just boldens and
+            // highlights the edges attached to it.
             if (active) {
               const source = graph.source(edge);
               const target = graph.target(edge);
               if (source === active || target === active) {
                 res.color = paletteRef.current.EDGE_HOVER;
                 res.size = 1;
-              } else {
-                res.hidden = true;
               }
             }
             return res;
