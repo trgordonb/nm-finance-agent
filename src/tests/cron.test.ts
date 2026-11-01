@@ -14,7 +14,7 @@ process.env.LANGSMITH_TRACING = "0";
 import type { CronJobRow } from "../store.js";
 
 const { SQLiteSessionStore } = await import("../store.js");
-const { CronScheduler, isScheduledRun } = await import("../cron/scheduler.js");
+const { CronScheduler, isScheduledRun, advanceAfter } = await import("../cron/scheduler.js");
 const {
   nextFire,
   nextFires,
@@ -107,6 +107,19 @@ test("cron parse: timezone scopes cron expressions and naive one-shots", () => {
   assert.equal(formatInTz(Date.parse("2026-12-01T01:00:00Z"), "Asia/Hong_Kong"), "2026-12-01T09:00:00+08:00");
   // interval durations are tz-free by construction
   assert.equal(nextFire("interval", "1h", from, "Asia/Hong_Kong"), from + 3_600_000);
+});
+
+test("cron scheduler: advanceAfter keeps the job timezone", () => {
+  // 2026-10-29 16:00 UTC = 2026-10-30 00:00 HKT. The next midnight-HKT slot
+  // is 2026-10-30 16:00 UTC; omitting tz would incorrectly return 00:00 UTC.
+  const from = Date.parse("2026-10-29T16:00:00Z");
+  const job = makeJob({
+    schedule_kind: "cron",
+    schedule_expr: "0 0 * * *",
+    timezone: "Asia/Hong_Kong",
+    next_run_at: from,
+  });
+  assert.equal(advanceAfter(job, from), Date.parse("2026-10-30T16:00:00Z"));
 });
 
 // --- store claim + ownership --------------------------------------------------
