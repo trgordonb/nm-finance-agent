@@ -27,15 +27,24 @@ interface Props {
 // Sigma paints to a canvas, so CSS variables don't apply — node/edge colors
 // come from per-theme palettes and are re-applied to the live instance on
 // theme change (no rebuild, so page bodies are never refetched).
+// Edge colors are SOLID hex values: Sigma's WebGL edge renderer ignores the
+// alpha channel of rgba() colors, so subtlety must come from lightness —
+// a hairline close to the background at rest, accent when hovered.
 interface GraphPalette {
   TYPE_COLORS: Record<string, string>;
   DEFAULT_NODE: string;
   MISSING_NODE: string;
   EDGE: string;
+  /** Idle edges while a node is hovered — a hairline closer to the
+   *  background than EDGE so the boldened/hover edges pop. */
+  EDGE_DIM: string;
   EDGE_HOVER: string;
   LABEL: string;
   DIM: string;
 }
+
+/** Rest-state edge weight; hover doubles it (see edgeReducer). */
+const EDGE_BASE_SIZE = 1;
 
 const PALETTES: Record<ResolvedTheme, GraphPalette> = {
   dark: {
@@ -47,8 +56,9 @@ const PALETTES: Record<ResolvedTheme, GraphPalette> = {
     },
     DEFAULT_NODE: "#c4c0cc",
     MISSING_NODE: "#30363d",
-    EDGE: "rgba(230, 237, 243, 0.10)",
-    EDGE_HOVER: "rgba(133, 185, 201, 0.85)",
+    EDGE: "#252d38",
+    EDGE_DIM: "#1a212a",
+    EDGE_HOVER: "#85b9c9",
     LABEL: "#8b949e",
     DIM: "#232a33",
   },
@@ -61,8 +71,9 @@ const PALETTES: Record<ResolvedTheme, GraphPalette> = {
     },
     DEFAULT_NODE: "#8c959f",
     MISSING_NODE: "#d1d9e0",
-    EDGE: "rgba(31, 35, 40, 0.12)",
-    EDGE_HOVER: "rgba(9, 105, 218, 0.85)",
+    EDGE: "#d9dfe5",
+    EDGE_DIM: "#eceff3",
+    EDGE_HOVER: "#0969da",
     LABEL: "#59636e",
     DIM: "#d8dee4",
   },
@@ -215,7 +226,7 @@ export default function WikiGraph({ refs, scope, onOpen }: Props) {
             if (from !== to && !seenEdges.has(edgeKey)) {
               seenEdges.add(edgeKey);
               graph.addEdgeWithKey(edgeKey, from, to, {
-                size: 0.5,
+                size: EDGE_BASE_SIZE,
                 color: paletteRef.current.EDGE,
               });
             }
@@ -271,14 +282,16 @@ export default function WikiGraph({ refs, scope, onOpen }: Props) {
           edgeReducer(edge, data) {
             const active = hoveredRef.current;
             const res = { ...data };
-            // Edges always stay visible; hovering a node just boldens and
-            // highlights the edges attached to it.
+            // Edges always stay visible; hovering a node boldens and highlights
+            // the edges attached to it while the rest recede slightly.
             if (active) {
               const source = graph.source(edge);
               const target = graph.target(edge);
               if (source === active || target === active) {
                 res.color = paletteRef.current.EDGE_HOVER;
-                res.size = 1;
+                res.size = 2;
+              } else {
+                res.color = paletteRef.current.EDGE_DIM;
               }
             }
             return res;
