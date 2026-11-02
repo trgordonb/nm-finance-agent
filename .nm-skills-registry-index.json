@@ -32,20 +32,24 @@
 "size": 128
 },
 "skills/convert-arxiv-to-md/SKILL.md": {
-"etag": "\"1c89065818c79da25fb3bdf63490b929\"",
-"size": 7855
+"etag": "\"9a5667d593c85235eab9627461a7054c\"",
+"size": 7933
 },
 "skills/convert-arxiv-to-md/evals/evals.json": {
 "etag": "\"47ab2ee2417b70a9ea4c77c61755208d\"",
 "size": 3251
 },
 "skills/convert-arxiv-to-md/references/setup.md": {
-"etag": "\"3a729228680412afdba5304d8b2a8d9d\"",
-"size": 2152
+"etag": "\"dd359268333f75e1a5323b882d872b45\"",
+"size": 2646
 },
 "skills/convert-arxiv-to-md/scripts/convert_arxiv_to_md.py": {
 "etag": "\"f739ad7f7555027a19aee3769297e9bc\"",
 "size": 50654
+},
+"skills/convert-arxiv-to-md/scripts/run_convert_arxiv_to_md.sh": {
+"etag": "\"64fb0a7311d0c5046f0b5038a03255b6\"",
+"size": 323
 },
 "skills/convert-pdf-to-md/SKILL.md": {
 "etag": "\"c9314b61bb4623dc61ab5ca5578b2ebb\"",
@@ -90,6 +94,10 @@
 "skills/convert-web-article-to-md/scripts/convert_web_article_to_md.py": {
 "etag": "\"aef254d40f40c9c214e51d4e948b295a\"",
 "size": 57494
+},
+"skills/devops/hf-daily-agentic-papers/SKILL.md": {
+"etag": "\"8d662938db9b544def7b20b7f9bf8e67\"",
+"size": 2643
 },
 "skills/edgar/SKILL.md": {
 "etag": "\"03d34ff8147a91c1e367d09fbe9b3a8c\"",
@@ -152,8 +160,8 @@
 "size": 2407
 },
 "skills/instabox-sandbox/SKILL.md": {
-"etag": "\"0b7b7bbc092c6b4fcd98c33aca7b7d2b\"",
-"size": 5298
+"etag": "\"f8d6702bbd9fd5aca6ec85c6943b4896\"",
+"size": 5888
 },
 "skills/llm-wiki/SKILL.md": {
 "etag": "\"da96bb4b81614cd143936bad7605def1\"",
