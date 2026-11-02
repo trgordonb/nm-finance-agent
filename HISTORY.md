@@ -942,3 +942,47 @@ signal — no retry needed). Suite 223/223.
 - Proxy logs a warning when the wiki service is unreachable, distinguishing
   proxy-level 502s from wiki-service 500s in the journal. Verified end-to-end against the AAPL artifacts from the
 image build. Bar.volume made optional to match the documented contract.
+
+---
+
+## 2026-11-02 — Light/dark/auto theming + wiki graph controls, sort, first-login onboarding
+
+- **Theme system** (`frontend/src/theme.ts`): light / dark / auto — the
+  setting persists in `localStorage["nm.theme"]` (default `auto` =
+  `prefers-color-scheme`, tracked live via a matchMedia listener), the
+  resolved theme lands on `<html data-theme>` (+ `color-scheme`), and an
+  inline bootstrap in `index.html` re-resolves it before first paint (that
+  script is a deliberate mirror of theme.ts's resolution — keep in sync).
+  `styles.css` gains a GitHub-light-family palette under
+  `:root[data-theme="light"]` and every hardcoded dark rgba outside the
+  palettes became a theme-derived token (`--on-accent`, `--overlay`,
+  `--surface-glass`, `--shadow`, and `color-mix(in srgb, var(--accent) N%,
+  transparent)` tints), plus minimal per-theme highlight.js token colors.
+  Vela charts rebuild with the resolved theme; the wiki graph swaps palettes
+  live (no rebuild, no page refetch). `ThemeSwitch` — a Light/Dark pill with
+  sliding knob — sits in the sidebar user row next to signout; `auto` is only
+  the initial state until the first explicit pick.
+- **Wiki graph**: zoom in / zoom out / fit-view buttons in the canvas
+  top-right (camera `animatedZoom/Unzoom/Reset`; `minCameraRatio: 0.05` /
+  `maxCameraRatio: 10` bound the mouse wheel too). Edges are always visible;
+  hovering a node boldens (size ×2) and highlights its edges while the rest
+  recede to a hairline closer to the background. **Gotcha worth remembering:
+  Sigma's WebGL edge renderer ignores the alpha channel of rgba() colors** —
+  proved with a `rgba(255,0,0,0.12)` test edge rendering saturated red — so
+  edge palettes are solid hex values with subtlety in lightness
+  (dark `#252d38`/`#1a212a`/`#85b9c9`, light `#d9dfe5`/`#eceff3`/`#0969da`;
+  rest weight 1, hover 2; the old sub-pixel rgba edges rendered effectively
+  invisible, which is why light-mode hover had "no difference").
+- **Wiki sidebar sort**: `byTypeThenUpdated` orders pages concept → entity →
+  source (other types keep their relative order after; recency/title within
+  group), applied to both the all-domains view (was recency-only) and the
+  single-domain view (was raw server order). Side effect: the auto-opened
+  page on load is now the most recently updated concept.
+- **First-login onboarding** (`frontend/src/components/WikiOnboarding.tsx`):
+  a "Set up your wiki" callout under the tabbar (ask an admin for common-wiki
+  write access; create a domain in the personal wiki), visible on every tab
+  until dismissed. Dismissal persists in
+  `localStorage["nm.wiki-onboarding.<user-id>"]` — per user, per browser;
+  there is no server-side preferences store, so a fresh browser sees the
+  notice once more. Verified via build + real-Sigma harness screenshots in
+  both themes (frontend has no test suite).

@@ -27,8 +27,18 @@ routing + frontend + gated tool). 2026-10-25 increments (HISTORY for detail):
   per-user `llm_usage` ledger. Phase 2/3 (OAuth PKCE, provisioning, BYOK) open.
 - **Wiki UI fixes**: page-fetch errors don't layer over rendered content
   (soft advisory when re-fetch fails over existing content); wiki graph
-  edges visible + hover contrast theme-agnostic; proxy logs wiki-service
+  edges visible + hover contrast theme-agnostic; wiki graph zoom in/out/fit
+  buttons (bounded camera ratios); sidebar pages sorted by type
+  (concept → entity → source, recency within group); proxy logs wiki-service
   unreachable separately from upstream 500s.
+- **UI theming** (frontend/src/theme.ts): light/dark/auto — `<html
+  data-theme>` + per-theme CSS variable palettes in styles.css, no-flash
+  inline bootstrap in index.html, localStorage `nm.theme` (auto =
+  prefers-color-scheme, live OS tracking), Light/Dark pill switch in the
+  sidebar user row (auto applies until the first explicit pick); Vela charts
+  rebuild with the resolved theme; wiki graph palette swaps live. First-login
+  "Set up your wiki" notice (components/WikiOnboarding.tsx) dismissed
+  per-user via localStorage (per-browser).
 - **Chat SSE hardening** (docs/todo-chat-sse-reliability.md): 15 s keepalive
   comments, abort-on-client-disconnect (valid-prefix persistence), frontend
   post-`done` error tolerance (parser extracted to `frontend/src/sse.ts`).
@@ -115,9 +125,16 @@ nm-finance-agent/
 │   │                     #   session_search (hybrid), registry
 │   └── tests/            # 187 tests across 16 files
 ├── frontend/             # Vite React app: Chat/Wiki/Scheduled panes (+ vela-chart
-│   └── src/charts/       #   cards), settings modal (Skills|MCP|Model & key),
-│   │                     #   sse.ts (SSE parser + post-done tolerance), Yahoo via
-│   │                     #   proxy, @luxalgo/vela lazy
+│   └── src/charts/       #   cards, theme-aware), settings modal (Skills|MCP|Model
+│   │                     #   & key), sse.ts (SSE parser + post-done tolerance),
+│   │                     #   Yahoo via proxy, @luxalgo/vela lazy;
+│   │                     #   src/theme.ts (light/dark/auto store → <html
+│   │                     #   data-theme>; localStorage nm.theme; index.html
+│   │                     #   bootstrap must stay in sync), ThemeSwitch (sidebar
+│   │                     #   user row), WikiOnboarding (first-login notice,
+│   │                     #   localStorage nm.wiki-onboarding.<user-id>); WikiGraph
+│   │                     #   per-theme solid-hex edge palettes (sigma ignores
+│   │                     #   color alpha) + zoom/fit camera buttons
 ├── mcp_servers.json      # git-tracked MCP config
 ├── skills/               # local working copy (gitignored mirror of the R2 bucket)
 ├── memories/<login-id>/  # per-user MEMORY.md/USER.md + _shared/ (gitignored)
@@ -215,6 +232,20 @@ nm-finance-agent/
 - **Skills**: disabled = invisible to the agent surface, visible to admin;
   curation writes through to R2 via debounced push; push failures surface
   as Rejected-grade advisories in skill_manage results (conflict UX).
+- **Frontend theming**: the applied theme lands on `<html data-theme>` — set
+  before first paint by the inline `index.html` bootstrap (a deliberate
+  mirror of theme.ts's resolution; keep the two in sync) and afterwards by
+  the `theme.ts` store (`useTheme()`; auto tracks `prefers-color-scheme`
+  live). Palettes are CSS variables per theme in `styles.css`
+  (`:root[data-theme="light"]`); tints derive via
+  `color-mix(in srgb, var(--accent) N%, transparent)` — no hardcoded rgba in
+  component rules. localStorage keys: `nm.theme` (setting) and
+  `nm.wiki-onboarding.<user-id>` (dismissed first-login notice).
+- **Sigma WebGL edges ignore color alpha**: rgba() edge colors render as
+  their solid RGB — the wiki-graph edge palettes
+  (frontend/src/components/WikiGraph.tsx) therefore use solid hex values
+  with subtlety in lightness (hairline near the background at rest, accent
+  + doubled weight on hover). Don't "fix" faint edges by adding alpha.
 - **Tracing never breaks the turn**; mirror never breaks the turn; bridge
   never blocks turns (local-only degradation with health-visible reason).
 
