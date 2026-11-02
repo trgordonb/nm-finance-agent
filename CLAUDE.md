@@ -14,15 +14,21 @@ titler → MCP → hybrid recall mirror → followups → skills (R2 live) → c
 compression. Deep research (`/research`) complete (engine + CLI + server
 routing + frontend + gated tool). 2026-10-25 increments (HISTORY for detail):
 
-- **Agent cron** (docs/agent-cron-plan.md): per-user scheduled jobs via the
-  `cron_manage` tool, in-process ticker, "Scheduled" right-pane view with
-  per-job run histories, per-job IANA timezones, loop-guard, failure
-  auto-pause, catch-up-once, once-jobs self-disable. Validated end-to-end
-  on a real scheduled NFLX run (fire → 47-iter graceful landing → report).
+- **Agent cron Phase 1+2** (docs/agent-cron-plan.md): per-user scheduled jobs
+  via `cron_schedule` (create) + `cron_manage` (list/pause/resume/runs/run),
+  in-process ticker, "Scheduled" right-pane view with per-job run histories,
+  per-job IANA timezones, loop-guard, failure auto-pause, catch-up-once,
+  once-jobs self-disable, per-fire report.md (response + artifact pointers,
+  the wiki-ingest entry point), cron_payloads auto-detect. Validated
+  end-to-end on scheduled NFLX and NVDA runs.
 - **User-scoped OpenRouter keys Phase 1** (docs/user-scoped-openrouter-keys-plan.md):
   per-user key (encrypted at rest) resolved per call inside `chat()`;
   `LLM_KEY_POLICY` incl. require_user warn-window; "Model & key" settings tab;
   per-user `llm_usage` ledger. Phase 2/3 (OAuth PKCE, provisioning, BYOK) open.
+- **Wiki UI fixes**: page-fetch errors don't layer over rendered content
+  (soft advisory when re-fetch fails over existing content); wiki graph
+  edges visible + hover contrast theme-agnostic; proxy logs wiki-service
+  unreachable separately from upstream 500s.
 - **Chat SSE hardening** (docs/todo-chat-sse-reliability.md): 15 s keepalive
   comments, abort-on-client-disconnect (valid-prefix persistence), frontend
   post-`done` error tolerance (parser extracted to `frontend/src/sse.ts`).
@@ -72,8 +78,10 @@ nm-finance-agent/
 │   │                     #   (cron/interval/once + IANA tz, DST-safe), scheduler.ts
 │   │                     #   (30s tick, BEGIN IMMEDIATE claim, catch-up-once,
 │   │                     #   failure auto-pause, scheduled-run ALS loop-guard),
-│   │                     #   execute.ts (runTurn in owner ALS + lazy job session),
-│   │                     #   tool.ts (cron_manage action tool)
+│   │                     #   execute.ts (runTurn in owner ALS + lazy job session
+│   │                     #   + per-fire report.md with artifact pointers),
+│   │                     #   tool.ts (cron_schedule create tool + cron_manage
+│   │                     #   list/pause/resume/runs/run dispatch tool)
 │   ├── titler.ts         # sync fallback + async refine (summarizer model, once)
 │   ├── reflexion.ts      # per-turn reflexion auto-store: ONE cheap review
 │   │                     #   of the flattened transcript post-turn; a
@@ -169,6 +177,18 @@ nm-finance-agent/
   `cron_manage` there (cron sessions cannot schedule cron jobs). Fire turns
   carry `meta.maxIterations` (per-job budget) and a wider wrap-up margin
   (`CRON_WRAPUP_REMAINING=10`) so unattended runs land with state persisted.
+- **cron_schedule / cron_manage split**: create lives in a dedicated tool
+  with a small required-everything schema (flash models drop fields on
+  multi-action dispatch tools — live evidence traces 0f452948/ce1871e4).
+  cron_manage redirects create to cron_schedule. Long prompts ride in a
+  workspace file (`payload_file`) — write_file first, then reference the
+  path. When both payload and payload_file are missing, the tool auto-loads
+  the most recent file in `cron_payloads/` (the documented staging area).
+- **Per-fire report.md**: every fire writes
+  `cron/<job>/<date>-<runid>/report.md` in the owner's workspace — the full
+  final response + a pointer list of everything under the run's `artifacts/`
+  folder. The payload carries a "Run logistics" block with the folder path.
+  This is the wiki-ingest entry point for scheduled runs.
 - **Per-user OpenRouter keys**: `chat()` resolves Authorization per call —
   user key first, else server key per `LLM_KEY_POLICY` (require_user has a
   warn-only `LLM_KEY_REQUIRE_USER_AFTER` window). Keys are encrypted at rest
@@ -202,9 +222,11 @@ nm-finance-agent/
 
 Core: `ls read_file write_file edit_file glob grep execute web_to_markdown
 internet_search memory_manage skill_manage load_skill session_search
-cron_manage` (session_search is hybrid + condensable via the
+cron_schedule cron_manage` (session_search is hybrid + condensable via the
 SEARCH_SUMMARIZER_ENABLED gate; the tool's context command references the
-condensed header; cron_manage is hidden inside scheduled runs — loop guard).
+condensed header; cron_manage is hidden inside scheduled runs — loop guard;
+cron_schedule is the dedicated create tool — small required-everything
+schema, flash models drop fields on the dispatch tool).
 `deep_research` joins the registry only with `RESEARCH_AS_TOOL=1` (40-min
 runs — off by default).
 MCP: `<server>_<tool>` entries (agent_browser 29, luxalgo 13 keep_tools,
@@ -244,7 +266,8 @@ Full inventory with defaults in `.env.example`. Highlights:
 - User LLM keys: `LLM_KEY_POLICY` (prefer_user/require_user/server_only),
   `LLM_KEY_REQUIRE_USER_AFTER` (warn-only deadline),
   `USER_LLM_KEY_SECRET` (encryption at rest; unset = plaintext fallback)
-- InstaBox remote mode: `INSTABOX_API_KEY` (skills/instabox-sandbox)
+- InstaBox remote mode: `INSTABOX_API_KEY` (skills/instabox-sandbox);
+  base images `spm-base-v1` + `tft-base-v1`, sweep in `src/instabox.ts`
 - Server: `SERVER_HOST/PORT` (127.0.0.1:3001)
 
 ## Design decisions
@@ -306,11 +329,18 @@ Full inventory with defaults in `.env.example`. Highlights:
    one provisioning key; the harness mints per-user derived keys with
    monthly credit limits via `POST /api/v1/keys`), BYOK multi-provider
    (`CreateBYOKKeyRequest`), per-user model preference.
-10. **Agent cron Phase 3**: live-stream in-flight fires (research-style
+10. **tft-price-prediction skill** (shipped 2026-11-01, incl. inline
+    tft-forecast cards in the feed): TFT-Finance backend training/backtests
+    on InstaBox — base image `tft-base-v1`, see
+    skills/tft-price-prediction; remaining niceties: batch multi-ticker
+    training in one fire, scheduled re-trains via agent cron.
+11. **Agent cron Phase 3**: live-stream in-flight fires (research-style
     reconnect), cancel a running fire from the UI (register fires in
     ACTIVE_TURNS + reuse /api/chat/cancel), `context_from` chaining between
     jobs, per-job model pins, `allow_scheduling` opt-in, cron doctor row in
-    /api/health.
+    /api/health. (Shipped from this phase: per-job timezones, report.md,
+    cron_payloads auto-detect, cron_schedule split — the remaining items are
+    UI/polish.)
 11. Nice-to-haves surfaced this session: CPU-only torch for Kronos halves
     its 1.27 GiB peak (the cu130 wheel import alone is ~640 MiB); per-user
     fair-queue rate limiting in llm.ts (MIN_INTERVAL_MS is process-global);
@@ -322,6 +352,6 @@ Full inventory with defaults in `.env.example`. Highlights:
 ```bash
 npm install && npm run start   # backend on :3001 (env from ./.env)
 cd frontend && npm run dev     # web UI on :5173 (proxies /api)
-npm test                       # 187 tests
+npm test                       # 223 tests
 npm run research -- "question" # deep research CLI (saves to workspace/research/)
 ```

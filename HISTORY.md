@@ -885,5 +885,60 @@ feed — the card merges history candles with forecast bars (close tracks the
 median q50 path, wick spans the 10–90% band, volume optional in the Vela bar
 contract) and renders the walk-forward table, re-fetching on session reload.
 The inline vela-chart card remains Yahoo-by-symbol only; forecast display is
-the new fence's job. Verified end-to-end against the AAPL artifacts from the
+the new fence's job.
+
+## 2026-11-01 — cron_schedule split: combined rejection, payload_file, dedicated create tool
+
+Two more live misses on scheduled creation (traces `0f452948…` and
+`ce1871e4…`): the model wrote the payload file correctly but dropped
+`payload_file` (or `schedule_kind`) from the cron_schedule args across 7–30
+retries, each attempt losing different fields. Fixes:
+
+- **Combined rejection**: create now validates ALL fields at once and returns
+  a single Rejected listing every missing/invalid field plus a complete
+  example args template (the old single-field errors sent the model into a
+  fix-one-lose-another loop).
+- **payload_file**: long prompts ride in a workspace file written via
+  write_file — ~KB tool-args payloads were the args-generation degradation
+  trigger. Resolved against the caller's workspace root.
+- **cron_schedule split**: create moved out of cron_manage into a dedicated
+  tool with a small, mostly-required schema (name + schedule_kind +
+  schedule_expr required; payload/payload_file/timezone/max_iterations
+  optional). Flash-class models drop fields on the 9-action dispatch schema;
+  a flat required-everything tool is what they execute reliably. cron_manage
+  redirects create to cron_schedule.
+- **Per-job IANA timezones**: cron expressions and offset-less one-shot
+  timestamps parse under the job's timezone (cron-parser `tz`, DST-safe
+  naive-once conversion). The user is UTC+8 on a us-east-1 VM — recurring
+  schedules without an explicit tz would land at the wrong local time.
+- **Empty execute command**: exec("") threw synchronously ("file cannot be
+  empty") and ended a scheduled run — now a Recoverable Rejected.
+- Tests: cron suite grew to 18 (combined rejection, payload_file, tz,
+  redirect); suite 219→222.
+
+## 2026-11-01 — Per-fire report.md for wiki ingest + cron_payloads auto-detect
+
+Each fire now writes `report.md` into a deterministic run folder in the
+owner's workspace (`cron/<job>/<date>-<runid>/`): YAML frontmatter
+(job/run/session/status/usage), the full final assistant response verbatim,
+and a generated pointer list of everything under the run's `artifacts/`
+folder. The scheduler appends a "Run logistics" block to the payload telling
+the fire where artifacts go — the archived user turn carries the same block,
+so the session record matches what ran. report.md is the wiki-ingest entry
+point for scheduled runs (owner ask). Also: when cron_schedule is called
+without payload/payload_file, the tool scans `cron_payloads/` for a recent
+.md file and auto-loads it (the model's write_file is treated as the intent
+signal — no retry needed). Suite 223/223.
+
+## 2026-11-02 — Wiki UI fixes (deploy follow-up)
+
+- WikiTab error banner no longer shows when page content is already rendered
+  (error and page were independent state — a re-fetch failure layered the
+  banner over content from the first successful fetch). A re-fetch failure
+  over existing content renders a soft advisory instead.
+- Wiki graph edges: visibility on node hover and hover contrast now
+  theme-agnostic (deploy incident: edges disappeared against the light
+  theme).
+- Proxy logs a warning when the wiki service is unreachable, distinguishing
+  proxy-level 502s from wiki-service 500s in the journal. Verified end-to-end against the AAPL artifacts from the
 image build. Bar.volume made optional to match the documented contract.
